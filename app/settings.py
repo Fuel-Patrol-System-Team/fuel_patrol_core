@@ -82,7 +82,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'debug_toolbar.middleware.DebugToolbarMiddleware',
+    # 'debug_toolbar.middleware.DebugToolbarMiddleware',
     'corsheaders.middleware.CorsMiddleware',
 ]
 
@@ -202,7 +202,7 @@ CELERY_RESULT_BACKEND = REDIS_CONN_URL
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 
 CELERY_ACCEPT_CONTENT = ["application/json"]
-CELERY_TASK_SERIALIZER = "json"
+CELERY_TASK_SERIALIZER = "pickle" # тут поменял чтобы принимало Dataframe от polars ys
 CELERY_RESULT_SERIALIZER = "json"
 
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
