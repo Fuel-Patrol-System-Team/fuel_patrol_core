@@ -196,9 +196,9 @@ REDIS_PASS = os.getenv("REDIS_PASSWORD", "default")
 REDIS_HOST = os.getenv("KEYDB_HOST", "127.0.0.1")
 REDIS_PORT = os.getenv("KEYDB_PORT", "6379")
 REDIS_DB = os.getenv('', '1')
-
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://:roottoor@127.0.0.1:6379/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_BROKER_URL", "redis://:roottoor@127.0.0.1:6379/0")
+# зачем тебе env выше, если ты их не используешь
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/0")
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 
 CELERY_ACCEPT_CONTENT = ["pickle"]

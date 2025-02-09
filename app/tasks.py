@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Размер батча
-BATCH_SIZE = 100_000
+BATCH_SIZE = 500_000
 
 
 ## Важное пояснение, т.к. виндоус тупой - я не могу запустить мультипроцессинг у себя просто так, я тестировал это всё
@@ -49,6 +49,7 @@ def merge_parts_task(self, results):
         logger.info("Merging results...")
         merge_result = pd.concat(results)
         logger.info(f"Merged DataFrame shape: {merge_result.shape}")
+        merge_result = merge_result[['auto', 'timestamp', 'pos_s', 'spent_fuel', 'is_leak', 'leak']]
         return merge_result
     except Exception as e:
         logger.error(f"Error in merge_parts_task: {e}")
@@ -70,26 +71,12 @@ def calcualate_leak_task(self):
         norma_df = pd.read_csv("./app/datasets/mart_norm_rasx_topl_202401261739.csv")
 
         # Загружаем батчи
-        batches = pl.read_csv_batched(
-            "./app/datasets/auto.csv",
-            try_parse_dates=True,
-            batch_size=BATCH_SIZE,
-            schema_overrides={"calc_sensors_mileage": pl.Float64, "p_pwr_int": pl.String}
-        )
-
+        chunk_df = pd.read_csv("./app/datasets/auto.csv", usecols=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'], dtype={'auto': str, 'calc_sensors_fuel_level': float, 'pos_s': float, 'timestamp': str,  'calc_sensors_voltage': float}, chunksize=BATCH_SIZE)
         logger.info(f"Loaded batches for processing.")
-
-        # Используем next_batches() для извлечения данных из батча
-        items = batches.next_batches(4)  # Обрабатываем по 4 батча за раз
-
-        # Если используем batch, преобразуем их в list
-        items = list(items)
-
-        logger.info(f"Loaded {len(items)} batches for processing.")
 
         # Генерируем задачи для каждого батча
         task_group = chord(
-            (thread_task.s(auto_df, norma_df, batch) for batch in items),
+            (thread_task.s(auto_df, norma_df, batch) for batch in chunk_df),
             merge_parts_task.s()
         )
 

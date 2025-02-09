@@ -4,42 +4,60 @@ import polars as pl
 
 
 
+def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = 4) -> pd.DataFrame:
+    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
 
-def preprocess(df: pl.DataFrame, ANTI_BUG_TIME_PERIOD=10, PRE_PERIOD_TIME=3, PERIOD_2_MIN=30, VOLTAGE_LIMIT=4,
-               ANTI_BUG_FUEL=8) -> pl.DataFrame:
-    df = df[['timestamp', 'pos_s', 'calc_sensors_fuel_level', 'calc_sensors_voltage', 'auto']]
-    df = df.filter(pl.col("calc_sensors_fuel_level").is_between(0, 4096))
-    df = df.with_columns(pl.col("timestamp").dt.truncate("1h").alias("timestamp_hour"))
-    df = df.with_columns(pl.col("timestamp").diff().abs().over(["auto", "timestamp_hour"]).alias("dtime"))
-    df = df.with_columns(
-        (pl.col("dtime").dt.total_seconds() / 3600).fill_null(0).alias("dtime_per_hour")
-    )
-    df = df.with_columns(pl.col("calc_sensors_voltage").max().over(["auto", "timestamp_hour"]).alias("voltage_max"))
-    df = df.filter(pl.col("voltage_max").sub(pl.col("calc_sensors_voltage")).lt(VOLTAGE_LIMIT))
-    df = df.with_columns(pl.col('calc_sensors_fuel_level').diff().over(["auto", "timestamp_hour"]).alias("spent_fuel"))
-    anti_bug = df.sort(["auto", "timestamp"]).group_by_dynamic(index_column='timestamp',
-                                                               every=f"{ANTI_BUG_TIME_PERIOD}s", group_by=['auto']).agg(
-        pl.col("calc_sensors_fuel_level").median(), pl.col("pos_s").mean(), pl.col("spent_fuel").sum(),
-        pl.col("dtime_per_hour").sum())
-    anti_bug = anti_bug.with_columns(pl.col("calc_sensors_fuel_level").max().over(
-        ["auto", pl.col("timestamp").dt.truncate(f"{PRE_PERIOD_TIME}m")]).alias("max_fuel"))
-    pre_period_df = anti_bug.group_by_dynamic(index_column='timestamp', every=f'{PRE_PERIOD_TIME}m',
-                                              group_by=['auto']).agg(pl.col("pos_s").mean(), pl.col("spent_fuel").sum(),
-                                                                     pl.col("max_fuel").max(),
-                                                                     pl.col("dtime_per_hour").sum())
-    pre_period_df = pre_period_df.with_columns(
-        pl.when((pl.col("pos_s") == 0) & (pl.col("spent_fuel") > 0) & (pl.col("spent_fuel") < ANTI_BUG_FUEL)).then(
-            0).otherwise(pl.col("spent_fuel")).alias("spent_fuel"))
-    period_df = pre_period_df.group_by_dynamic(index_column='timestamp', every=f'{PERIOD_2_MIN}m',
-                                               group_by=['auto']).agg(pl.col("pos_s").mean(),
-                                                                      pl.col("spent_fuel").sum(),
-                                                                      pl.col("max_fuel").max(),
-                                                                      pl.col("dtime_per_hour").sum())
-    period_df = period_df.with_columns(pl.col("pos_s").mul(pl.col("dtime_per_hour")).alias("travel"))
-    period_df = period_df.with_columns(pl.col("spent_fuel").truediv(pl.col("travel")).pow(100).alias("spent_per_100"))
-    result = period_df.to_pandas(use_pyarrow_extension_array=True)
-    return result
+    df = df[df['calc_sensors_fuel_level'].between(0, 4096)]
 
+    df['auto'] = df['auto'].astype(str)
+
+    df['dtime'] = df.groupby(['auto', df['timestamp'].dt.floor('1h')])['timestamp'].diff().abs()
+
+    df['dtime_per_hour'] = df['dtime'].dt.total_seconds() / 3600
+
+    df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])['calc_sensors_voltage'].transform(max)
+    
+    df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).lt(VOLTAGE_LIMIT)]
+    
+    df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
+    
+    anti_bug_aggregation = df.groupby(
+        ['auto', df['timestamp'].dt.floor(f'{ANTI_BUG_TIME_SECONDS}s')]
+    ).agg({
+        'calc_sensors_fuel_level': 'median',
+        'pos_s': 'mean',
+        'spent_fuel': 'sum',
+        'dtime': 'sum',
+        'dtime_per_hour': 'sum',
+    }).reset_index()
+    
+    anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
+    
+    pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
+        'pos_s': 'median',
+        'spent_fuel': 'sum',
+        'max_fuel': 'max',
+        'dtime': 'sum',
+        'dtime_per_hour': 'sum',
+    }).reset_index()
+    
+    pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(8), np.nan, inplace=True)
+
+    pre_period_df['spent_fuel'].replace(np.nan, 0, inplace=True)
+    
+    period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
+        
+        'pos_s': 'mean',
+        'spent_fuel': 'sum',
+        'max_fuel': 'max',
+        'dtime': 'sum',
+        'dtime_per_hour': 'sum',
+    } ).reset_index()
+    
+    period_1_df['travel'] = period_1_df['pos_s'].mul(period_1_df['dtime_per_hour'])
+    period_1_df['spent_per_100'] = period_1_df['spent_fuel'].div(period_1_df['travel']).mul(100)
+    
+    return period_1_df
 
 def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
     result_df = preprocessed_df.merge(right=car_data, how='inner', left_on='auto', right_on='guid')
