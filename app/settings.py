@@ -12,6 +12,8 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 import os
 from pathlib import Path
 
+from django.urls import reverse_lazy
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -115,10 +117,10 @@ WSGI_APPLICATION = 'app.wsgi.application'
 
 DATABASES = {
     'default': {
-        "NAME": os.getenv('POSTGRES_DB','postgres'),
+        "NAME": os.getenv('POSTGRES_DB', 'postgres'),
         "ENGINE": "django.db.backends.postgresql",
-        "USER": os.getenv('POSTGRES_USER','root'),
-        "PASSWORD": os.getenv('POSTGRES_PASS','roottoor'),
+        "USER": os.getenv('POSTGRES_USER', 'root'),
+        "PASSWORD": os.getenv('POSTGRES_PASS', 'roottoor'),
         'HOST': os.getenv('POSTGRES_HOST', '127.0.0.1'),
         'PORT': os.getenv('POSTGRES_PORT', '5432'),
     }
@@ -189,21 +191,154 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 ## CELERY_SETTINGS_REGION
 
-REDIS_USER = os.getenv('KEYDB_USER', 'default')
-REDIS_PASS = os.getenv('REDIS_PASSWORD', 'default')
-REDIS_HOST = os.getenv('KEYDB_HOST', '127.0.0.1')
-REDIS_PORT = os.getenv('KEYDB_PORT', '6379')
+REDIS_USER = os.getenv("KEYDB_USER", "default")
+REDIS_PASS = os.getenv("REDIS_PASSWORD", "default")
+REDIS_HOST = os.getenv("KEYDB_HOST", "127.0.0.1")
+REDIS_PORT = os.getenv("KEYDB_PORT", "6379")
 REDIS_DB = os.getenv('', '1')
 
-REDIS_CONN_URL = f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
-
-CELERY_BROKER_URL = REDIS_CONN_URL
-CELERY_RESULT_BACKEND = REDIS_CONN_URL
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://:roottoor@127.0.0.1:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_BROKER_URL", "redis://:roottoor@127.0.0.1:6379/0")
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 
-CELERY_ACCEPT_CONTENT = ["application/json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["pickle"]
+CELERY_TASK_SERIALIZER = "pickle"
+CELERY_RESULT_SERIALIZER = "pickle"
 
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_RESULT_EXPIRES = 60 * 60
+
+## CELERY_FLOWER_REGION
+CELERY_FLOWER_USER = os.getenv("CELERY_FLOWER_USER", "admin")
+CELERY_FLOWER_PASSWORD = os.getenv("CELERY_FLOWER_PASSWORD", "admin")
+
+CELERY_FLOWER_PORT = os.getenv("CELERY_FLOWER_PORT", "5555")
+CELERY_FLOWER_ADDRESS = os.getenv("CELERY_FLOWER_ADDRESS", "127.0.0.1")
+
+## ADMIN REGION
+from django.urls import reverse_lazy
+
+
+def get_admin_links():
+    return {
+        "TABS": [
+            {
+                "models": ('core.organization', 'core.orguser', 'core.car'),
+                "items": [
+                    {
+                        "title": "Organizations",
+                        "link": reverse_lazy("admin:core_organization_changelist"),
+                    },
+                    {
+                        "title": "Users",
+                        "link": reverse_lazy("admin:core_orguser_changelist"),
+                    },
+                    {
+                        "title": "Cars",
+                        "link": reverse_lazy("admin:core_car_changelist"),
+                    }
+                ]
+            },
+            {
+                "models": ('core.carconsumption', 'core.carreport', 'core.driver'),
+                "items": [
+                    {
+                        "title": "Car Consumption",
+                        "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                    },
+                    {
+                        "title": "Car Reports",
+                        "link": reverse_lazy("admin:core_carreport_changelist"),
+                    },
+                    {
+                        "title": "Drivers",
+                        "link": reverse_lazy("admin:core_driver_changelist"),
+                    }
+                ]
+            },
+            {
+                "models": ('django_celery_beat.periodictask', 'django_celery_beat.crontabschedule',
+                           'django_celery_beat.intervalschedule'),
+                "items": [
+                    {
+                        "title": "Periodic Tasks",
+                        "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
+                    },
+                    {
+                        "title": "Crontab",
+                        "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
+                    },
+                    {
+                        "title": "Intervals",
+                        "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
+                    }
+                ]
+            },
+        ],
+        "SIDEBAR": {
+            "show_search": True,
+            "show_all_applications": True,
+            "navigation": [
+                {
+                    "title": "Core",
+                    "collapsible": True,
+                    "items": [
+                        {
+                            "title": "Organizations",
+                            "icon": "business",
+                            "link": reverse_lazy("admin:core_organization_changelist"),
+                        },
+                        {
+                            "title": "Users",
+                            "icon": "person",
+                            "link": reverse_lazy("admin:core_orguser_changelist"),
+                        },
+                        {
+                            "title": "Cars",
+                            "icon": "car_repair",
+                            "link": reverse_lazy("admin:core_car_changelist"),
+                        },
+                        {
+                            "title": "Car Consumption",
+                            "icon": "local_gas_station",
+                            "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                        },
+                        {
+                            "title": "Car Reports",
+                            "icon": "report_problem",
+                            "link": reverse_lazy("admin:core_carreport_changelist"),
+                        },
+                        {
+                            "title": "Drivers",
+                            "icon": "drive_eta",
+                            "link": reverse_lazy("admin:core_driver_changelist"),
+                        },
+                    ]
+                },
+                {
+                    "title": "Celery Tasks",
+                    "collapsible": True,
+                    "items": [
+                        {
+                            "title": "Tasks",
+                            "icon": "task",
+                            "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
+                        },
+                        {
+                            "title": "Crontab",
+                            "icon": "update",
+                            "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
+                        },
+                        {
+                            "title": "Intervals",
+                            "icon": "arrow_range",
+                            "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
+                        },
+                    ]
+                },
+            ]
+        },
+    }
+
+
+UNFOLD = get_admin_links()
