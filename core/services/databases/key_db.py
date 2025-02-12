@@ -11,3 +11,6 @@ def get_redis_client():
             decode_responses=True
         )
     return get_redis_client.client
+
+def cache_task_status(redis_client,task_id, status):
+    redis_client.set(f"task_status:{task_id}", status)

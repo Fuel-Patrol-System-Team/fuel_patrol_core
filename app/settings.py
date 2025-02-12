@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django_extensions',
     'corsheaders',
+    'rest_framework',
     'drf_yasg',
     'debug_toolbar',
     'core',
@@ -117,7 +118,7 @@ WSGI_APPLICATION = 'app.wsgi.application'
 
 DATABASES = {
     'default': {
-        "NAME": os.getenv('POSTGRES_DB', 'postgres'),
+        "NAME": os.getenv('POSTGRES_DB', 'fuel'),
         "ENGINE": "django.db.backends.postgresql",
         "USER": os.getenv('POSTGRES_USER', 'root'),
         "PASSWORD": os.getenv('POSTGRES_PASS', 'roottoor'),
@@ -171,19 +172,6 @@ STATICFILES_FINDERS = (
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', BASE_DIR / 'media')
 
-## Django Rest
-
-REST_FRAMEWORK = {
-    'DEFAULT_FILTER_BACKENDS': (
-        'django_filters.rest_framework.DjangoFilterBackend',
-        'rest_framework.filters.SearchFilter',
-        'rest_framework.filters.OrderingFilter',
-    ),
-    'DEFAULT_RENDERER_CLASSES': (
-        'rest_framework.renderers.JSONRenderer',
-    )
-}
-
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
@@ -192,13 +180,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 ## CELERY_SETTINGS_REGION
 
 REDIS_USER = os.getenv("KEYDB_USER", "default")
-REDIS_PASS = os.getenv("REDIS_PASSWORD", "default")
+REDIS_PASS = os.getenv("REDIS_PASSWORD", "roottoor")
 REDIS_HOST = os.getenv("KEYDB_HOST", "127.0.0.1")
 REDIS_PORT = os.getenv("KEYDB_PORT", "6379")
-REDIS_DB = os.getenv('', '1')
-# зачем тебе env выше, если ты их не используешь
-CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/0")
-CELERY_RESULT_BACKEND = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/0")
+REDIS_DB = os.getenv("KEYDB_DB", "0")
+
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/1")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_BROKER_URL", f"redis://{REDIS_USER}:{REDIS_PASS}@{REDIS_HOST}:{REDIS_PORT}/1")
 CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 3600}
 
 CELERY_ACCEPT_CONTENT = ["pickle"]
@@ -253,6 +241,19 @@ def get_admin_links():
                     {
                         "title": "Drivers",
                         "link": reverse_lazy("admin:core_driver_changelist"),
+                    }
+                ]
+            },
+            {
+                "models": ('core.media', 'core.reportquery'),
+                "items": [
+                    {
+                        "title": "Media",
+                        "link": reverse_lazy("admin:core_media_changelist"),
+                    },
+                    {
+                        "title": "Report Queries",
+                        "link": reverse_lazy("admin:core_reportquery_changelist"),
                     }
                 ]
             },
@@ -313,6 +314,16 @@ def get_admin_links():
                             "icon": "drive_eta",
                             "link": reverse_lazy("admin:core_driver_changelist"),
                         },
+                        {
+                            "title": "Media",
+                            "icon": "image",
+                            "link": reverse_lazy("admin:core_media_changelist"),
+                        },
+                        {
+                            "title": "Report Queries",
+                            "icon": "assignment",
+                            "link": reverse_lazy("admin:core_reportquery_changelist"),
+                        },
                     ]
                 },
                 {
@@ -342,3 +353,43 @@ def get_admin_links():
 
 
 UNFOLD = get_admin_links()
+
+## SWAGGER REGION
+
+API_TITLE = "Fuel patrol API"
+API_VERSION = "1.0.1"
+
+REST_FRAMEWORK = {
+    'DEFAULT_FILTER_BACKENDS': (
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ),
+    'DEFAULT_RENDERER_CLASSES': (
+        'rest_framework.renderers.JSONRenderer',
+    )
+}
+
+## LOGGING REGION
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': 'debug.log',
+        },
+    },
+    'loggers': {
+        '': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': True,
+        },
+    },
+}
+
+## CUSTOM_AUTH_USER
+AUTH_USER_MODEL = 'core.OrgUser'

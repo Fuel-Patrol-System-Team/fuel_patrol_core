@@ -68,7 +68,6 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 # принимает пару median и std для данной машины
 def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT=9, SIGMA_LIMIT=3,
                                  SPEED_ETALON=60):
-
     tmp_df = pd.DataFrame(norma_rasx_df,
                           columns=['sl_avto', 'period', 'deystvuet', 'deystvuet_do', 'vid_topliva', 'vid_norm_rasx',
                                    'norma_rasx'])

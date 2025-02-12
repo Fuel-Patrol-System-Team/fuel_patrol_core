@@ -3,6 +3,10 @@
 ```bash
     python3 manage.py runserver
 ```
+# Для сбора статики
+```bash
+    python manage.py collectstatic
+```
 # Celery
 ### Для запуска celery_worker
 ```bash

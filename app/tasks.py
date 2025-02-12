@@ -1,8 +1,14 @@
 import logging
+import pathlib
+
 from celery import chord, shared_task
 from app.celery import app as celery_app
+from django.conf import settings
 import pandas as pd
 import polars as pl
+
+from core.models import ReportQuery, Media, Organization
+from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, merge, preprocess
 
 # Настройка логирования
@@ -13,18 +19,17 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 BATCH_SIZE = 500_000
 
 
-## Важное пояснение, т.к. виндоус тупой - я не могу запустить мультипроцессинг у себя просто так, я тестировал это всё
-## с командой, указаной в readme.md - если захочешь у себя попробовать сделать на разных воркерах в мультипотоке - напиши команду ниже при запуске
-## celery -A app worker --loglevel=info --concurrency=4 --queues=high_priority,medium_priority,low_priority
-
+## TODO: Сохранение raw_data в flux.
+## TODO: Сохранение резульnатов о сливах и прочем в БД (в ТГ отправляй сообщение о конце обработке - считай количество и отправляй в телеграмм)
+## TODO: Сценарий - если загружен только auto.csv
 
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),
     max_retries=3,
     retry_backoff=True,
-    soft_time_limit=60,  # Ограничение по времени выполнения (либо убери, либо поиграйся)
-    priority=10,  # ПРИОРИТЕТ ОТ 0 до 10, чем выше, тем лучше
+    soft_time_limit=60,
+    priority=10,
 )
 def thread_task(self, auto_df: pd.DataFrame, norma_df: pd.DataFrame, chunk_df: pl.DataFrame):
     try:
@@ -64,17 +69,43 @@ def merge_parts_task(self, results):
     soft_time_limit=300,
     priority=1,  # Низкий приоритет
 )
-def calcualate_leak_task(self):
+def calculate_leak_task(self):
     try:
         logger.info("Loading datasets...")
-        auto_df = pd.read_csv("./app/datasets/auto_info.csv")
-        norma_df = pd.read_csv("./app/datasets/mart_norm_rasx_topl_202401261739.csv")
+        ## TODO : Брать не последнюю заявку в целом, а последнюю заявку компании, но смотреть все компании?
+        ## TODO : Декомпозировать таск для процессинга отчёта на шейред и сделать таск для процесинга всех отчётов, изменить нейминги.
+        ## TODO : Починить (сделать) мультипоток.
+        report_query = ReportQuery.objects.exclude(status='completed').last()
+        if not report_query:
+            logger.info("No pending report queries found.")
+            return
 
-        # Загружаем батчи
-        chunk_df = pd.read_csv("./app/datasets/auto.csv", usecols=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'], dtype={'auto': str, 'calc_sensors_fuel_level': float, 'pos_s': float, 'timestamp': str,  'calc_sensors_voltage': float}, chunksize=BATCH_SIZE)
+        organization = report_query.organization
+        bot_token = organization.bot_token
+        chat_id = organization.chat_id
+
+        auto_df = Media.objects.get(report_query_id=report_query.id, type="auto")
+        norma_df = Media.objects.get(report_query_id=report_query.id, type="norm")
+        raw_df = Media.objects.get(report_query_id=report_query.id, type="raw")
+
+        media_root = settings.MEDIA_ROOT
+        auto_df_path = pathlib.Path.joinpath(media_root, str(auto_df.file))
+        auto_df = pd.read_csv(f"{auto_df_path}")
+        norm_df_path = pathlib.Path.joinpath(media_root, str(norma_df.file))
+        raw_df_path = pathlib.Path.joinpath(media_root, str(raw_df.file))
+        norma_df = pd.read_csv(f"{norm_df_path}")
+        chunk_df = pd.read_csv(f"{raw_df_path}",
+                               usecols=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage',
+                                        'auto'],
+                               dtype={'auto': str, 'calc_sensors_fuel_level': float, 'pos_s': float, 'timestamp': str,
+                                      'calc_sensors_voltage': float}, chunksize=BATCH_SIZE)
+
         logger.info(f"Loaded batches for processing.")
+        send_telegram_message(bot_token, chat_id, f"Loaded batches for processing.")
 
-        # Генерируем задачи для каждого батча
+        report_query.status = 'pending'
+        report_query.save()
+
         task_group = chord(
             (thread_task.s(auto_df, norma_df, batch) for batch in chunk_df),
             merge_parts_task.s()
@@ -83,23 +114,14 @@ def calcualate_leak_task(self):
         logger.info("Dispatching tasks...")
         result = task_group.apply_async()
         logger.info(f"Task dispatched successfully. Task ID: {result.id}")
+        send_telegram_message(bot_token, chat_id, f"Task dispatched successfully. Task ID: {result.id}")
+
+        report_query.status = 'completed'
+        report_query.save()
 
     except Exception as e:
-        logger.error(f"Error in calcualate_leak_task: {e}")
-        raise self.retry(exc=e)
-
-
-@celery_app.task(
-    bind=True,
-    soft_time_limit=10,
-    priority=2,
-)
-def test_task(self):
-    try:
-        logger.info("Executing test task...")
-        with open("test.asdf", "w") as file:
-            file.write("result")
-        logger.info("Test task completed successfully.")
-    except Exception as e:
-        logger.error(f"Error in test_task: {e}")
+        logger.error(f"Error in calculate_leak_task: {e}")
+        report_query.status = 'error'
+        report_query.save()
+        send_telegram_message(bot_token, chat_id, f"Error in calculate_leak_task: {e}")
         raise self.retry(exc=e)
