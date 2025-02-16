@@ -13,12 +13,11 @@ NULLABLE = {
 }
 
 
-
 class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
-    bot_token = models.CharField(max_length=255,**NULLABLE)
-    chat_id = models.CharField(max_length=255,**NULLABLE)
+    bot_token = models.CharField(max_length=255, **NULLABLE)
+    chat_id = models.CharField(max_length=255, **NULLABLE)
 
     def __str__(self):
         return self.name
@@ -64,7 +63,6 @@ class CarConsumption(models.Model):
         return self.car.name
 
 
-
 QUERY_STATUS = [
     ("pending", "pending"),
     ("completed", "completed"),
@@ -76,6 +74,7 @@ class ReportQuery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     status = models.CharField(max_length=50, choices=QUERY_STATUS, **NULLABLE)
+    flux_parsed = models.BooleanField(default=False)
 
     def __str__(self):
         return self.organization.name
@@ -95,7 +94,7 @@ class Media(models.Model):
     size = models.IntegerField(default=0, **NULLABLE)
     filename = models.CharField(max_length=255)
     type = models.CharField(max_length=50, **NULLABLE, choices=MEDIA_TYPE)
-    report_query = models.ForeignKey(ReportQuery, **NULLABLE, on_delete = models.CASCADE)
+    report_query = models.ForeignKey(ReportQuery, **NULLABLE, on_delete=models.CASCADE)
 
     def __str__(self):
         return self.filename
@@ -104,7 +103,6 @@ class Media(models.Model):
         if self.file:
             self.size = self.file.size
         super().save(*args, **kwargs)
-
 
 
 class CarReport(models.Model):

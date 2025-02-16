@@ -94,7 +94,7 @@ class MediaAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(ReportQuery)
 class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'organization', 'status')
+    list_display = ('id', 'organization', 'status','flux_parsed')
     list_filter = ('status', 'organization')
     search_fields = ('organization__name', 'media__filename')
     inlines = [MediaInline]
