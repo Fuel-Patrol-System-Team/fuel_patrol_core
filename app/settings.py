@@ -10,9 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
 import os
+from datetime import timedelta
 from pathlib import Path
 
 from django.urls import reverse_lazy
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -28,13 +30,11 @@ DEBUG = os.environ.get('DEBUG') == 'True'
 
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
-# CORS
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ORIGINS', 'http://127.0.0.1:8000 http://127.0.0.1:3000').split()
-CORS_ORIGIN_WHITELIST = os.getenv('CORS_ORIGINS', 'http://127.0.0.1:8000 http://127.0.0.1:3000').split()
-CSRF_TRUSTED_ORIGINS = os.getenv('CORS_ORIGINS', 'http://127.0.0.1:8000 http://127.0.0.1:3000').split()
+# dotenv
+load_dotenv()
 
-CORS_ORIGIN_ALLOW_ALL = False
-CORS_ALLOW_CREDENTIALS = True
+# CORS
+CORS_ORIGIN_ALLOW_ALL = True
 
 CORS_ALLOW_METHODS = [
     'GET',
@@ -46,15 +46,18 @@ CORS_ALLOW_METHODS = [
 ]
 
 CORS_ALLOW_HEADERS = [
-    'Content-Type',
-    'Authorization',
-    'access-control-allow-origin',
-    'access-control-allow-origins',
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
     'x-csrftoken',
+    'x-requested-with',
 ]
+
 # Application definition
-
-
 INSTALLED_APPS = [
     'unfold.contrib.import_export',
     'unfold.contrib.filters',
@@ -69,27 +72,27 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'django_extensions',
     'corsheaders',
+    'core.apps.AppConfig',
     'rest_framework',
+    'rest_framework_simplejwt',
     'drf_yasg',
     'debug_toolbar',
-    'core',
 ]
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'debug_toolbar.middleware.DebugToolbarMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
 ]
 
-## DEBUG
+# DEBUG
 INTERNAL_IPS = ['127.0.0.1']
 
 ROOT_URLCONF = 'app.urls'
@@ -97,8 +100,7 @@ ROOT_URLCONF = 'app.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [BASE_DIR / 'templates']
-        ,
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -114,8 +116,6 @@ TEMPLATES = [
 WSGI_APPLICATION = 'app.wsgi.application'
 
 # Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
-
 DATABASES = {
     'default': {
         "NAME": os.getenv('POSTGRES_DB', 'fuel'),
@@ -128,8 +128,6 @@ DATABASES = {
 }
 
 # Password validation
-# https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
     {
         'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
@@ -146,39 +144,28 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
-
 LANGUAGE_CODE = 'en-us'
-
 TIME_ZONE = 'Europe/Moscow'
-
 USE_I18N = True
 USE_TZ = True
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
+# Static files
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'static'
-
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
 STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 )
 
-## Media files
+# Media files
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.getenv('MEDIA_ROOT', BASE_DIR / 'media')
 
 # Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-## CELERY_SETTINGS_REGION
-
+# Celery settings
 REDIS_USER = os.getenv("KEYDB_USER", "default")
 REDIS_PASS = os.getenv("REDIS_PASSWORD", "roottoor")
 REDIS_HOST = os.getenv("KEYDB_HOST", "127.0.0.1")
@@ -196,182 +183,42 @@ CELERY_RESULT_SERIALIZER = "pickle"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_RESULT_EXPIRES = 60 * 60
 
-## CELERY_FLOWER_REGION
+# Celery Flower settings
 CELERY_FLOWER_USER = os.getenv("CELERY_FLOWER_USER", "admin")
 CELERY_FLOWER_PASSWORD = os.getenv("CELERY_FLOWER_PASSWORD", "admin")
-
 CELERY_FLOWER_PORT = os.getenv("CELERY_FLOWER_PORT", "5555")
 CELERY_FLOWER_ADDRESS = os.getenv("CELERY_FLOWER_ADDRESS", "127.0.0.1")
 
-## ADMIN REGION
-from django.urls import reverse_lazy
-
-
-def get_admin_links():
-    return {
-        "TABS": [
+# Custom admin settings
+UNFOLD = {
+    "TABS": [
+        {
+            "models": ('core.organization', 'core.orguser', 'core.car'),
+            "items": [
+                {"title": "Organizations", "link": reverse_lazy("admin:core_organization_changelist")},
+                {"title": "Users", "link": reverse_lazy("admin:core_orguser_changelist")},
+                {"title": "Cars", "link": reverse_lazy("admin:core_car_changelist")},
+            ],
+        },
+    ],
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": True,
+        "navigation": [
             {
-                "models": ('core.organization', 'core.orguser', 'core.car'),
+                "title": "Core",
+                "collapsible": True,
                 "items": [
-                    {
-                        "title": "Organizations",
-                        "link": reverse_lazy("admin:core_organization_changelist"),
-                    },
-                    {
-                        "title": "Users",
-                        "link": reverse_lazy("admin:core_orguser_changelist"),
-                    },
-                    {
-                        "title": "Cars",
-                        "link": reverse_lazy("admin:core_car_changelist"),
-                    }
-                ]
-            },
-            {
-                "models": ('core.carconsumption', 'core.carreport', 'core.driver'),
-                "items": [
-                    {
-                        "title": "Car Consumption",
-                        "link": reverse_lazy("admin:core_carconsumption_changelist"),
-                    },
-                    {
-                        "title": "Car Reports",
-                        "link": reverse_lazy("admin:core_carreport_changelist"),
-                    },
-                    {
-                        "title": "Drivers",
-                        "link": reverse_lazy("admin:core_driver_changelist"),
-                    }
-                ]
-            },
-            {
-                "models": ('core.media', 'core.reportquery'),
-                "items": [
-                    {
-                        "title": "Media",
-                        "link": reverse_lazy("admin:core_media_changelist"),
-                    },
-                    {
-                        "title": "Report Queries",
-                        "link": reverse_lazy("admin:core_reportquery_changelist"),
-                    }
-                ]
-            },
-            {
-                "models": ('django_celery_beat.periodictask', 'django_celery_beat.crontabschedule',
-                           'django_celery_beat.intervalschedule'),
-                "items": [
-                    {
-                        "title": "Periodic Tasks",
-                        "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
-                    },
-                    {
-                        "title": "Crontab",
-                        "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
-                    },
-                    {
-                        "title": "Intervals",
-                        "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
-                    }
-                ]
+                    {"title": "Organizations", "icon": "business", "link": reverse_lazy("admin:core_organization_changelist")},
+                    {"title": "Users", "icon": "person", "link": reverse_lazy("admin:core_orguser_changelist")},
+                    {"title": "Cars", "icon": "car_repair", "link": reverse_lazy("admin:core_car_changelist")},
+                ],
             },
         ],
-        "SIDEBAR": {
-            "show_search": True,
-            "show_all_applications": True,
-            "navigation": [
-                {
-                    "title": "Core",
-                    "collapsible": True,
-                    "items": [
-                        {
-                            "title": "Organizations",
-                            "icon": "business",
-                            "link": reverse_lazy("admin:core_organization_changelist"),
-                        },
-                        {
-                            "title": "Users",
-                            "icon": "person",
-                            "link": reverse_lazy("admin:core_orguser_changelist"),
-                        },
-                        {
-                            "title": "Cars",
-                            "icon": "car_repair",
-                            "link": reverse_lazy("admin:core_car_changelist"),
-                        },
-                        {
-                            "title": "Car Consumption",
-                            "icon": "local_gas_station",
-                            "link": reverse_lazy("admin:core_carconsumption_changelist"),
-                        },
-                        {
-                            "title": "Car Reports",
-                            "icon": "report_problem",
-                            "link": reverse_lazy("admin:core_carreport_changelist"),
-                        },
-                        {
-                            "title": "Drivers",
-                            "icon": "drive_eta",
-                            "link": reverse_lazy("admin:core_driver_changelist"),
-                        },
-                        {
-                            "title": "Media",
-                            "icon": "image",
-                            "link": reverse_lazy("admin:core_media_changelist"),
-                        },
-                        {
-                            "title": "Report Queries",
-                            "icon": "assignment",
-                            "link": reverse_lazy("admin:core_reportquery_changelist"),
-                        },
-                    ]
-                },
-                {
-                    "title": "Celery Tasks",
-                    "collapsible": True,
-                    "items": [
-                        {
-                            "title": "Tasks",
-                            "icon": "task",
-                            "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
-                        },
-                        {
-                            "title": "Crontab",
-                            "icon": "update",
-                            "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
-                        },
-                        {
-                            "title": "Intervals",
-                            "icon": "arrow_range",
-                            "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
-                        },
-                    ]
-                },
-            ]
-        },
-    }
-
-
-UNFOLD = get_admin_links()
-
-## SWAGGER REGION
-
-API_TITLE = "Fuel patrol API"
-API_VERSION = "1.0.1"
-
-REST_FRAMEWORK = {
-    'DEFAULT_FILTER_BACKENDS': (
-        'django_filters.rest_framework.DjangoFilterBackend',
-        'rest_framework.filters.SearchFilter',
-        'rest_framework.filters.OrderingFilter',
-    ),
-    'DEFAULT_RENDERER_CLASSES': (
-        'rest_framework.renderers.JSONRenderer',
-    )
+    },
 }
 
-## LOGGING REGION
-
+# Logging
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -391,5 +238,61 @@ LOGGING = {
     },
 }
 
-## CUSTOM_AUTH_USER
+# Swagger settings
+SWAGGER_SETTINGS = {
+    'SECURITY_DEFINITIONS': {
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'Введите токен в формате: Bearer <токен>',
+        }
+    },
+    'USE_SESSION_AUTH': False,  # Отключаем сессионную аутентификацию
+}
+
+# REST Framework settings
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Используем JWT
+        'rest_framework.authentication.SessionAuthentication',  # Опционально, для админки
+        'rest_framework.authentication.BasicAuthentication',  # Опционально
+    ],
+}
+
+# Simple JWT settings
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=4),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': False,
+
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_TYPE_CLAIM': 'token_type',
+
+    'JTI_CLAIM': 'jti',
+
+    'SLIDING_TOKEN_REFRESH_EXP_CLAIM': 'refresh_exp',
+    'SLIDING_TOKEN_LIFETIME': timedelta(hours=12),
+    'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
+}
+
+# Custom user model
 AUTH_USER_MODEL = 'core.OrgUser'
+
+# Authentication backends
+# AUTHENTICATION_BACKENDS = [
+#     'django.contrib.auth.backends.ModelBackend',
+# ]

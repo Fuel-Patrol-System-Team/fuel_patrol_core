@@ -4,14 +4,14 @@ import pathlib
 from datetime import datetime
 
 from celery import chord, shared_task, chain
-from django.db import close_old_connections
 from influxdb_client import Point
 import pandas as pd
 import polars as pl
 
 from app.celery import app as celery_app
 from django.conf import settings
-from core.models import ReportQuery, Media, Organization, Car, CarReport
+from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
+from core.services.csv_parsing.utils import parse_cars, parse_norma
 from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
 from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, merge, preprocess
@@ -23,6 +23,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 # Размер батча
 BATCH_SIZE = 500_000
 
+
+##TODO: Сделать более гибким (Т.е. история про дозагрузку данных)
+##TODO: Проверить уведомления и сделать норм вывод
 
 @shared_task(
     bind=True,
@@ -150,6 +153,7 @@ def save_leak_results(self, result_df, report_query_id):
         send_telegram_message(organization.bot_token, organization.chat_id, f"Error in save_leak_results: {e}")
         raise self.retry(exc=e)
 
+
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),
@@ -248,7 +252,8 @@ def check_and_process_reports(self):
         organizations = Organization.objects.all()
 
         for organization in organizations:
-            report_query = ReportQuery.objects.filter(organization=organization, flux_parsed=False).exclude(status='completed').last()
+            report_query = ReportQuery.objects.filter(organization=organization, flux_parsed=False).exclude(
+                status='completed').last()
             if not report_query:
                 logger.info(f"No pending report queries found for organization {organization.name}.")
                 continue
@@ -264,4 +269,76 @@ def check_and_process_reports(self):
 
     except Exception as e:
         logger.error(f"Error in check_and_process_reports: {e}")
+        raise self.retry(exc=e)
+
+## TODO: Добавить уведомления
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    soft_time_limit=300,
+    priority=5,
+)
+def parse_cars_and_norms_from_media(self, report_query_id):
+    try:
+        logger.info(f"Starting parsing cars from media for report query {report_query_id}...")
+        report_query = ReportQuery.objects.get(id=report_query_id)
+        organization = report_query.organization
+
+        auto_media = Media.objects.filter(report_query=report_query, type="auto").first()
+        if not auto_media:
+            logger.info(f"No auto media found for report query {report_query.id}.")
+            return
+
+        auto_file_path = auto_media.file.path
+        logger.info(f"Processing auto file: {auto_file_path}")
+
+        parsed_cars = parse_cars(pathlib.Path(auto_file_path))
+
+        for _, row in parsed_cars.iterrows():
+            car, created = Car.objects.get_or_create(
+                guid=row['guid'],
+                defaults={
+                    'name': row['name'],
+                    'description': row['description'],
+                    'organization': organization
+                }
+            )
+            if not created:
+                car.name = row['name']
+                car.description = row['description']
+                car.save()
+
+        logger.info(f"Cars data parsed and saved for report query {report_query_id}.")
+
+        norm_media = Media.objects.filter(report_query=report_query, type="norm").first()
+        if not norm_media:
+            logger.info(f"No norm media found for report query {report_query.id}.")
+            return
+
+        norm_file_path = norm_media.file.path
+        logger.info(f"Processing norm file: {norm_file_path}")
+
+        parsed_norms = parse_norma(pathlib.Path(norm_file_path))
+
+        for _, row in parsed_norms.iterrows():
+            try:
+                car = Car.objects.get(guid=row['auto'], organization=organization)
+                CarConsumption.objects.create(
+                    car=car,
+                    winter_volume=row['winter_norm'],
+                    summer_volume=row['summer_norm'],
+                    valid_period=row['due']
+                )
+            except Car.DoesNotExist:
+                logger.warning(f"Car with guid {row['auto']} not found for organization {organization.name}.")
+                continue
+
+        logger.info(f"Norms data parsed and linked to cars for report query {report_query_id}.")
+        send_telegram_message(organization.bot_token, organization.chat_id,
+                              f"Cars and norms data parsed and saved for report query {report_query_id}.")
+
+    except Exception as e:
+        logger.error(f"Error in parse_cars_from_media: {e}")
         raise self.retry(exc=e)

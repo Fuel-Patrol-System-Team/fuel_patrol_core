@@ -39,7 +39,7 @@ class OrgUser(AbstractUser):
     )
 
     def __str__(self):
-        return self.username
+        return str(self.id)
 
 
 class Car(models.Model):
@@ -75,6 +75,7 @@ class ReportQuery(models.Model):
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
     status = models.CharField(max_length=50, choices=QUERY_STATUS, **NULLABLE)
     flux_parsed = models.BooleanField(default=False)
+    csv_parsed = models.BooleanField(default=False)
 
     def __str__(self):
         return self.organization.name

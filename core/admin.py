@@ -41,7 +41,7 @@ class OrganizationAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(OrgUser)
 class OrgUserAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'username', 'org')
+    list_display = ('id', 'username', 'org','password')
     list_filter = ('org',)
     search_fields = ('username', 'org__name')
     export_form_class = UnfoldExportForm
