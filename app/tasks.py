@@ -13,11 +13,11 @@ from django.db import transaction
 from django.db.models import Q
 from django.core.exceptions import ObjectDoesNotExist
 from app.celery import app as celery_app
+from app.settings import BASE_DIR
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
 from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
 from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, preprocess, merge
-
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -67,7 +67,7 @@ def parse_cars_task(self, report_query_id):
 
             cars_df = pd.read_csv(
                 path,
-                usecols=['guid', 'gos_nomer', 'vin_nomer', 'marka', 'model', 'description'],
+                usecols=['guid', 'gos_nomer', 'vin_nomer', 'marka', 'model', 'description', 'sl_tip_dvigat'],
                 encoding='utf-8',
                 on_bad_lines='skip',
                 engine='python'
@@ -95,12 +95,13 @@ def parse_cars_task(self, report_query_id):
         cars_df['model'].replace(np.nan, "", inplace=True)
         cars_df['vin_nomer'].replace(np.nan, "", inplace=True)
         cars_df['gos_nomer'].replace(np.nan, "", inplace=True)
+        cars_df['sl_tip_dvigat'].replace(np.nan, 0, inplace=True)
         logger.info("Пропущенные значения заменены на пустые строки.")
 
         cars_df['name'] = cars_df['marka'] + " " + cars_df['model'] + " " + cars_df['vin_nomer'] + cars_df['gos_nomer']
         logger.info(f"Сформированы имена автомобилей, пример: {cars_df['name'].head().tolist()}")
 
-        parsed_cars = cars_df[['guid', 'name', 'description']]
+        parsed_cars = cars_df[['guid', 'name', 'description', 'sl_tip_dvigat']]
         logger.info(
             f"Итоговый DataFrame автомобилей: {parsed_cars.shape}, колонки: {parsed_cars.columns.tolist()}, пример: {parsed_cars.head().to_dict()}")
 
@@ -127,7 +128,8 @@ def parse_cars_task(self, report_query_id):
                         defaults={
                             'name': str(row['name']).strip(),
                             'description': str(row['description']).strip() if pd.notna(row['description']) else "",
-                            'organization': organization
+                            'organization': organization,
+                            'engine_type':str(row['sl_tip_dvigat']).strip() if pd.notna(row['sl_tip_dvigat']) else ""
                         }
                     )
                     if not created:
@@ -370,7 +372,6 @@ def process_raw_data_task(self, report_query_id):
         report_query = ReportQuery.objects.get(id=report_query_id)
         organization = report_query.organization
 
-
         if not ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists():
             logger.error(f"Данные об автомобилях для организации {organization.name} не завершены")
             report_query.status = 'error'
@@ -395,7 +396,6 @@ def process_raw_data_task(self, report_query_id):
                                   f"Сырой медиафайл не найден для запроса отчёта {report_query_id}.")
             return
 
-
         raw_df = pl.read_csv(
             raw_media.file.path,
             columns=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
@@ -405,14 +405,13 @@ def process_raw_data_task(self, report_query_id):
         )
         logger.info(f"Загружено {raw_df.height} строк сырых данных для обработки. Колонки: {raw_df.columns}")
 
-
         cars = Car.objects.filter(organization=organization).select_related('organization')
-        car_data = pl.from_pandas(pd.DataFrame(list(cars.values('id', 'name'))).astype({'id': str}))
+        car_data = pl.from_pandas(pd.DataFrame(list(cars.values('id', 'name', 'engine_type'))).astype({'id': str}))
+        car_data = car_data.rename({'engine_type': 'sl_tip_dvigat'})
         logger.info(
             f"Данные автомобилей: {car_data.shape}, колонки: {car_data.columns}, пример ID: {car_data['id'].head().to_list()}")
 
         consumptions = CarConsumption.objects.filter(car__organization=organization).select_related('car')
-
         norma_df = pl.from_pandas(pd.DataFrame(list(consumptions.values(
             'car__id', 'winter_volume', 'summer_volume', 'valid_period'
         ))).astype({'car__id': str})).rename({
@@ -424,17 +423,34 @@ def process_raw_data_task(self, report_query_id):
         logger.info(
             f"Данные норм: {norma_df.shape}, колонки: {norma_df.columns}, пример sl_avto: {norma_df['sl_avto'].head().to_list()}")
 
+        base_dir = pathlib.Path(settings.BASE_DIR)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_id = report_query_id
+
+        ## TODO: УДАЛИТЬ ПРИ РЕЛИЗЕ
+        raw_df_pandas = raw_df.to_pandas()
+        raw_csv_path = base_dir / f"raw_df_{report_id}_{timestamp}.csv"
+        raw_df_pandas.to_csv(raw_csv_path, index=False)
+        logger.info(f"Сохранён raw_df в {raw_csv_path} как CSV")
+
+        car_data_pandas = car_data.to_pandas()
+        car_csv_path = base_dir / f"car_data_{report_id}_{timestamp}.csv"
+        car_data_pandas.to_csv(car_csv_path, index=False)
+        logger.info(f"Сохранён car_data в {car_csv_path} как CSV")
+
+        norma_df_pandas = norma_df.to_pandas()
+        norma_csv_path = base_dir / f"norma_df_{report_id}_{timestamp}.csv"
+        norma_df_pandas.to_csv(norma_csv_path, index=False)
+        logger.info(f"Сохранён norma_df в {norma_csv_path} как CSV")
+
         report_query.status = 'pending'
         report_query.save()
-
 
         client, write_api = get_influx_write_client()
         logger.info(f"Инициализирован клиент InfluxDB. Bucket: {INFLUXDB_BUCKET}")
 
-
         chunks = raw_df.partition_by(by=["auto"], maintain_order=False, as_dict=False)
         logger.info(f"Разделено на {len(chunks)} чанков по машинам")
-
 
         chunk_tasks = [
             process_chunk.s(chunk.to_pandas(), car_data.to_pandas(), norma_df.to_pandas(), report_query_id,
@@ -495,22 +511,24 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
     try:
         logger.info(f"Обработка чанка с {len(chunk_df)} строками для запроса отчёта {report_query_id}")
 
-
         logger.debug(f"Тип chunk_df: {type(chunk_df)}")
-        logger.debug(f"Chunk data sample: {chunk_df.head().to_dict() if hasattr(chunk_df, 'head') else 'No head method'}")
-        logger.debug(f"Тип car_data: {type(car_data)}, Car data shape: {car_data.shape if isinstance(car_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {car_data.columns if hasattr(car_data, 'columns') else 'No columns'}")
-        logger.debug(f"Тип norma_data: {type(norma_data)}, Norma data shape: {norma_data.shape if isinstance(norma_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {norma_data.columns if hasattr(norma_data, 'columns') else 'No columns'}")
-
+        logger.debug(
+            f"Chunk data sample: {chunk_df.head().to_dict() if hasattr(chunk_df, 'head') else 'No head method'}")
+        logger.debug(
+            f"Тип car_data: {type(car_data)}, Car data shape: {car_data.shape if isinstance(car_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {car_data.columns if hasattr(car_data, 'columns') else 'No columns'}")
+        logger.debug(
+            f"Тип norma_data: {type(norma_data)}, Norma data shape: {norma_data.shape if isinstance(norma_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {norma_data.columns if hasattr(norma_data, 'columns') else 'No columns'}")
 
         if isinstance(chunk_df, pl.DataFrame):
             chunk_pl = chunk_df
-            logger.info(f"Чанк уже в формате polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
+            logger.info(
+                f"Чанк уже в формате polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
         elif isinstance(chunk_df, pd.DataFrame):
             chunk_pl = pl.from_pandas(chunk_df)
-            logger.info(f"Преобразован pandas.DataFrame в polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
+            logger.info(
+                f"Преобразован pandas.DataFrame в polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
         else:
             raise ValueError(f"Неподдерживаемый тип данных для chunk_df: {type(chunk_df)}")
-
 
         if 'auto' in chunk_pl.columns:
             chunk_pl = chunk_pl.with_columns(pl.col('auto').cast(pl.Utf8))
@@ -519,10 +537,10 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
             logger.error(f"Колонка 'auto' отсутствует в chunk_pl")
             raise KeyError("Колонка 'auto' отсутствует в данных чанка")
 
-
         try:
             chunk_pandas = chunk_pl.to_pandas()
-            logger.info(f"Преобразован в pandas.DataFrame для preprocess, размер: {chunk_pandas.shape}, колонки: {chunk_pandas.columns.tolist()}")
+            logger.info(
+                f"Преобразован в pandas.DataFrame для preprocess, размер: {chunk_pandas.shape}, колонки: {chunk_pandas.columns.tolist()}")
         except AttributeError as e:
             logger.error(f"Ошибка при преобразовании chunk_pl в pandas.DataFrame: {e}")
             raise
@@ -530,10 +548,9 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
             logger.error(f"Неожиданная ошибка при преобразовании chunk_pl в pandas.DataFrame: {e}")
             raise
 
-
         preprocessed_df = preprocess(chunk_pandas)
-        logger.info(f"Преобразованные данные (preprocess): {preprocessed_df.shape if preprocessed_df is not None else 'None'}, колонки: {preprocessed_df.columns.tolist() if preprocessed_df is not None else 'None'}")
-
+        logger.info(
+            f"Преобразованные данные (preprocess): {preprocessed_df.shape if preprocessed_df is not None else 'None'}, колонки: {preprocessed_df.columns.tolist() if preprocessed_df is not None else 'None'}")
 
         if isinstance(car_data, pl.DataFrame):
             car_data_pandas = car_data.to_pandas()
@@ -545,42 +562,31 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
             norma_data_pandas = norma_data.to_pandas()
         else:
             norma_data_pandas = norma_data
-        logger.info(f"Norma data в формате pandas: {norma_data_pandas.shape}, колонки: {norma_data_pandas.columns.tolist()}")
-
+        logger.info(
+            f"Norma data в формате pandas: {norma_data_pandas.shape}, колонки: {norma_data_pandas.columns.tolist()}")
 
         car_data_pandas['id'] = car_data_pandas['id'].astype(str)
         norma_data_pandas['sl_avto'] = norma_data_pandas['sl_avto'].astype(str)
 
-
-        if 'id' in car_data_pandas.columns and 'guid' not in car_data_pandas.columns:
-            car_data_pandas = car_data_pandas.rename(columns={'id': 'guid'})
-            logger.info(f"Переименована колонка 'id' в 'guid' в car_data_pandas: {car_data_pandas.columns.tolist()}")
-
-
         try:
             merged_df = merge(car_data_pandas, preprocessed_df)
-            logger.info(f"Объединённые данные (merge): {merged_df.shape if merged_df is not None else 'None'}, колонки: {merged_df.columns.tolist() if merged_df is not None else 'None'}")
+            logger.info(
+                f"Объединённые данные (merge): {merged_df.shape if merged_df is not None else 'None'}, колонки: {merged_df.columns.tolist() if merged_df is not None else 'None'}")
         except KeyError as e:
             logger.error(f"Ошибка при слиянии данных: отсутствует колонка {e}")
             raise
 
-
         try:
             result_df = fuel_leak_calculate_standart(merged_df, norma_data_pandas)
-            logger.info(f"Результат расчёта утечек (fuel_leak_calculate_standart): {result_df.shape if result_df is not None else 'None'}, колонки: {result_df.columns.tolist() if result_df is not None else 'None'}")
+            logger.info(
+                f"Результат расчёта утечек (fuel_leak_calculate_standart): {result_df.shape if result_df is not None else 'None'}, колонки: {result_df.columns.tolist() if result_df is not None else 'None'}")
         except KeyError as e:
             logger.error(f"Ошибка в fuel_leak_calculate_standart: отсутствует колонка {e}")
             raise
 
-
         client, write_api = get_influx_write_client()
         points = []
         for _, row in chunk_pandas.iterrows():
-            try:
-                timestamp = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                logger.warning(f"Неверный формат времени в строке: {row}")
-                continue
             pos_s = float(row['pos_s']) if pd.notna(row['pos_s']) else None
             fuel_level = float(row['calc_sensors_fuel_level']) if pd.notna(row['calc_sensors_fuel_level']) else 0.0
             voltage = float(row['calc_sensors_voltage']) if pd.notna(row['calc_sensors_voltage']) else 0.0
@@ -590,21 +596,18 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
                 .tag("auto", str(row['auto'])) \
                 .field("pos_s", pos_s) \
                 .field("calc_sensors_fuel_level", fuel_level) \
-                .field("calc_sensors_voltage", voltage) \
-                .time(timestamp)
+                .field("calc_sensors_voltage", voltage)
             points.append(point)
 
         write_api.write(bucket=INFLUXDB_BUCKET, record=points)
         logger.info(f"Сохранено {len(points)} точек в InfluxDB для запроса отчёта {report_query_id}")
         client.close()
 
-
         return result_df
 
     except Exception as e:
         logger.error(f"Ошибка в process_chunk для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
-
 
 
 @shared_task(
@@ -631,7 +634,8 @@ def save_leak_results(self, results, report_query_id):
 
         result_df = pd.concat(results)
         logger.info(f"Объединённый DataFrame результатов: {result_df.shape}, колонки: {result_df.columns.tolist()}")
-
+        raw_csv_path = BASE_DIR / f"res_df.csv"
+        result_df.to_csv(raw_csv_path, index=False)
         cars = {car.id: car for car in Car.objects.filter(organization=organization).only('id')}
         logger.info(f"Загружено {len(cars)} автомобилей для организации {organization.name}")
 
@@ -639,15 +643,17 @@ def save_leak_results(self, results, report_query_id):
             for _, row in result_df[result_df['is_leak']].iterrows():
                 try:
                     car_id = str(row['auto'])
-                    car = cars.get(car_id)
-                    if not car:
-                        logger.warning(f"Автомобиль с id {car_id} не найден для организации {organization.name}")
-                        continue
+                    car, created = Car.objects.get_or_create(id=car_id,defaults={
+                            'name': str(row['name']).strip(),
+                            'description': " ",
+                            'organization': organization,
+                            'engine_type':str(row['sl_tip_dvigat']).strip() if pd.notna(row['sl_tip_dvigat']) else ""
+                        })
 
                     CarReport.objects.create(
                         car=car,
                         datetime=pd.to_datetime(row['timestamp'], errors='coerce'),
-                        volume=float(row['spent_fuel']) if pd.notna(row['spent_fuel']) else 0,
+                        volume=float(row['leak']) if pd.notna(row['leak']) else 0,
                         status=bool(row['is_leak'])
                     )
                     logger.debug(f"Сохранён отчёт об утечке для автомобиля {car_id}")
@@ -682,7 +688,6 @@ def save_leak_results(self, results, report_query_id):
         raise self.retry(exc=e)
 
 
-
 @celery_app.task(
     bind=True,
     autoretry_for=(Exception,),
@@ -709,7 +714,6 @@ def check_and_process_raw_reports(self):
 
             if not report_query:
                 continue
-
 
             if not ReportQuery.objects.filter(organization=organization, media__type="auto",
                                               status="completed").exists():

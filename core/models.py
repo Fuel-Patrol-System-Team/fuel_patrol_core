@@ -66,6 +66,7 @@ class Car(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
     name = models.CharField(max_length=100, verbose_name="Название")
     description = models.TextField(verbose_name="Описание")
+    engine_type = models.IntegerField(default=0)
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, verbose_name="Организация")
 
     class Meta:

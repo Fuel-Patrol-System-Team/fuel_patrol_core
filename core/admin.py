@@ -87,10 +87,10 @@ class OrgUserAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(Car)
 class CarAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'name', 'description', 'organization_display')
-    list_filter = ('organization', 'name')
+    list_display = ('id', 'name', 'description', 'organization_display','engine_type')
+    list_filter = ('organization','engine_type')
     search_fields = ('name', 'description', 'organization__name', 'id')
-    ordering = ('name',)
+    ordering = ('name','engine_type')
     list_per_page = 25
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
