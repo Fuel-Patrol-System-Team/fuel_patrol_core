@@ -161,7 +161,6 @@ STATICFILES_FINDERS = (
 
 # Media files
 MEDIA_URL = '/media/'
-MEDIA_ROOT = os.getenv('MEDIA_ROOT', BASE_DIR / 'media')
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
@@ -189,6 +188,7 @@ CELERY_FLOWER_USER = os.getenv("CELERY_FLOWER_USER", "admin")
 CELERY_FLOWER_PASSWORD = os.getenv("CELERY_FLOWER_PASSWORD", "admin")
 CELERY_FLOWER_PORT = os.getenv("CELERY_FLOWER_PORT", "5555")
 CELERY_FLOWER_ADDRESS = os.getenv("CELERY_FLOWER_ADDRESS", "127.0.0.1")
+
 
 # Custom admin settings
 def get_admin_links():
@@ -412,7 +412,3 @@ SIMPLE_JWT = {
 # Custom user model
 AUTH_USER_MODEL = 'core.OrgUser'
 
-# Authentication backends
-# AUTHENTICATION_BACKENDS = [
-#     'django.contrib.auth.backends.ModelBackend',
-# ]

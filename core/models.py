@@ -6,6 +6,8 @@ from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
+from core.services.media.utils import calculate_file_hash
+
 NULLABLE = {
     "blank": True,
     "null": True
@@ -140,6 +142,7 @@ class Media(models.Model):
     filename = models.CharField(max_length=255, verbose_name="Имя файла")
     type = models.CharField(max_length=50, **NULLABLE, choices=MEDIA_TYPE, verbose_name="Тип файла")
     report_query = models.ForeignKey(ReportQuery, **NULLABLE, on_delete=models.CASCADE, verbose_name="Запрос отчёта")
+    file_hash = models.CharField(max_length=64, unique=True, **NULLABLE, verbose_name="Хэш файла")
 
     class Meta:
         verbose_name = "Медиафайл"
@@ -155,6 +158,7 @@ class Media(models.Model):
     def save(self, *args, **kwargs):
         if self.file:
             self.size = self.file.size
+            self.file_hash = calculate_file_hash(self.file)
         super().save(*args, **kwargs)
 
 

@@ -20,3 +20,7 @@
 ```bash
     celery -A app flower --port=5555 --basic_auth=admin:admin
 ```
+### Для очистки очереди celery
+```bash
+    celery -A app purge
+```

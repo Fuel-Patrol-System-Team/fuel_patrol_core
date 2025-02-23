@@ -14,14 +14,14 @@ from app.tasks import parse_cars_task, parse_norms_task, process_raw_data_task
 from drf_yasg.utils import swagger_auto_schema
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver
 from .pagination import StandardResultsSetPagination
-from .rest import ATTACH_MEDIA_SCHEMA, MEDIA_UPLOAD_SCHEMA
+from .rest import MEDIA_UPLOAD_SCHEMA
 from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer
 )
-from .services.media.utils import get_upload_path
-from .responses import media_upload_response, attach_media_response, error_response, user_registered_response
+from .services.media.utils import get_upload_path, calculate_file_hash
+from .responses import error_response, user_registered_response, attach_media_response
 from .permissions import IsOrgMember
 
 logger = logging.getLogger(__name__)
@@ -48,11 +48,24 @@ class MediaUploadAPIView(APIView):
             file_id = uuid.uuid4()
             media_type, _ = mimetypes.guess_type(uploaded_file.name)
             file_extension = uploaded_file.name.split('.')[-1].lower()
+            file_hash = calculate_file_hash(uploaded_file)
             new_filename = f"{file_id}.{file_extension}"
             file_size = uploaded_file.size
 
             organization = request.user.org
             report_query = ReportQuery.objects.create(organization=organization, status="created")
+
+            existing_media = Media.objects.filter(
+                filename=uploaded_file.name,
+                size=uploaded_file.size,
+                type=file_type,
+                file_hash=file_hash
+            ).first()
+
+            if existing_media:
+                logger.info(f"Identical file already exists: {existing_media.id}")
+                report_query = existing_media.report_query
+                return attach_media_response(report_query)
 
             media = Media(
                 id=file_id,
@@ -60,7 +73,8 @@ class MediaUploadAPIView(APIView):
                 size=file_size,
                 filename=uploaded_file.name,
                 type=file_type,
-                report_query=report_query
+                report_query=report_query,
+                file_hash=file_hash
             )
 
             upload_path = get_upload_path(new_filename)
@@ -85,7 +99,7 @@ class MediaUploadAPIView(APIView):
                 logger.info(f"Raw file uploaded for report query {report_query.id}, awaiting cron processing")
 
             logger.info(f"Media file uploaded successfully: {media.id}")
-            return media_upload_response(media)
+            return attach_media_response(report_query)
 
         except CeleryError as e:
             logger.error(f"Celery error while launching task: {e}")
@@ -129,7 +143,6 @@ class OrganizationDetailAPIView(RetrieveAPIView):
     serializer_class = OrganizationOutputSerializer
     queryset = Organization.objects.all()
     lookup_field = 'pk'
-
 
 
 class OrgUserListAPIView(ListAPIView):
