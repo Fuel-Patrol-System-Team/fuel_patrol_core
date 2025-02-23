@@ -1,67 +1,179 @@
 import logging
-import os
 import pathlib
 from datetime import datetime
 
+import numpy as np
 from celery import chord, shared_task, chain
+from celery.exceptions import SoftTimeLimitExceeded
 from influxdb_client import Point
 import pandas as pd
 import polars as pl
-
-from app.celery import app as celery_app
 from django.conf import settings
+from django.db import transaction
+from django.db.models import Q
+from django.core.exceptions import ObjectDoesNotExist
+from app.celery import app as celery_app
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
-from core.services.csv_parsing.utils import parse_cars, parse_norma
 from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
 from core.services.notifications.tg_bot import send_telegram_message
-from core.services.preprocessing.utils import fuel_leak_calculate_standart, merge, preprocess
+from core.services.preprocessing.utils import fuel_leak_calculate_standart, preprocess, merge
 
-# Настройка логирования
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Размер батча
 BATCH_SIZE = 500_000
 
+celery_app.conf.task_concurrency = 4
 
-##TODO: Сделать более гибким (Т.е. история про дозагрузку данных)
-##TODO: Проверить уведомления и сделать норм вывод
+logger = logging.getLogger(__name__)
+
 
 @shared_task(
     bind=True,
     autoretry_for=(Exception,),
     max_retries=3,
     retry_backoff=True,
-    soft_time_limit=60,
-    priority=10,
+    soft_time_limit=300,
+    priority=5,
+    rate_limit="10/m"
 )
-def thread_task(self, auto_df: pd.DataFrame, norma_df: pd.DataFrame, chunk_df: pl.DataFrame):
+def parse_cars_task(self, report_query_id):
+    report_query = None
+    organization = None
+
     try:
-        logger.info(f"Processing batch with {chunk_df.shape[0]} rows")
-        result_df = fuel_leak_calculate_standart(merge(auto_df, preprocess(chunk_df)), norma_rasx_df=norma_df)
-        return result_df
-    except Exception as e:
-        logger.error(f"Error in thread_task: {e}")
+        logger.info(f"Начат парсинг автомобилей для запроса отчёта {report_query_id}...")
+        report_query = ReportQuery.objects.get(id=report_query_id)
+        organization = report_query.organization
+
+        auto_media = Media.objects.filter(report_query=report_query, type="auto").first()
+        if not auto_media:
+            logger.error(f"Медиафайл автомобилей не найден для запроса отчёта {report_query_id}.")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Медиафайл автомобилей не найден для запроса отчёта {report_query_id}.")
+            return
+
+        auto_file_path = auto_media.file.path
+        logger.info(f"Обработка файла автомобилей: {auto_file_path}")
+        path = pathlib.Path(auto_file_path)
+        logger.info(f"Путь к файлу: {path}")
+
+        logger.info("Начало парсинга CSV файла автомобилей...")
+        try:
+
+            cars_df = pd.read_csv(
+                path,
+                usecols=['guid', 'gos_nomer', 'vin_nomer', 'marka', 'model', 'description'],
+                encoding='utf-8',
+                on_bad_lines='skip',
+                engine='python'
+            )
+            logger.info(f"Размер прочитанного DataFrame: {cars_df.shape}, колонки: {cars_df.columns.tolist()}")
+        except Exception as e:
+            logger.error(f"Ошибка чтения CSV файла {path}: {e}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка чтения файла автомобилей для запроса отчёта {report_query_id}: {e}")
+            return
+
+        if cars_df.empty:
+            logger.error(f"Пустой CSV файл или нет валидных данных в {path}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Нет валидных данных об автомобилях в файле для запроса отчёта {report_query_id}")
+            return
+
+        cars_df['marka'].replace(np.nan, "", inplace=True)
+        cars_df['model'].replace(np.nan, "", inplace=True)
+        cars_df['vin_nomer'].replace(np.nan, "", inplace=True)
+        cars_df['gos_nomer'].replace(np.nan, "", inplace=True)
+        logger.info("Пропущенные значения заменены на пустые строки.")
+
+        cars_df['name'] = cars_df['marka'] + " " + cars_df['model'] + " " + cars_df['vin_nomer'] + cars_df['gos_nomer']
+        logger.info(f"Сформированы имена автомобилей, пример: {cars_df['name'].head().tolist()}")
+
+        parsed_cars = cars_df[['guid', 'name', 'description']]
+        logger.info(
+            f"Итоговый DataFrame автомобилей: {parsed_cars.shape}, колонки: {parsed_cars.columns.tolist()}, пример: {parsed_cars.head().to_dict()}")
+
+        required_columns = ['guid', 'name', 'description']
+        missing_columns = [col for col in required_columns if col not in parsed_cars.columns]
+        if missing_columns:
+            logger.error(f"Отсутствуют обязательные колонки в parsed_cars: {missing_columns}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Отсутствуют колонки в данных автомобилей для запроса отчёта {report_query_id}: {missing_columns}")
+            return
+
+        with transaction.atomic():
+            for _, row in parsed_cars.iterrows():
+                try:
+                    if not all(pd.notna(row[col]) for col in required_columns):
+                        logger.warning(f"Отсутствуют или содержат NaN значения в строке: {row}")
+                        continue
+
+                    car, created = Car.objects.get_or_create(
+                        id=str(row['guid']),
+                        defaults={
+                            'name': str(row['name']).strip(),
+                            'description': str(row['description']).strip() if pd.notna(row['description']) else "",
+                            'organization': organization
+                        }
+                    )
+                    if not created:
+                        car.name = str(row['name']).strip()
+                        car.description = str(row['description']).strip() if pd.notna(row['description']) else ""
+                        car.save()
+                    logger.debug(f"Автомобиль {row['guid']} сохранён или обновлён: {car.name}")
+                except Exception as e:
+                    logger.error(f"Ошибка при сохранении автомобиля {row['guid']}: {e}")
+                    continue
+
+        if report_query:
+            report_query.status = 'completed'
+            report_query.save()
+            logger.info(f"Данные автомобилей успешно распарсены и сохранены для запроса отчёта {report_query_id}.")
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Данные автомобилей успешно распарсены и сохранены для запроса отчёта {report_query_id}.")
+
+    except SoftTimeLimitExceeded as e:
+        logger.error(f"Превышено временное ограничение в parse_cars_task для запроса отчёта {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Превышено временное ограничение в parse_cars_task для запроса отчёта {report_query_id}")
+        raise
+
+    except ObjectDoesNotExist as e:
+        logger.error(f"ReportQuery или Media не найдены для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"ReportQuery или Media не найдены для запроса отчёта {report_query_id}")
         raise self.retry(exc=e)
 
-
-@shared_task(
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=2,
-    retry_backoff=True,
-    soft_time_limit=120,
-    priority=5,
-)
-def merge_parts_task(self, results):
-    try:
-        logger.info("Merging results...")
-        merge_result = pd.concat(results)
-        logger.info(f"Merged DataFrame shape: {merge_result.shape}")
-        merge_result = merge_result[['auto', 'timestamp', 'pos_s', 'spent_fuel', 'is_leak', 'leak']]
-        return merge_result
     except Exception as e:
-        logger.error(f"Error in merge_parts_task: {e}")
+        logger.error(f"Ошибка в parse_cars_task для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка в parse_cars_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
 
@@ -72,169 +184,503 @@ def merge_parts_task(self, results):
     retry_backoff=True,
     soft_time_limit=300,
     priority=5,
+    rate_limit="10/m"
 )
-def process_report_query(self, report_query_id):
+def parse_norms_task(self, report_query_id):
+    report_query = None
+    organization = None
+
     try:
-        logger.info(f"Processing report query {report_query_id}...")
+        logger.info(f"Начат парсинг норм для запроса отчёта {report_query_id}...")
         report_query = ReportQuery.objects.get(id=report_query_id)
         organization = report_query.organization
 
-        auto_df = Media.objects.get(report_query_id=report_query.id, type="auto")
-        norma_df = Media.objects.get(report_query_id=report_query.id, type="norm")
-        raw_df = Media.objects.get(report_query_id=report_query.id, type="raw")
+        norm_media = Media.objects.filter(report_query=report_query, type="norm").first()
+        if not norm_media:
+            logger.error(f"Медиафайл норм не найден для запроса отчёта {report_query_id}.")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Медиафайл норм не найден для запроса отчёта {report_query_id}.")
+            return
 
-        media_root = settings.MEDIA_ROOT
-        auto_df_path = pathlib.Path.joinpath(media_root, str(auto_df.file))
-        auto_df = pd.read_csv(f"{auto_df_path}")
-        norm_df_path = pathlib.Path.joinpath(media_root, str(norma_df.file))
-        raw_df_path = pathlib.Path.joinpath(media_root, str(raw_df.file))
-        norma_df = pd.read_csv(f"{norm_df_path}")
-        chunk_df = pd.read_csv(f"{raw_df_path}",
-                               usecols=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage',
-                                        'auto'],
-                               dtype={'auto': str, 'calc_sensors_fuel_level': float, 'pos_s': float, 'timestamp': str,
-                                      'calc_sensors_voltage': float}, chunksize=BATCH_SIZE)
+        if not ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists():
+            logger.error(f"Данные об автомобилях для организации {organization.name} не завершены.")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Сначала загрузите и обработайте файл 'auto' для запроса отчёта {report_query_id}")
+            return
 
-        logger.info(f"Loaded batches for processing for organization {organization.name}.")
-        send_telegram_message(organization.bot_token, organization.chat_id,
-                              f"Loaded batches for processing for organization {organization.name}.")
+        norm_file_path = norm_media.file.path
+        logger.info(f"Обработка файла норм: {norm_file_path}")
+        path = pathlib.Path(norm_file_path)
+        logger.info(f"Путь к файлу: {path}")
+
+        logger.info("Начало парсинга CSV файла норм...")
+        try:
+            norms = pd.read_csv(path, encoding='utf-8', on_bad_lines='skip', engine='python')
+            logger.info(f"Размер прочитанного DataFrame: {norms.shape}, колонки: {norms.columns.tolist()}")
+        except Exception as e:
+            logger.error(f"Ошибка чтения CSV файла {path}: {e}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка чтения файла норм для запроса отчёта {report_query_id}: {e}")
+            return
+
+        norms = norms.groupby(['sl_avto', 'vid_norm_rasx']).last().reset_index()
+        logger.info(f"После группировки: {norms.shape}, уникальные vid_norm_rasx: {norms['vid_norm_rasx'].unique()}")
+
+        NORM_SUMMER = 'Норма на 100 км (Норма за час для ТС по моточасам) Летняя'
+        NORM_WINTER = 'Норма на 100 км (Норма за час для ТС по моточасам) Зимняя'
+        norms = norms[norms['vid_norm_rasx'].isin([NORM_SUMMER, NORM_WINTER])]
+        logger.info(f"После фильтрации по типам норм: {norms.shape}")
+
+        if norms.empty:
+            logger.error(f"Нет валидных данных после фильтрации в {path}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Нет валидных норм в файле для запроса отчёта {report_query_id}")
+            return
+
+        result_dict = {}
+        for _, row in norms.iterrows():
+            auto = row['sl_avto']
+            if auto not in result_dict:
+                result_dict[auto] = {'winter_norm': -1, 'summer_norm': -1, 'due': '2000-12-31'}
+
+            if row['vid_norm_rasx'] == NORM_SUMMER:
+                result_dict[auto]['summer_norm'] = float(row['norma_rasx']) if pd.notna(row['norma_rasx']) else -1
+                result_dict[auto]['due'] = pd.to_datetime(row['deystvuet_do'], errors='coerce').strftime(
+                    '%Y-%m-%d') if pd.notna(row['deystvuet_do']) else '2000-12-31'
+            elif row['vid_norm_rasx'] == NORM_WINTER:
+                result_dict[auto]['winter_norm'] = float(row['norma_rasx']) if pd.notna(row['norma_rasx']) else -1
+                result_dict[auto]['due'] = pd.to_datetime(row['deystvuet_do'], errors='coerce').strftime(
+                    '%Y-%m-%d') if pd.notna(row['deystvuet_do']) else '2000-12-31'
+
+        parsed_norms = pd.DataFrame.from_dict(result_dict, orient='index').reset_index()
+        parsed_norms = parsed_norms.rename(
+            columns={'index': 'auto', 'winter_norm': 'winter_norm', 'summer_norm': 'summer_norm', 'due': 'due'})
+        logger.info(
+            f"Итоговый DataFrame норм: {parsed_norms.shape}, колонки: {parsed_norms.columns.tolist()}, пример: {parsed_norms.head().to_dict()}")
+
+        if parsed_norms.empty or parsed_norms[['auto', 'winter_norm', 'summer_norm', 'due']].isna().all().any():
+            logger.error(f"Нет валидных данных после преобразования в {path}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Нет валидных норм в файле для запроса отчёта {report_query_id}")
+            return
+
+        required_columns = ['auto', 'winter_norm', 'summer_norm', 'due']
+        missing_columns = [col for col in required_columns if col not in parsed_norms.columns]
+        if missing_columns:
+            logger.error(f"Отсутствуют обязательные колонки в parsed_norms: {missing_columns}")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Отсутствуют колонки в данных норм для запроса отчёта {report_query_id}: {missing_columns}")
+            return
+
+        with transaction.atomic():
+            for _, row in parsed_norms.iterrows():
+                try:
+                    if not all(pd.notna(row[col]) for col in required_columns):
+                        logger.warning(f"Отсутствуют или содержат NaN значения в строке: {row}")
+                        continue
+
+                    car = Car.objects.get(id=str(row['auto']), organization=organization)
+                    CarConsumption.objects.create(
+                        car=car,
+                        winter_volume=float(row['winter_norm']) if pd.notna(row['winter_norm']) else -1,
+                        summer_volume=float(row['summer_norm']) if pd.notna(row['summer_norm']) else -1,
+                        valid_period=pd.to_datetime(row['due'], errors='coerce').date() if pd.notna(
+                            row['due']) else None
+                    )
+                except Car.DoesNotExist:
+                    logger.warning(f"Автомобиль с id {row['auto']} не найден для организации {organization.name}.")
+                    continue
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Неверный тип данных в строке {row}: {e}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Неожиданная ошибка при обработке строки {row}: {e}")
+                    continue
+
+        if report_query:
+            report_query.status = 'completed'
+            report_query.save()
+            logger.info(f"Данные норм успешно распаршены и сохранены для запроса отчёта {report_query_id}.")
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Данные норм успешно распарсены и сохранены для запроса отчёта {report_query_id}.")
+
+    except SoftTimeLimitExceeded as e:
+        logger.error(f"Превышено временное ограничение в parse_norms_task для запроса отчёта {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Превышено временное ограничение в parse_norms_task для запроса отчёта {report_query_id}")
+        raise
+
+    except ObjectDoesNotExist as e:
+        logger.error(f"ReportQuery или Media не найдены для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"ReportQuery или Media не найдены для запроса отчёта {report_query_id}")
+        raise self.retry(exc=e)
+
+    except Exception as e:
+        logger.error(f"Ошибка в parse_norms_task для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка в parse_norms_task для запроса отчёта {report_query_id}: {e}")
+        raise self.retry(exc=e)
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    soft_time_limit=1800,
+    priority=2,
+    rate_limit="2/m"
+)
+def process_raw_data_task(self, report_query_id):
+    report_query = None
+    organization = None
+    try:
+        logger.info(f"Начат обработка сырых данных для запроса отчёта {report_query_id}...")
+        report_query = ReportQuery.objects.get(id=report_query_id)
+        organization = report_query.organization
+
+
+        if not ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists():
+            logger.error(f"Данные об автомобилях для организации {organization.name} не завершены")
+            report_query.status = 'error'
+            report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Сначала загрузите и обработайте файл 'auto' для запроса отчёта {report_query_id}")
+            return
+        if not ReportQuery.objects.filter(organization=organization, media__type="norm", status="completed").exists():
+            logger.error(f"Данные норм для организации {organization.name} не завершены")
+            report_query.status = 'error'
+            report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Сначала загрузите и обработайте файл 'norm' для запроса отчёта {report_query_id}")
+            return
+
+        raw_media = Media.objects.filter(report_query=report_query, type="raw").first()
+        if not raw_media:
+            logger.error(f"Сырой медиафайл не найден для запроса отчёта {report_query_id}.")
+            report_query.status = 'error'
+            report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Сырой медиафайл не найден для запроса отчёта {report_query_id}.")
+            return
+
+
+        raw_df = pl.read_csv(
+            raw_media.file.path,
+            columns=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
+            try_parse_dates=True,
+            batch_size=BATCH_SIZE,
+            dtypes={'auto': pl.Utf8}
+        )
+        logger.info(f"Загружено {raw_df.height} строк сырых данных для обработки. Колонки: {raw_df.columns}")
+
+
+        cars = Car.objects.filter(organization=organization).select_related('organization')
+        car_data = pl.from_pandas(pd.DataFrame(list(cars.values('id', 'name'))).astype({'id': str}))
+        logger.info(
+            f"Данные автомобилей: {car_data.shape}, колонки: {car_data.columns}, пример ID: {car_data['id'].head().to_list()}")
+
+        consumptions = CarConsumption.objects.filter(car__organization=organization).select_related('car')
+
+        norma_df = pl.from_pandas(pd.DataFrame(list(consumptions.values(
+            'car__id', 'winter_volume', 'summer_volume', 'valid_period'
+        ))).astype({'car__id': str})).rename({
+            'car__id': 'sl_avto',
+            'winter_volume': 'norma_rasx_winter',
+            'summer_volume': 'norma_rasx_summer',
+            'valid_period': 'period'
+        })
+        logger.info(
+            f"Данные норм: {norma_df.shape}, колонки: {norma_df.columns}, пример sl_avto: {norma_df['sl_avto'].head().to_list()}")
 
         report_query.status = 'pending'
         report_query.save()
 
-        task_chain = chord(
-            [thread_task.s(auto_df, norma_df, batch) for batch in chunk_df],
-            merge_parts_task.s() | save_leak_results.s(report_query_id)
-        ).on_error(save_leak_results.s(report_query_id))
-
-        task_chain.apply_async()
-
-    except Exception as e:
-        logger.error(f"Error in process_report_query: {e}")
-        report_query.status = 'error'
-        report_query.save()
-        send_telegram_message(organization.bot_token, organization.chat_id, f"Error in process_report_query: {e}")
-        raise self.retry(exc=e)
-
-
-@shared_task(
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
-    soft_time_limit=300,
-    priority=5,
-)
-def save_leak_results(self, result_df, report_query_id):
-    try:
-        logger.info(f"Saving leak results for report query {report_query_id}...")
-        report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization
-
-        for _, row in result_df[result_df['is_leak']].iterrows():
-            car, _ = Car.objects.get_or_create(name=row['auto'], organization=organization)
-            CarReport.objects.create(
-                car=car,
-                datetime=row['timestamp'],
-                volume=row['spent_fuel'],
-                status=row['is_leak']
-            )
-
-        report_query.status = 'completed'
-        report_query.save()
-        logger.info(f"Leak results saved for report query {report_query_id}.")
-        send_telegram_message(organization.bot_token, organization.chat_id,
-                              f"Leak results saved for report query {report_query_id}.")
-
-    except Exception as e:
-        logger.error(f"Error in save_leak_results: {e}")
-        report_query.status = 'error'
-        report_query.save()
-        send_telegram_message(organization.bot_token, organization.chat_id, f"Error in save_leak_results: {e}")
-        raise self.retry(exc=e)
-
-
-@shared_task(
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=1,
-    retry_backoff=True,
-    soft_time_limit=300,
-    priority=1,
-)
-def calculate_leak_task(self, report_query_id):
-    try:
-        logger.info(f"Starting leak calculation for report query {report_query_id}...")
-        report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization
-
-        process_report_query.delay(report_query.id)
-
-    except Exception as e:
-        logger.error(f"Error in calculate_leak_task: {e}")
-        raise self.retry(exc=e)
-
-
-@shared_task(
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
-    soft_time_limit=300,
-    priority=5,
-)
-def process_raw_data_to_influx(self, report_query_id):
-    try:
-        logger.info(f"Starting processing raw data to InfluxDB for report query {report_query_id}...")
-        report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization
-
-        raw_media = Media.objects.filter(report_query=report_query, type="raw").first()
-        if not raw_media:
-            logger.info(f"No raw file found for report query {report_query.id}.")
-            return
-
-        file_path = raw_media.file.path
-        logger.info(f"Processing raw file: {file_path}")
-        chunk_size = 100_000
-        chunks = pd.read_csv(file_path,
-                             usecols=['timestamp', 'pos_s', 'calc_sensors_fuel_level', 'calc_sensors_voltage',
-                                      'auto'],
-                             chunksize=chunk_size)
 
         client, write_api = get_influx_write_client()
-        logger.info(f"InfluxDB client initialized. Bucket: {INFLUXDB_BUCKET}")
+        logger.info(f"Инициализирован клиент InfluxDB. Bucket: {INFLUXDB_BUCKET}")
 
-        for chunk in chunks:
-            points = []
-            for _, row in chunk.iterrows():
-                try:
-                    timestamp = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
-                except ValueError as e:
-                    logger.error(f"Invalid timestamp format in row: {row}. Error: {e}")
-                    continue
-                pos_s = float(row['pos_s']) if pd.notna(row['pos_s']) else None
-                point = Point(f"raw_data:{organization.id}") \
-                    .tag("organization", organization.name) \
-                    .tag("auto", row['auto']) \
-                    .field("pos_s", pos_s) \
-                    .field("calc_sensors_fuel_level", float(row['calc_sensors_fuel_level'])) \
-                    .field("calc_sensors_voltage", float(row['calc_sensors_voltage'])) \
-                    .time(timestamp)
 
-                points.append(point)
+        chunks = raw_df.partition_by(by=["auto"], maintain_order=False, as_dict=False)
+        logger.info(f"Разделено на {len(chunks)} чанков по машинам")
 
-            logger.info(f"Processed {len(points)} points for organization {organization.name}.")
-            write_api.write(bucket=INFLUXDB_BUCKET, record=points)
 
-        logger.info(f"Raw data for organization {organization.name} has been processed and saved to InfluxDB.")
+        chunk_tasks = [
+            process_chunk.s(chunk.to_pandas(), car_data.to_pandas(), norma_df.to_pandas(), report_query_id,
+                            organization.id)
+            for chunk in chunks
+        ]
+
+        chord(chunk_tasks)(save_leak_results.s(report_query_id)).on_error(
+            lambda *args, **kwargs: save_leak_results.apply_async(args=[None, report_query_id])
+        )
+
         report_query.flux_parsed = True
         report_query.save()
         client.close()
+        logger.info(f"Завершена обработка сырых данных для запроса отчёта {report_query_id}.")
+
+    except SoftTimeLimitExceeded as e:
+        logger.error(
+            f"Превышено временное ограничение в process_raw_data_task для запроса отчёта {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Превышено временное ограничение в process_raw_data_task для запроса отчёта {report_query_id}")
+        raise
+
+    except ObjectDoesNotExist as e:
+        logger.error(f"ReportQuery или Media не найдены для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"ReportQuery или Media не найдены для запроса отчёта {report_query_id}")
+        raise self.retry(exc=e)
 
     except Exception as e:
-        logger.error(f"Error in process_raw_data_to_influx: {e}")
+        logger.error(f"Ошибка в process_raw_data_task для запроса отчёта {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка в process_raw_data_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    soft_time_limit=300,
+    priority=3,
+)
+def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id):
+    try:
+        logger.info(f"Обработка чанка с {len(chunk_df)} строками для запроса отчёта {report_query_id}")
+
+
+        logger.debug(f"Тип chunk_df: {type(chunk_df)}")
+        logger.debug(f"Chunk data sample: {chunk_df.head().to_dict() if hasattr(chunk_df, 'head') else 'No head method'}")
+        logger.debug(f"Тип car_data: {type(car_data)}, Car data shape: {car_data.shape if isinstance(car_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {car_data.columns if hasattr(car_data, 'columns') else 'No columns'}")
+        logger.debug(f"Тип norma_data: {type(norma_data)}, Norma data shape: {norma_data.shape if isinstance(norma_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {norma_data.columns if hasattr(norma_data, 'columns') else 'No columns'}")
+
+
+        if isinstance(chunk_df, pl.DataFrame):
+            chunk_pl = chunk_df
+            logger.info(f"Чанк уже в формате polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
+        elif isinstance(chunk_df, pd.DataFrame):
+            chunk_pl = pl.from_pandas(chunk_df)
+            logger.info(f"Преобразован pandas.DataFrame в polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
+        else:
+            raise ValueError(f"Неподдерживаемый тип данных для chunk_df: {type(chunk_df)}")
+
+
+        if 'auto' in chunk_pl.columns:
+            chunk_pl = chunk_pl.with_columns(pl.col('auto').cast(pl.Utf8))
+            logger.info(f"Тип 'auto' после приведения: {chunk_pl['auto'].dtype}")
+        else:
+            logger.error(f"Колонка 'auto' отсутствует в chunk_pl")
+            raise KeyError("Колонка 'auto' отсутствует в данных чанка")
+
+
+        try:
+            chunk_pandas = chunk_pl.to_pandas()
+            logger.info(f"Преобразован в pandas.DataFrame для preprocess, размер: {chunk_pandas.shape}, колонки: {chunk_pandas.columns.tolist()}")
+        except AttributeError as e:
+            logger.error(f"Ошибка при преобразовании chunk_pl в pandas.DataFrame: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка при преобразовании chunk_pl в pandas.DataFrame: {e}")
+            raise
+
+
+        preprocessed_df = preprocess(chunk_pandas)
+        logger.info(f"Преобразованные данные (preprocess): {preprocessed_df.shape if preprocessed_df is not None else 'None'}, колонки: {preprocessed_df.columns.tolist() if preprocessed_df is not None else 'None'}")
+
+
+        if isinstance(car_data, pl.DataFrame):
+            car_data_pandas = car_data.to_pandas()
+        else:
+            car_data_pandas = car_data
+        logger.info(f"Car data в формате pandas: {car_data_pandas.shape}, колонки: {car_data_pandas.columns.tolist()}")
+
+        if isinstance(norma_data, pl.DataFrame):
+            norma_data_pandas = norma_data.to_pandas()
+        else:
+            norma_data_pandas = norma_data
+        logger.info(f"Norma data в формате pandas: {norma_data_pandas.shape}, колонки: {norma_data_pandas.columns.tolist()}")
+
+
+        car_data_pandas['id'] = car_data_pandas['id'].astype(str)
+        norma_data_pandas['sl_avto'] = norma_data_pandas['sl_avto'].astype(str)
+
+
+        if 'id' in car_data_pandas.columns and 'guid' not in car_data_pandas.columns:
+            car_data_pandas = car_data_pandas.rename(columns={'id': 'guid'})
+            logger.info(f"Переименована колонка 'id' в 'guid' в car_data_pandas: {car_data_pandas.columns.tolist()}")
+
+
+        try:
+            merged_df = merge(car_data_pandas, preprocessed_df)
+            logger.info(f"Объединённые данные (merge): {merged_df.shape if merged_df is not None else 'None'}, колонки: {merged_df.columns.tolist() if merged_df is not None else 'None'}")
+        except KeyError as e:
+            logger.error(f"Ошибка при слиянии данных: отсутствует колонка {e}")
+            raise
+
+
+        try:
+            result_df = fuel_leak_calculate_standart(merged_df, norma_data_pandas)
+            logger.info(f"Результат расчёта утечек (fuel_leak_calculate_standart): {result_df.shape if result_df is not None else 'None'}, колонки: {result_df.columns.tolist() if result_df is not None else 'None'}")
+        except KeyError as e:
+            logger.error(f"Ошибка в fuel_leak_calculate_standart: отсутствует колонка {e}")
+            raise
+
+
+        client, write_api = get_influx_write_client()
+        points = []
+        for _, row in chunk_pandas.iterrows():
+            try:
+                timestamp = datetime.strptime(row['timestamp'], '%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                logger.warning(f"Неверный формат времени в строке: {row}")
+                continue
+            pos_s = float(row['pos_s']) if pd.notna(row['pos_s']) else None
+            fuel_level = float(row['calc_sensors_fuel_level']) if pd.notna(row['calc_sensors_fuel_level']) else 0.0
+            voltage = float(row['calc_sensors_voltage']) if pd.notna(row['calc_sensors_voltage']) else 0.0
+
+            point = Point(f"raw_data:{org_id}") \
+                .tag("organization", str(org_id)) \
+                .tag("auto", str(row['auto'])) \
+                .field("pos_s", pos_s) \
+                .field("calc_sensors_fuel_level", fuel_level) \
+                .field("calc_sensors_voltage", voltage) \
+                .time(timestamp)
+            points.append(point)
+
+        write_api.write(bucket=INFLUXDB_BUCKET, record=points)
+        logger.info(f"Сохранено {len(points)} точек в InfluxDB для запроса отчёта {report_query_id}")
+        client.close()
+
+
+        return result_df
+
+    except Exception as e:
+        logger.error(f"Ошибка в process_chunk для запроса отчёта {report_query_id}: {e}")
+        raise self.retry(exc=e)
+
+
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3,
+    retry_backoff=True,
+    soft_time_limit=600,
+    priority=4,
+)
+def save_leak_results(self, results, report_query_id):
+    report_query = None
+    organization = None
+    try:
+        logger.info(f"Сохранение результатов утечек для запроса отчёта {report_query_id}...")
+        report_query = ReportQuery.objects.get(id=report_query_id)
+        organization = report_query.organization
+
+        if results is None or not results:
+            logger.error(f"Нет результатов для сохранения для запроса отчёта {report_query_id}")
+            report_query.status = 'error'
+            report_query.save()
+            return
+
+        result_df = pd.concat(results)
+        logger.info(f"Объединённый DataFrame результатов: {result_df.shape}, колонки: {result_df.columns.tolist()}")
+
+        cars = {car.id: car for car in Car.objects.filter(organization=organization).only('id')}
+        logger.info(f"Загружено {len(cars)} автомобилей для организации {organization.name}")
+
+        with transaction.atomic():
+            for _, row in result_df[result_df['is_leak']].iterrows():
+                try:
+                    car_id = str(row['auto'])
+                    car = cars.get(car_id)
+                    if not car:
+                        logger.warning(f"Автомобиль с id {car_id} не найден для организации {organization.name}")
+                        continue
+
+                    CarReport.objects.create(
+                        car=car,
+                        datetime=pd.to_datetime(row['timestamp'], errors='coerce'),
+                        volume=float(row['spent_fuel']) if pd.notna(row['spent_fuel']) else 0,
+                        status=bool(row['is_leak'])
+                    )
+                    logger.debug(f"Сохранён отчёт об утечке для автомобиля {car_id}")
+                except Exception as e:
+                    logger.error(f"Ошибка при сохранении отчёта для автомобиля {car_id}: {e}")
+                    continue
+
+        report_query.status = 'completed'
+        report_query.save()
+        logger.info(f"Результаты утечек сохранены для запроса отчёта {report_query_id}.")
+        send_telegram_message(organization.bot_token, organization.chat_id,
+                              f"Результаты утечек сохранены для запроса отчёта {report_query_id}.")
+
+    except ObjectDoesNotExist as e:
+        logger.error(f"ReportQuery не найден для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"ReportQuery не найден для запроса отчёта {report_query_id}")
+        raise self.retry(exc=e)
+
+    except Exception as e:
+        logger.error(f"Ошибка в save_leak_results для запроса отчёта {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка в save_leak_results для запроса отчёта {report_query_id}: {e}")
+        raise self.retry(exc=e)
+
 
 
 @celery_app.task(
@@ -245,100 +691,38 @@ def process_raw_data_to_influx(self, report_query_id):
     soft_time_limit=300,
     priority=0,
 )
-def check_and_process_reports(self):
+def check_and_process_raw_reports(self):
+    report_query = None
+    organization = None
     try:
-        logger.info("Starting report processing pipeline...")
-
+        logger.info("Проверка незавершённых отчётов сырых данных...")
         organizations = Organization.objects.all()
 
         for organization in organizations:
-            report_query = ReportQuery.objects.filter(organization=organization, flux_parsed=False).exclude(
-                status='completed').last()
+            report_query = ReportQuery.objects.filter(
+                organization=organization,
+                media__type="raw",
+                status="created"
+            ).exclude(
+                Q(status="completed") | Q(status="error")
+            ).first()
+
             if not report_query:
-                logger.info(f"No pending report queries found for organization {organization.name}.")
                 continue
 
-            logger.info(f"Checking report query {report_query.id} for organization {organization.name}.")
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"Checking report query {report_query.id} for organization {organization.name}.")
 
-            chain(
-                process_raw_data_to_influx.s(report_query.id),
-                calculate_leak_task.si(report_query.id)
-            ).apply_async()
-
-    except Exception as e:
-        logger.error(f"Error in check_and_process_reports: {e}")
-        raise self.retry(exc=e)
-
-## TODO: Добавить уведомления
-@shared_task(
-    bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
-    soft_time_limit=300,
-    priority=5,
-)
-def parse_cars_and_norms_from_media(self, report_query_id):
-    try:
-        logger.info(f"Starting parsing cars from media for report query {report_query_id}...")
-        report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization
-
-        auto_media = Media.objects.filter(report_query=report_query, type="auto").first()
-        if not auto_media:
-            logger.info(f"No auto media found for report query {report_query.id}.")
-            return
-
-        auto_file_path = auto_media.file.path
-        logger.info(f"Processing auto file: {auto_file_path}")
-
-        parsed_cars = parse_cars(pathlib.Path(auto_file_path))
-
-        for _, row in parsed_cars.iterrows():
-            car, created = Car.objects.get_or_create(
-                guid=row['guid'],
-                defaults={
-                    'name': row['name'],
-                    'description': row['description'],
-                    'organization': organization
-                }
-            )
-            if not created:
-                car.name = row['name']
-                car.description = row['description']
-                car.save()
-
-        logger.info(f"Cars data parsed and saved for report query {report_query_id}.")
-
-        norm_media = Media.objects.filter(report_query=report_query, type="norm").first()
-        if not norm_media:
-            logger.info(f"No norm media found for report query {report_query.id}.")
-            return
-
-        norm_file_path = norm_media.file.path
-        logger.info(f"Processing norm file: {norm_file_path}")
-
-        parsed_norms = parse_norma(pathlib.Path(norm_file_path))
-
-        for _, row in parsed_norms.iterrows():
-            try:
-                car = Car.objects.get(guid=row['auto'], organization=organization)
-                CarConsumption.objects.create(
-                    car=car,
-                    winter_volume=row['winter_norm'],
-                    summer_volume=row['summer_norm'],
-                    valid_period=row['due']
-                )
-            except Car.DoesNotExist:
-                logger.warning(f"Car with guid {row['auto']} not found for organization {organization.name}.")
+            if not ReportQuery.objects.filter(organization=organization, media__type="auto",
+                                              status="completed").exists():
+                logger.info(f"Данные об автомобилях для организации {organization.name} не завершены")
+                continue
+            if not ReportQuery.objects.filter(organization=organization, media__type="norm",
+                                              status="completed").exists():
+                logger.info(f"Данные норм для организации {organization.name} не завершены")
                 continue
 
-        logger.info(f"Norms data parsed and linked to cars for report query {report_query_id}.")
-        send_telegram_message(organization.bot_token, organization.chat_id,
-                              f"Cars and norms data parsed and saved for report query {report_query_id}.")
+            logger.info(f"Обработка сырых данных для запроса отчёта {report_query.id}")
+            process_raw_data_task.delay(report_query.id)
 
     except Exception as e:
-        logger.error(f"Error in parse_cars_from_media: {e}")
+        logger.error(f"Ошибка в check_and_process_raw_reports: {e}")
         raise self.retry(exc=e)

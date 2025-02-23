@@ -1,8 +1,5 @@
 # core/rest.py
 from drf_yasg import openapi
-from .serializers import (
-    MediaSerializer, ReportQuerySerializer
-)
 
 BASE_RESPONSE_SCHEMA = {
     "error": openapi.Schema(type=openapi.TYPE_STRING, description="Описание ошибки.")
@@ -16,27 +13,12 @@ MEDIA_UPLOAD_SCHEMA = {
     "tags": ["Media"],
     "operation_description": "Загружает медиафайл.",
     "manual_parameters": [
-        openapi.Parameter(
-            name="file",
-            in_=openapi.IN_FORM,
-            type=openapi.TYPE_FILE,
-            required=True,
-            description="Файл для загрузки."
-        ),
-        openapi.Parameter(
-            name="type",
-            in_=openapi.IN_FORM,
-            type=openapi.TYPE_STRING,
-            required=False,
-            description="Тип файла (опционально)."
-        ),
+        openapi.Parameter("file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True, description="Файл для загрузки."),
+        openapi.Parameter("type", openapi.IN_FORM, type=openapi.TYPE_STRING, required=False, description="Тип файла."),
     ],
     "responses": {
-        201: openapi.Response("Успешно", MediaSerializer),
-        400: openapi.Response("Некорректный запрос", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_RESPONSE_SCHEMA
-        ))
+        201: "Успешно",
+        400: "Некорректный запрос",
     }
 }
 
@@ -55,49 +37,25 @@ ATTACH_MEDIA_SCHEMA = {
         required=["media_uuids"]
     ),
     "responses": {
-        201: openapi.Response("Медиафайлы успешно прикреплены.", ReportQuerySerializer),
-        400: openapi.Response("Некорректный запрос", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_RESPONSE_SCHEMA
-        )),
-        404: openapi.Response("Организация или медиафайл не найдены", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_RESPONSE_SCHEMA
-        ))
+        201: "Успешно",
+        400: "Некорректный запрос",
+        404: "Организация или медиафайл не найдены",
     }
 }
 
 LIST_RESPONSE_SCHEMA = {
     "responses": {
-        200: openapi.Response("Успешно", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties={
-                "data": openapi.Schema(
-                    type=openapi.TYPE_ARRAY,
-                    items=openapi.Schema(type=openapi.TYPE_OBJECT)
-                )
-            }
-        )),
-        500: openapi.Response("Ошибка сервера", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_RESPONSE_SCHEMA
-        ))
+        200: "Успешно",
+        403: "Доступ запрещён",
+        500: "Ошибка сервера",
     }
 }
 
 DETAIL_RESPONSE_SCHEMA = {
     "responses": {
-        200: openapi.Response("Успешно", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_DATA_RESPONSE_SCHEMA
-        )),
-        404: openapi.Response("Объект не найден", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_RESPONSE_SCHEMA
-        )),
-        500: openapi.Response("Ошибка сервера", schema=openapi.Schema(
-            type=openapi.TYPE_OBJECT,
-            properties=BASE_RESPONSE_SCHEMA
-        ))
+        200: "Успешно",
+        403: "Доступ запрещён",
+        404: "Объект не найден",
+        500: "Ошибка сервера",
     }
 }

@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from core.views import MediaUploadAPIView, AttachMediaToOrgAPIView, OrganizationListAPIView, \
+from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ReportQueryListAPIView, ReportQueryDetailAPIView, \
     MediaListAPIView, MediaDetailAPIView, CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
@@ -14,7 +14,6 @@ urlpatterns = [
     path('register', UserRegistrationAPIView.as_view(), name='register'),
 
     path('media/upload', MediaUploadAPIView.as_view(), name='media-upload'),
-    path('media/attach', AttachMediaToOrgAPIView.as_view(), name='attach-media'),
     path('organizations', OrganizationListAPIView.as_view(), name='organization-list'),
     path('organizations/<uuid:pk>', OrganizationDetailAPIView.as_view(), name='organization-detail'),
     path('org-users', OrgUserListAPIView.as_view(), name='orguser-list'),

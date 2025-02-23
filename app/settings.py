@@ -76,6 +76,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
     'drf_yasg',
+    'django_filters',
     'debug_toolbar',
 ]
 
@@ -190,33 +191,152 @@ CELERY_FLOWER_PORT = os.getenv("CELERY_FLOWER_PORT", "5555")
 CELERY_FLOWER_ADDRESS = os.getenv("CELERY_FLOWER_ADDRESS", "127.0.0.1")
 
 # Custom admin settings
-UNFOLD = {
-    "TABS": [
-        {
-            "models": ('core.organization', 'core.orguser', 'core.car'),
-            "items": [
-                {"title": "Organizations", "link": reverse_lazy("admin:core_organization_changelist")},
-                {"title": "Users", "link": reverse_lazy("admin:core_orguser_changelist")},
-                {"title": "Cars", "link": reverse_lazy("admin:core_car_changelist")},
-            ],
-        },
-    ],
-    "SIDEBAR": {
-        "show_search": True,
-        "show_all_applications": True,
-        "navigation": [
+def get_admin_links():
+    return {
+        "TABS": [
             {
-                "title": "Core",
-                "collapsible": True,
+                "models": ('core.organization', 'core.orguser', 'core.car'),
                 "items": [
-                    {"title": "Organizations", "icon": "business", "link": reverse_lazy("admin:core_organization_changelist")},
-                    {"title": "Users", "icon": "person", "link": reverse_lazy("admin:core_orguser_changelist")},
-                    {"title": "Cars", "icon": "car_repair", "link": reverse_lazy("admin:core_car_changelist")},
-                ],
+                    {
+                        "title": "Organizations",
+                        "link": reverse_lazy("admin:core_organization_changelist"),
+                    },
+                    {
+                        "title": "Users",
+                        "link": reverse_lazy("admin:core_orguser_changelist"),
+                    },
+                    {
+                        "title": "Cars",
+                        "link": reverse_lazy("admin:core_car_changelist"),
+                    }
+                ]
+            },
+            {
+                "models": ('core.carconsumption', 'core.carreport', 'core.driver'),
+                "items": [
+                    {
+                        "title": "Car Consumption",
+                        "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                    },
+                    {
+                        "title": "Car Reports",
+                        "link": reverse_lazy("admin:core_carreport_changelist"),
+                    },
+                    {
+                        "title": "Drivers",
+                        "link": reverse_lazy("admin:core_driver_changelist"),
+                    }
+                ]
+            },
+            {
+                "models": ('core.media', 'core.reportquery'),
+                "items": [
+                    {
+                        "title": "Media",
+                        "link": reverse_lazy("admin:core_media_changelist"),
+                    },
+                    {
+                        "title": "Report Queries",
+                        "link": reverse_lazy("admin:core_reportquery_changelist"),
+                    }
+                ]
+            },
+            {
+                "models": ('django_celery_beat.periodictask', 'django_celery_beat.crontabschedule',
+                           'django_celery_beat.intervalschedule'),
+                "items": [
+                    {
+                        "title": "Periodic Tasks",
+                        "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
+                    },
+                    {
+                        "title": "Crontab",
+                        "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
+                    },
+                    {
+                        "title": "Intervals",
+                        "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
+                    }
+                ]
             },
         ],
-    },
-}
+        "SIDEBAR": {
+            "show_search": True,
+            "show_all_applications": True,
+            "navigation": [
+                {
+                    "title": "Core",
+                    "collapsible": True,
+                    "items": [
+                        {
+                            "title": "Organizations",
+                            "icon": "business",
+                            "link": reverse_lazy("admin:core_organization_changelist"),
+                        },
+                        {
+                            "title": "Users",
+                            "icon": "person",
+                            "link": reverse_lazy("admin:core_orguser_changelist"),
+                        },
+                        {
+                            "title": "Cars",
+                            "icon": "car_repair",
+                            "link": reverse_lazy("admin:core_car_changelist"),
+                        },
+                        {
+                            "title": "Car Consumption",
+                            "icon": "local_gas_station",
+                            "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                        },
+                        {
+                            "title": "Car Reports",
+                            "icon": "report_problem",
+                            "link": reverse_lazy("admin:core_carreport_changelist"),
+                        },
+                        {
+                            "title": "Drivers",
+                            "icon": "drive_eta",
+                            "link": reverse_lazy("admin:core_driver_changelist"),
+                        },
+                        {
+                            "title": "Media",
+                            "icon": "image",
+                            "link": reverse_lazy("admin:core_media_changelist"),
+                        },
+                        {
+                            "title": "Report Queries",
+                            "icon": "assignment",
+                            "link": reverse_lazy("admin:core_reportquery_changelist"),
+                        },
+                    ]
+                },
+                {
+                    "title": "Celery Tasks",
+                    "collapsible": True,
+                    "items": [
+                        {
+                            "title": "Tasks",
+                            "icon": "task",
+                            "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
+                        },
+                        {
+                            "title": "Crontab",
+                            "icon": "update",
+                            "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
+                        },
+                        {
+                            "title": "Intervals",
+                            "icon": "arrow_range",
+                            "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
+                        },
+                    ]
+                },
+            ]
+        },
+    }
+
+
+UNFOLD = get_admin_links()
 
 # Logging
 LOGGING = {
