@@ -1,4 +1,8 @@
 #### README
+# Установка переменных среды
+```bash
+    cp .env.dev .env
+```
 # Для запуска проекта
 ```bash
     python3 manage.py runserver

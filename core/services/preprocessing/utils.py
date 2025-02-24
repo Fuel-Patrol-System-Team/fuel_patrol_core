@@ -1,63 +1,66 @@
 import pandas as pd
 import numpy as np
 import polars as pl
+import warnings
 
 
 
 def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = 4) -> pd.DataFrame:
-    df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
+    with warnings.catch_warnings():
+        warnings.simplefilter(action="ignore")
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
 
-    df = df[df['calc_sensors_fuel_level'].between(0, 4096)]
+        df = df[df['calc_sensors_fuel_level'].between(0, 4096)]
 
-    df['auto'] = df['auto'].astype(str)
+        df['auto'] = df['auto'].astype(str)
 
-    df['dtime'] = df.groupby(['auto', df['timestamp'].dt.floor('1h')])['timestamp'].diff().abs()
+        df['dtime'] = df.groupby(['auto', df['timestamp'].dt.floor('1h')])['timestamp'].diff().abs()
 
-    df['dtime_per_hour'] = df['dtime'].dt.total_seconds() / 3600
+        df['dtime_per_hour'] = df['dtime'].dt.total_seconds() / 3600
 
-    df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])['calc_sensors_voltage'].transform(max)
-    
-    df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).lt(VOLTAGE_LIMIT)]
-    
-    df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
-    
-    anti_bug_aggregation = df.groupby(
-        ['auto', df['timestamp'].dt.floor(f'{ANTI_BUG_TIME_SECONDS}s')]
-    ).agg({
-        'calc_sensors_fuel_level': 'median',
-        'pos_s': 'mean',
-        'spent_fuel': 'sum',
-        'dtime': 'sum',
-        'dtime_per_hour': 'sum',
-    }).reset_index()
-    
-    anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
-    
-    pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
-        'pos_s': 'median',
-        'spent_fuel': 'sum',
-        'max_fuel': 'max',
-        'dtime': 'sum',
-        'dtime_per_hour': 'sum',
-    }).reset_index()
-    
-    pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(8), np.nan, inplace=True)
-
-    pre_period_df['spent_fuel'].replace(np.nan, 0, inplace=True)
-    
-    period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
+        df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])['calc_sensors_voltage'].transform(max)
         
-        'pos_s': 'mean',
-        'spent_fuel': 'sum',
-        'max_fuel': 'max',
-        'dtime': 'sum',
-        'dtime_per_hour': 'sum',
-    } ).reset_index()
-    
-    period_1_df['travel'] = period_1_df['pos_s'].mul(period_1_df['dtime_per_hour'])
-    period_1_df['spent_per_100'] = period_1_df['spent_fuel'].div(period_1_df['travel']).mul(100)
-    
-    return period_1_df
+        df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).lt(VOLTAGE_LIMIT)]
+        
+        df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
+        
+        anti_bug_aggregation = df.groupby(
+            ['auto', df['timestamp'].dt.floor(f'{ANTI_BUG_TIME_SECONDS}s')]
+        ).agg({
+            'calc_sensors_fuel_level': 'median',
+            'pos_s': 'mean',
+            'spent_fuel': 'sum',
+            'dtime': 'sum',
+            'dtime_per_hour': 'sum',
+        }).reset_index()
+        
+        anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
+        
+        pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
+            'pos_s': 'median',
+            'spent_fuel': 'sum',
+            'max_fuel': 'max',
+            'dtime': 'sum',
+            'dtime_per_hour': 'sum',
+        }).reset_index()
+        
+        pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(8), np.nan, inplace=True)
+
+        pre_period_df['spent_fuel'].replace(np.nan, 0, inplace=True)
+        
+        period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
+            
+            'pos_s': 'mean',
+            'spent_fuel': 'sum',
+            'max_fuel': 'max',
+            'dtime': 'sum',
+            'dtime_per_hour': 'sum',
+        } ).reset_index()
+        
+        period_1_df['travel'] = period_1_df['pos_s'].mul(period_1_df['dtime_per_hour'])
+        period_1_df['spent_per_100'] = period_1_df['spent_fuel'].div(period_1_df['travel']).mul(100)
+        
+        return period_1_df
 
 def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
     result_df = preprocessed_df.merge(right=car_data, how='inner', left_on='auto', right_on='id')
@@ -67,120 +70,104 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 # принимает пару median и std для данной машины
 def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60):
+    with warnings.catch_warnings():
+        warnings.simplefilter(action='ignore')
 
-    df_values['spent_fuel'].mask(df_values['spent_fuel'].gt(0), other=0, inplace=True)
-    df_values['spent_fuel'] = df_values['spent_fuel'].abs()
-
-
-    df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
-
-    df_values['timestamp'] = pd.to_datetime(df_values['timestamp'])
-
-    season_result = df_values.merge(norma_rasx_df, how='inner', left_on='auto', right_on='sl_avto')
-    season_result['norma_rasx'] = np.where(
-        season_result['timestamp'].dt.month.between(3, 10),
-        season_result['norma_rasx_summer'],
-        season_result['norma_rasx_winter']
-    )
+        df_values['spent_fuel'].mask(df_values['spent_fuel'].gt(0), other=0, inplace=True)
+        df_values['spent_fuel'] = df_values['spent_fuel'].abs()
 
 
+        df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
 
+        df_values['timestamp'] = pd.to_datetime(df_values['timestamp'])
 
+        season_result = df_values.merge(norma_rasx_df, how='inner', left_on='auto', right_on='sl_avto')
+        season_result['norma_rasx'] = np.where(
+            season_result['timestamp'].dt.month.between(3, 10),
+            season_result['norma_rasx_summer'],
+            season_result['norma_rasx_winter']
+        )
+        season_result['norma_rasx_per_travel'] = season_result['norma_rasx'].mul(season_result['travel']).div(100)
 
-    season_result['norma_rasx_per_travel'] = season_result['norma_rasx'].mul(season_result['travel']).div(100)
+        season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(3))
+        season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
+                                            season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1/6) & season_result['sl_tip_dvigat'].eq(1)], [True, True, True], default=False)
+        season_result['leak'] = np.select(
+            [
+            season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
+            season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(1),
+            ],
+            [
+                season_result['spent_fuel'].sub(1.17/6).abs().apply(lambda x: max(x, 0)),
+                season_result['spent_fuel'].sub(1/6).abs().apply(lambda x: max(x, 0))
+            ], default=season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel']).apply(lambda x: max(0, x)))
 
+        season_result['is_leak'] = season_result['leak'].gt(LEAK_LIMIT)
+        season_result['timestamp'] = pd.to_datetime(season_result['timestamp'], errors='ignore')
 
-    season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(3))
+        season_result['delta_sp'] = season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel'])
+        season_result['delta_sp_median'] = season_result.groupby([pd.Grouper(key='id')])['delta_sp'].transform('median')
+        season_result['delta_sp_std'] = season_result.groupby([pd.Grouper(key='id')])['delta_sp'].transform('std')
+        season_result['is_leak_delta_sp'] = season_result['delta_sp'].ge(season_result['delta_sp_median'].add(season_result['delta_sp_std'].mul(SIGMA_LIMIT))) & season_result['leak'].ge(LEAK_LIMIT)
+        season_result['max_fuel_diff'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff().shift(-1)
+        season_result['max_fuel_diff_back'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff()
 
+        season_result['max_fuel_diff'].replace(to_replace=np.nan, value=0, inplace=True)
 
-    season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
-                                        season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1/6) & season_result['sl_tip_dvigat'].eq(1)], [True, True, True], default=False)
+        season_result['is_max_fuel_diff_2'] = season_result['max_fuel_diff'].lt(0) & ( season_result['leak'].le(-season_result['max_fuel_diff']) )
+        season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
 
-
-    season_result['leak'] = np.select(
-        [
-        season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
-        season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(1),
-        ],
-        [
-            season_result['spent_fuel'].sub(1.17/6).abs().apply(lambda x: max(x, 0)),
-            season_result['spent_fuel'].sub(1/6).abs().apply(lambda x: max(x, 0))
-        ], default=season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel']).apply(lambda x: max(0, x)))
-
-    season_result['is_leak'] = season_result['leak'].gt(LEAK_LIMIT)
-    season_result['timestamp'] = pd.to_datetime(season_result['timestamp'], errors='ignore')
-
-
-    season_result['delta_sp'] = season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel'])
-
-
-
-    season_result['delta_sp_median'] = season_result.groupby([pd.Grouper(key='id')])['delta_sp'].transform('median')
-
-
-    season_result['delta_sp_std'] = season_result.groupby([pd.Grouper(key='id')])['delta_sp'].transform('std')
-
-
-    season_result['is_leak_delta_sp'] = season_result['delta_sp'].ge(season_result['delta_sp_median'].add(season_result['delta_sp_std'].mul(SIGMA_LIMIT))) & season_result['leak'].ge(LEAK_LIMIT)
-
-
-    season_result['max_fuel_diff'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff().shift(-1)
-    season_result['max_fuel_diff_back'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff()
-
-    season_result['max_fuel_diff'].replace(to_replace=np.nan, value=0, inplace=True)
-
-    season_result['is_max_fuel_diff_2'] = season_result['max_fuel_diff'].lt(0) & ( season_result['leak'].le(-season_result['max_fuel_diff']) )
-    season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
-
-    return season_result
+        return season_result
 
 
 def fuel_leak_calculate_tricky(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, SIGMA_VALUE, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60):
-    df_values['spent_fuel'].mask(df_values['spent_fuel'].gt(0), other=0, inplace=True)
-    df_values['spent_fuel'] = df_values['spent_fuel'].abs()
-    df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
-    df_values['timestamp'] = pd.to_datetime(df_values['timestamp'])
+    with warnings.catch_warnings():
+        warnings.simplefilter(action='ignore') 
+        df_values['spent_fuel'].mask(df_values['spent_fuel'].gt(0), other=0, inplace=True)
+        df_values['spent_fuel'] = df_values['spent_fuel'].abs()
+        df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
+        df_values['timestamp'] = pd.to_datetime(df_values['timestamp'])
 
-    season_result = df_values.merge(norma_rasx_df, how='inner', left_on='auto', right_on='sl_avto')
-    season_result['current_norma'] = np.where(
-        season_result['timestamp'].dt.month.between(3, 10),
-        season_result['norma_rasx_summer'],
-        season_result['norma_rasx_winter']
-    )
+        season_result = df_values.merge(norma_rasx_df, how='inner', left_on='auto', right_on='sl_avto')
+        season_result['current_norma'] = np.where(
+            season_result['timestamp'].dt.month.between(3, 10),
+            season_result['norma_rasx_summer'],
+            season_result['norma_rasx_winter']
+        )
 
-    season_result['norma_rasx_per_travel'] = season_result['norma_rasx'].mul(season_result['travel']).div(100)
-
-
-    season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(3))
-
-
-    season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
-                                        season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1/6) & season_result['sl_tip_dvigat'].eq(1)], [True, True, True], default=False)
+        season_result['norma_rasx_per_travel'] = season_result['norma_rasx'].mul(season_result['travel']).div(100)
 
 
-    season_result['leak'] = np.select(
-        [
-        season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
-        season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(1),
-        ],
-        [
-            season_result['spent_fuel'].sub(1.17/6).abs().apply(lambda x: max(x, 0)),
-            season_result['spent_fuel'].sub(1/6).abs().apply(lambda x: max(x, 0))
-        ], default=season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel']).apply(lambda x: max(0, x)))
+        season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(3))
 
-    season_result.dropna(subset=['sl_tip_dvigat'], inplace=True)
-    season_result['is_leak'] = season_result['leak'].gt(LEAK_LIMIT)
-    season_result['timestamp'] = pd.to_datetime(season_result['timestamp'], errors='ignore')
 
-    season_result['max_fuel_diff'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff().shift(-1)
-    season_result['max_fuel_diff_back'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff()
+        season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
+                                            season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1/6) & season_result['sl_tip_dvigat'].eq(1)], [True, True, True], default=False)
 
-    season_result['max_fuel_diff'].replace(to_replace=np.nan, value=0, inplace=True)
 
-    season_result['is_max_fuel_diff_2'] = season_result['max_fuel_diff'].lt(0) & ( season_result['leak'].le(-season_result['max_fuel_diff']) )
-    season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
+        season_result['leak'] = np.select(
+            [
+            season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
+            season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(1),
+            ],
+            [
+                season_result['spent_fuel'].sub(1.17/6).abs().apply(lambda x: max(x, 0)),
+                season_result['spent_fuel'].sub(1/6).abs().apply(lambda x: max(x, 0))
+            ], default=season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel']).apply(lambda x: max(0, x)))
 
-    return season_result
+        season_result.dropna(subset=['sl_tip_dvigat'], inplace=True)
+        season_result['is_leak'] = season_result['leak'].gt(LEAK_LIMIT)
+        season_result['timestamp'] = pd.to_datetime(season_result['timestamp'], errors='ignore')
+
+        season_result['max_fuel_diff'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff().shift(-1)
+        season_result['max_fuel_diff_back'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff()
+
+        season_result['max_fuel_diff'].replace(to_replace=np.nan, value=0, inplace=True)
+
+        season_result['is_max_fuel_diff_2'] = season_result['max_fuel_diff'].lt(0) & ( season_result['leak'].le(-season_result['max_fuel_diff']) )
+        season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
+
+        return season_result
 
 
 def compute_leaks_chunk(auto_df: pd.DataFrame, data_df: pl.DataFrame, norma_df: pd.DataFrame):
