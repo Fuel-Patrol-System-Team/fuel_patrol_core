@@ -1,4 +1,8 @@
+from datetime import datetime
+
 from celery.exceptions import CeleryError
+from django.db.models import Count, Sum
+from django.db.models.functions import TruncDay
 from rest_framework.exceptions import ValidationError
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView
@@ -14,17 +18,239 @@ from app.tasks import parse_cars_task, parse_norms_task, process_raw_data_task
 from drf_yasg.utils import swagger_auto_schema
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver
 from .pagination import StandardResultsSetPagination
-from .rest import MEDIA_UPLOAD_SCHEMA
+from .rest import MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA, DAILY_LEAKS_SUM_SCHEMA, \
+    DAILY_LEAKS_COUNT_SCHEMA
 from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
-    CarReportOutputSerializer, DriverOutputSerializer
+    CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer
 )
 from .services.media.utils import get_upload_path, calculate_file_hash
-from .responses import error_response, user_registered_response, attach_media_response
+from .responses import error_response, user_registered_response, attach_media_response, user_response, success_response
 from .permissions import IsOrgMember
 
 logger = logging.getLogger(__name__)
+
+
+class DailyLeaksCountAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**DAILY_LEAKS_COUNT_SCHEMA)
+    def get(self, request):
+        try:
+            period_from = request.query_params.get('periodFrom')
+            period_due = request.query_params.get('periodDue')
+
+            queryset = CarReport.objects.filter(
+                car__organization=request.user.org,
+                status=True
+            )
+
+            if period_from:
+                period_from = datetime.strptime(period_from, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__gte=period_from)
+            if period_due:
+                period_due = datetime.strptime(period_due, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__lte=period_due)
+
+            daily_counts = (queryset
+                            .annotate(day=TruncDay('datetime'))
+                            .values('day')
+                            .annotate(value=Count('id'))
+                            .order_by('day'))
+
+            result = [
+                {
+                    'value': item['value'],
+                    'day': item['day'].strftime('%Y-%m-%d')
+                }
+                for item in daily_counts
+            ]
+
+            return success_response(result, status.HTTP_200_OK)
+
+        except ValueError as e:
+            return error_response(
+                "Неверный формат даты. Используйте YYYY-MM-DD",
+                status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return error_response(
+                str(e),
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+class DailyLeaksSumAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**DAILY_LEAKS_SUM_SCHEMA)
+    def get(self, request):
+        try:
+            period_from = request.query_params.get('periodFrom')
+            period_due = request.query_params.get('periodDue')
+
+            queryset = CarReport.objects.filter(
+                car__organization=request.user.org,
+                status=True
+            )
+
+            if period_from:
+                period_from = datetime.strptime(period_from, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__gte=period_from)
+            if period_due:
+                period_due = datetime.strptime(period_due, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__lte=period_due)
+
+            daily_sums = (queryset
+                          .annotate(day=TruncDay('datetime'))
+                          .values('day')
+                          .annotate(value=Sum('volume'))
+                          .order_by('day'))
+
+            result = [
+                {
+                    'value': item['value'],
+                    'day': item['day'].strftime('%Y-%m-%d')
+                }
+                for item in daily_sums
+            ]
+
+            return success_response(result, status.HTTP_200_OK)
+
+        except ValueError as e:
+            return error_response(
+                "Неверный формат даты. Используйте YYYY-MM-DD",
+                status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return error_response(
+                str(e),
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CarLeaksCountAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**LEAKS_COUNT_SCHEMA)
+    def get(self, request):
+        try:
+            period_from = request.query_params.get('periodFrom')
+            period_due = request.query_params.get('periodDue')
+
+            queryset = CarReport.objects.filter(
+                car__organization=request.user.org,
+                status=True
+            )
+
+            if period_from:
+                period_from = datetime.strptime(period_from, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__gte=period_from)
+            if period_due:
+                period_due = datetime.strptime(period_due, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__lte=period_due)
+
+            leaks_count = (queryset
+                           .values('car')
+                           .annotate(value=Count('id'))
+                           .order_by('car'))
+
+            car_ids = [item['car'] for item in leaks_count]
+            cars = Car.objects.filter(id__in=car_ids).select_related('organization')
+
+            result = [
+                {
+                    'id': str(car.id),
+                    'label': car.name,
+                    'value': next(item['value'] for item in leaks_count if item['car'] == car.id)
+                }
+                for car in cars
+            ]
+
+            return success_response(result, status.HTTP_200_OK)
+
+        except ValueError as e:
+            return error_response(
+                "Неверный формат даты. Используйте YYYY-MM-DD",
+                status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return error_response(
+                str(e),
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class CarLeaksVolumeAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**LEAKS_VOLUME_SCHEMA)
+    def get(self, request):
+        try:
+            period_from = request.query_params.get('periodFrom')
+            period_due = request.query_params.get('periodDue')
+
+            queryset = CarReport.objects.filter(
+                car__organization=request.user.org,
+                status=True
+            )
+
+            if period_from:
+                period_from = datetime.strptime(period_from, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__gte=period_from)
+            if period_due:
+                period_due = datetime.strptime(period_due, '%Y-%m-%d')
+                queryset = queryset.filter(datetime__lte=period_due)
+
+            leaks_volume = (queryset
+                            .values('car')
+                            .annotate(value=Sum('volume'))
+                            .order_by('car'))
+
+            car_ids = [item['car'] for item in leaks_volume]
+            cars = Car.objects.filter(id__in=car_ids).select_related('organization')
+
+            result = [
+                {
+                    'id': str(car.id),
+                    'label': car.name,
+                    'value': next(item['value'] for item in leaks_volume if item['car'] == car.id)
+                }
+                for car in cars
+            ]
+
+            return success_response(result, status.HTTP_200_OK)
+
+        except ValueError as e:
+            return error_response(
+                "Неверный формат даты. Используйте YYYY-MM-DD",
+                status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return error_response(
+                str(e),
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class UserInfoAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(
+        responses={200: UserOutputSerializer(), 401: "Unauthorized"},
+        operation_description="Получить информацию о текущем пользователе"
+    )
+    def get(self, request):
+        user = request.user
+        if not user:
+            return error_response("Unauthorized", status_code=status.HTTP_401_UNAUTHORIZED)
+        user_data = {
+            'id': user.id,
+            'username': user.username,
+            'organization': user.org.name,
+
+        }
+        return user_response(user_data, status_code=status.HTTP_200_OK)
 
 
 class MediaUploadAPIView(APIView):
@@ -53,7 +279,6 @@ class MediaUploadAPIView(APIView):
             file_size = uploaded_file.size
 
             organization = request.user.org
-            report_query = ReportQuery.objects.create(organization=organization, status="created")
 
             existing_media = Media.objects.filter(
                 filename=uploaded_file.name,
@@ -64,9 +289,8 @@ class MediaUploadAPIView(APIView):
 
             if existing_media:
                 logger.info(f"Identical file already exists: {existing_media.id}")
-                report_query = existing_media.report_query
-                return attach_media_response(report_query)
-
+                return error_response('file already exists', status.HTTP_400_BAD_REQUEST)
+            report_query = ReportQuery.objects.create(organization=organization, status="created")
             media = Media(
                 id=file_id,
                 media_type=media_type,

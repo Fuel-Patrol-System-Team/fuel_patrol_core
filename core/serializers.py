@@ -4,6 +4,11 @@ from rest_framework import serializers
 from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car
 
 
+class UserOutputSerializer(serializers.Serializer):
+    class Meta:
+        model= OrgUser
+        fields = ('id', 'username', 'organization')
+
 class OrganizationOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organization

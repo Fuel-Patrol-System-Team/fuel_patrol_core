@@ -5,15 +5,25 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ReportQueryListAPIView, ReportQueryDetailAPIView, \
     MediaListAPIView, MediaDetailAPIView, CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
-    DriverDetailAPIView, UserRegistrationAPIView
+    DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
+    DailyLeaksSumAPIView, DailyLeaksCountAPIView
 
 urlpatterns = [
 
     path('token', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh', TokenRefreshView.as_view(), name='token_refresh'),
+
+    path('user/info', UserInfoAPIView.as_view(), name='user_info'),
+
     path('register', UserRegistrationAPIView.as_view(), name='register'),
 
     path('media/upload', MediaUploadAPIView.as_view(), name='media-upload'),
+
+    path('leaks/count', CarLeaksCountAPIView.as_view(), name='leaks-count'),
+    path('leaks/volume', CarLeaksVolumeAPIView.as_view(), name='leaks-volume'),
+    path('leaks/daily-sum', DailyLeaksSumAPIView.as_view(), name='daily-leaks-sum'),
+    path('leaks/daily-count', DailyLeaksCountAPIView.as_view(), name='daily-leaks-count'),
+
     path('organizations', OrganizationListAPIView.as_view(), name='organization-list'),
     path('organizations/<uuid:pk>', OrganizationDetailAPIView.as_view(), name='organization-detail'),
     path('org-users', OrgUserListAPIView.as_view(), name='orguser-list'),

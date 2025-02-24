@@ -13,6 +13,7 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from django.conf.global_settings import APPEND_SLASH
 from django.urls import reverse_lazy
 from dotenv import load_dotenv
 
@@ -23,18 +24,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-at8*odjtsx^qhox$j3ojt@zozzbd&_x)xg6i&ik%v#v)1c&(6_'
+
+load_dotenv()
+
+
+SECRET_KEY = os.getenv('SECRET_KEY')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DEBUG') == 'True'
 
-ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
-
-# dotenv
-load_dotenv()
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS').split()
 
 # CORS
 CORS_ORIGIN_ALLOW_ALL = True
+
+##CORS_ORIGIN_WHITELIST = os.getenv('CORS_ORIGINS', '127.0.0.1:8000 127.0.0.1:3000').split()
 
 CORS_ALLOW_METHODS = [
     'GET',
@@ -412,3 +416,4 @@ SIMPLE_JWT = {
 # Custom user model
 AUTH_USER_MODEL = 'core.OrgUser'
 
+APPEND_SLASH=False
