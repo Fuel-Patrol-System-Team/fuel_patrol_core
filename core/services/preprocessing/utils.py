@@ -173,3 +173,57 @@ def fuel_leak_calculate_tricky(df_values: pd.DataFrame, norma_rasx_df: pd.DataFr
 def compute_leaks_chunk(auto_df: pd.DataFrame, data_df: pl.DataFrame, norma_df: pd.DataFrame):
     result_df = fuel_leak_calculate_standart(merge(auto_df, preprocess(data_df)), norma_rasx_df=norma_df)
     return result_df
+
+def preprocess_influx(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 2, PERIOD_2_MIN = 10, VOLTAGE_LIMIT = 4) -> pd.DataFrame:
+    with warnings.catch_warnings():
+        warnings.simplefilter(action="ignore")
+        df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
+
+        df = df[df['calc_sensors_fuel_level'].between(0, 4096)]
+
+        df['auto'] = df['auto'].astype(str)
+
+        df['dtime'] = df.groupby(['auto', df['timestamp'].dt.floor('1h')])['timestamp'].diff().abs()
+
+        df['dtime_per_hour'] = df['dtime'].dt.total_seconds() / 3600
+
+        df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])['calc_sensors_voltage'].transform(max)
+        
+        df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).lt(VOLTAGE_LIMIT)]
+        
+        df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
+        
+        anti_bug_aggregation = df.groupby(
+            ['auto', df['timestamp'].dt.floor(f'{ANTI_BUG_TIME_SECONDS}s')]
+        ).agg({
+            'calc_sensors_fuel_level': 'median',
+            'pos_s': 'mean',
+            'spent_fuel': 'sum',
+            'dtime': 'sum',
+            'dtime_per_hour': 'sum',
+        }).reset_index()
+        
+        anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
+        
+        pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
+            'pos_s': 'median',
+            'spent_fuel': 'sum',
+            'max_fuel': 'max',
+            'dtime': 'sum',
+            'dtime_per_hour': 'sum',
+        }).reset_index()
+        
+        pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(8), np.nan, inplace=True)
+
+        pre_period_df['spent_fuel'].replace(np.nan, 0, inplace=True)
+        
+        period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
+            
+            'pos_s': 'mean',
+            'spent_fuel': 'sum',
+            'max_fuel': 'max',
+            'dtime': 'sum',
+            'dtime_per_hour': 'sum',
+        } ).reset_index()
+        period_1_df = period_1_df[period_1_df.columns.difference(['dtime', 'dtime_per_hour'])]
+        return period_1_df

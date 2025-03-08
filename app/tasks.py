@@ -15,6 +15,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from app.celery import app as celery_app
 from app.settings import BASE_DIR
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
+from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, parse_norms
 from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
 from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, preprocess, merge
@@ -64,15 +65,8 @@ def parse_cars_task(self, report_query_id):
 
         logger.info("Начало парсинга CSV файла автомобилей...")
         try:
-
-            cars_df = pd.read_csv(
-                path,
-                usecols=['guid', 'gos_nomer', 'vin_nomer', 'marka', 'model', 'description', 'sl_tip_dvigat'],
-                encoding='utf-8',
-                on_bad_lines='skip',
-                engine='python'
-            )
-            logger.info(f"Размер прочитанного DataFrame: {cars_df.shape}, колонки: {cars_df.columns.tolist()}")
+            parsed_cars = parse_cars(path)
+           
         except Exception as e:
             logger.error(f"Ошибка чтения CSV файла {path}: {e}")
             if report_query:
@@ -82,7 +76,7 @@ def parse_cars_task(self, report_query_id):
                                   f"Ошибка чтения файла автомобилей для запроса отчёта {report_query_id}: {e}")
             return
 
-        if cars_df.empty:
+        if parsed_cars.empty:
             logger.error(f"Пустой CSV файл или нет валидных данных в {path}")
             if report_query:
                 report_query.status = 'error'
@@ -91,17 +85,6 @@ def parse_cars_task(self, report_query_id):
                                   f"Нет валидных данных об автомобилях в файле для запроса отчёта {report_query_id}")
             return
 
-        cars_df['marka'].replace(np.nan, "", inplace=True)
-        cars_df['model'].replace(np.nan, "", inplace=True)
-        cars_df['vin_nomer'].replace(np.nan, "", inplace=True)
-        cars_df['gos_nomer'].replace(np.nan, "", inplace=True)
-        cars_df['sl_tip_dvigat'].replace(np.nan, 0, inplace=True)
-        logger.info("Пропущенные значения заменены на пустые строки.")
-
-        cars_df['name'] = cars_df['marka'] + " " + cars_df['model'] + " " + cars_df['vin_nomer'] + cars_df['gos_nomer']
-        logger.info(f"Сформированы имена автомобилей, пример: {cars_df['name'].head().tolist()}")
-
-        parsed_cars = cars_df[['guid', 'name', 'description', 'sl_tip_dvigat']]
         logger.info(
             f"Итоговый DataFrame автомобилей: {parsed_cars.shape}, колонки: {parsed_cars.columns.tolist()}, пример: {parsed_cars.head().to_dict()}")
 
@@ -188,6 +171,7 @@ def parse_cars_task(self, report_query_id):
     priority=5,
     rate_limit="10/m"
 )
+
 def parse_norms_task(self, report_query_id):
     report_query = None
     organization = None
@@ -221,84 +205,28 @@ def parse_norms_task(self, report_query_id):
         path = pathlib.Path(norm_file_path)
         logger.info(f"Путь к файлу: {path}")
 
-        logger.info("Начало парсинга CSV файла норм...")
+        error = None
         try:
-            norms = pd.read_csv(path, encoding='utf-8', on_bad_lines='skip', engine='python')
-            logger.info(f"Размер прочитанного DataFrame: {norms.shape}, колонки: {norms.columns.tolist()}")
-        except Exception as e:
-            logger.error(f"Ошибка чтения CSV файла {path}: {e}")
+            parsed_norms = parse_norms(path)
+        except FileNotFoundError:
+            error = f"Файл по пути не найден: {path}"
+        except KeyError as error:
+            error = f"{error}"
+
+        if error != None:
+            logger.error(error)
             if report_query:
                 report_query.status = 'error'
                 report_query.save()
             send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"Ошибка чтения файла норм для запроса отчёта {report_query_id}: {e}")
-            return
-
-        norms = norms.groupby(['sl_avto', 'vid_norm_rasx']).last().reset_index()
-        logger.info(f"После группировки: {norms.shape}, уникальные vid_norm_rasx: {norms['vid_norm_rasx'].unique()}")
-
-        NORM_SUMMER = 'Норма на 100 км (Норма за час для ТС по моточасам) Летняя'
-        NORM_WINTER = 'Норма на 100 км (Норма за час для ТС по моточасам) Зимняя'
-        norms = norms[norms['vid_norm_rasx'].isin([NORM_SUMMER, NORM_WINTER])]
-        logger.info(f"После фильтрации по типам норм: {norms.shape}")
-
-        if norms.empty:
-            logger.error(f"Нет валидных данных после фильтрации в {path}")
-            if report_query:
-                report_query.status = 'error'
-                report_query.save()
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"Нет валидных норм в файле для запроса отчёта {report_query_id}")
-            return
-
-        result_dict = {}
-        for _, row in norms.iterrows():
-            auto = row['sl_avto']
-            if auto not in result_dict:
-                result_dict[auto] = {'winter_norm': -1, 'summer_norm': -1, 'due': '2000-12-31'}
-
-            if row['vid_norm_rasx'] == NORM_SUMMER:
-                result_dict[auto]['summer_norm'] = float(row['norma_rasx']) if pd.notna(row['norma_rasx']) else -1
-                result_dict[auto]['due'] = pd.to_datetime(row['deystvuet_do'], errors='coerce').strftime(
-                    '%Y-%m-%d') if pd.notna(row['deystvuet_do']) else '2000-12-31'
-            elif row['vid_norm_rasx'] == NORM_WINTER:
-                result_dict[auto]['winter_norm'] = float(row['norma_rasx']) if pd.notna(row['norma_rasx']) else -1
-                result_dict[auto]['due'] = pd.to_datetime(row['deystvuet_do'], errors='coerce').strftime(
-                    '%Y-%m-%d') if pd.notna(row['deystvuet_do']) else '2000-12-31'
-
-        parsed_norms = pd.DataFrame.from_dict(result_dict, orient='index').reset_index()
-        parsed_norms = parsed_norms.rename(
-            columns={'index': 'auto', 'winter_norm': 'winter_norm', 'summer_norm': 'summer_norm', 'due': 'due'})
-        logger.info(
-            f"Итоговый DataFrame норм: {parsed_norms.shape}, колонки: {parsed_norms.columns.tolist()}, пример: {parsed_norms.head().to_dict()}")
-
-        if parsed_norms.empty or parsed_norms[['auto', 'winter_norm', 'summer_norm', 'due']].isna().all().any():
-            logger.error(f"Нет валидных данных после преобразования в {path}")
-            if report_query:
-                report_query.status = 'error'
-                report_query.save()
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"Нет валидных норм в файле для запроса отчёта {report_query_id}")
-            return
-
-        required_columns = ['auto', 'winter_norm', 'summer_norm', 'due']
-        missing_columns = [col for col in required_columns if col not in parsed_norms.columns]
-        if missing_columns:
-            logger.error(f"Отсутствуют обязательные колонки в parsed_norms: {missing_columns}")
-            if report_query:
-                report_query.status = 'error'
-                report_query.save()
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"Отсутствуют колонки в данных норм для запроса отчёта {report_query_id}: {missing_columns}")
-            return
+                                  f"{error}")
 
         with transaction.atomic():
             for _, row in parsed_norms.iterrows():
                 try:
-                    if not all(pd.notna(row[col]) for col in required_columns):
+                    if not all(pd.notna(row[col]) for col in PARSE_NORMS_OUTPUT_COLUMNS):
                         logger.warning(f"Отсутствуют или содержат NaN значения в строке: {row}")
                         continue
-
                     car = Car.objects.get(id=str(row['auto']), organization=organization)
                     CarConsumption.objects.create(
                         car=car,

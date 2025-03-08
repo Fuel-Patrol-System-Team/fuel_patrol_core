@@ -4,5 +4,6 @@ venv
 /app/datasets
 /media
 /static
-.env
+*.env*
 /core/migrations
+/*.csv
