@@ -30,7 +30,7 @@ PARSE_NORMS_OUTPUT_COLUMNS = ['auto', 'winter_norm', 'summer_norm', 'due']
 def parse_norms(path: Path) -> pd.DataFrame:
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
-        norms = pd.read_csv(path)
+        norms = pd.read_csv(path,usecols=['sl_avto', 'period', 'norma_rasx', 'vid_norm_rasx', 'deystvuet_do'])
         try:
             norms = norms.groupby(['sl_avto', 'vid_norm_rasx']).last().reset_index()
             norms['vid_norm_rasx'].unique()
