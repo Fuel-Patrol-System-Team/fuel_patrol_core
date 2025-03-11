@@ -15,7 +15,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from app.celery import app as celery_app
 from app.settings import BASE_DIR
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
-from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, parse_norms
+from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, \
+    parse_norms
 from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
 from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, preprocess, merge
@@ -66,7 +67,7 @@ def parse_cars_task(self, report_query_id):
         logger.info("Начало парсинга CSV файла автомобилей...")
         try:
             parsed_cars = parse_cars(path)
-           
+
         except Exception as e:
             logger.error(f"Ошибка чтения CSV файла {path}: {e}")
             if report_query:
@@ -112,7 +113,7 @@ def parse_cars_task(self, report_query_id):
                             'name': str(row['name']).strip(),
                             'description': str(row['description']).strip() if pd.notna(row['description']) else "",
                             'organization': organization,
-                            'engine_type':str(row['sl_tip_dvigat']).strip() if pd.notna(row['sl_tip_dvigat']) else ""
+                            'engine_type': str(row['sl_tip_dvigat']).strip() if pd.notna(row['sl_tip_dvigat']) else ""
                         }
                     )
                     if not created:
@@ -171,7 +172,6 @@ def parse_cars_task(self, report_query_id):
     priority=5,
     rate_limit="10/m"
 )
-
 def parse_norms_task(self, report_query_id):
     report_query = None
     organization = None
@@ -355,7 +355,7 @@ def process_raw_data_task(self, report_query_id):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         report_id = report_query_id
 
-        ## TODO: УДАЛИТЬ ПРИ РЕЛИЗЕ
+        # TODO: УДАЛИТЬ ПРИ РЕЛИЗЕ
         raw_df_pandas = raw_df.to_pandas()
         raw_csv_path = base_dir / f"raw_df_{report_id}_{timestamp}.csv"
         raw_df_pandas.to_csv(raw_csv_path, index=False)
@@ -374,9 +374,6 @@ def process_raw_data_task(self, report_query_id):
         report_query.status = 'pending'
         report_query.save()
 
-        client, write_api = get_influx_write_client()
-        logger.info(f"Инициализирован клиент InfluxDB. Bucket: {INFLUXDB_BUCKET}")
-
         chunks = raw_df.partition_by(by=["auto"], maintain_order=False, as_dict=False)
         logger.info(f"Разделено на {len(chunks)} чанков по машинам")
 
@@ -392,7 +389,6 @@ def process_raw_data_task(self, report_query_id):
 
         report_query.flux_parsed = True
         report_query.save()
-        client.close()
         logger.info(f"Завершена обработка сырых данных для запроса отчёта {report_query_id}.")
 
     except SoftTimeLimitExceeded as e:
@@ -439,46 +435,13 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
     try:
         logger.info(f"Обработка чанка с {len(chunk_df)} строками для запроса отчёта {report_query_id}")
 
-        logger.debug(f"Тип chunk_df: {type(chunk_df)}")
-        logger.debug(
-            f"Chunk data sample: {chunk_df.head().to_dict() if hasattr(chunk_df, 'head') else 'No head method'}")
-        logger.debug(
-            f"Тип car_data: {type(car_data)}, Car data shape: {car_data.shape if isinstance(car_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {car_data.columns if hasattr(car_data, 'columns') else 'No columns'}")
-        logger.debug(
-            f"Тип norma_data: {type(norma_data)}, Norma data shape: {norma_data.shape if isinstance(norma_data, (pl.DataFrame, pd.DataFrame)) else 'Unknown'}, columns: {norma_data.columns if hasattr(norma_data, 'columns') else 'No columns'}")
-
-        if isinstance(chunk_df, pl.DataFrame):
-            chunk_pl = chunk_df
-            logger.info(
-                f"Чанк уже в формате polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
-        elif isinstance(chunk_df, pd.DataFrame):
-            chunk_pl = pl.from_pandas(chunk_df)
-            logger.info(
-                f"Преобразован pandas.DataFrame в polars.DataFrame, размер: {chunk_pl.shape}, тип 'auto': {chunk_pl['auto'].dtype if 'auto' in chunk_pl.columns else 'No auto column'}")
-        else:
-            raise ValueError(f"Неподдерживаемый тип данных для chunk_df: {type(chunk_df)}")
-
-        if 'auto' in chunk_pl.columns:
-            chunk_pl = chunk_pl.with_columns(pl.col('auto').cast(pl.Utf8))
-            logger.info(f"Тип 'auto' после приведения: {chunk_pl['auto'].dtype}")
-        else:
-            logger.error(f"Колонка 'auto' отсутствует в chunk_pl")
-            raise KeyError("Колонка 'auto' отсутствует в данных чанка")
-
-        try:
-            chunk_pandas = chunk_pl.to_pandas()
-            logger.info(
-                f"Преобразован в pandas.DataFrame для preprocess, размер: {chunk_pandas.shape}, колонки: {chunk_pandas.columns.tolist()}")
-        except AttributeError as e:
-            logger.error(f"Ошибка при преобразовании chunk_pl в pandas.DataFrame: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Неожиданная ошибка при преобразовании chunk_pl в pandas.DataFrame: {e}")
-            raise
+        chunk_pl = pl.from_pandas(chunk_df)
+        chunk_pl = chunk_pl.with_columns(pl.col('auto').cast(pl.Utf8))
+        chunk_pandas = chunk_pl.to_pandas()
 
         preprocessed_df = preprocess(chunk_pandas)
         logger.info(
-            f"Преобразованные данные (preprocess): {preprocessed_df.shape if preprocessed_df is not None else 'None'}, колонки: {preprocessed_df.columns.tolist() if preprocessed_df is not None else 'None'}")
+            f"Преобразованные данные (preprocess): {preprocessed_df.shape}, колонки: {preprocessed_df.columns.tolist()}")
 
         if isinstance(car_data, pl.DataFrame):
             car_data_pandas = car_data.to_pandas()
@@ -496,39 +459,28 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
         car_data_pandas['id'] = car_data_pandas['id'].astype(str)
         norma_data_pandas['sl_avto'] = norma_data_pandas['sl_avto'].astype(str)
 
-        try:
-            merged_df = merge(car_data_pandas, preprocessed_df)
-            logger.info(
-                f"Объединённые данные (merge): {merged_df.shape if merged_df is not None else 'None'}, колонки: {merged_df.columns.tolist() if merged_df is not None else 'None'}")
-        except KeyError as e:
-            logger.error(f"Ошибка при слиянии данных: отсутствует колонка {e}")
-            raise
+        merged_df = merge(car_data_pandas, preprocessed_df)
+        logger.info(
+            f"Объединённые данные (merge): {merged_df.shape}, колонки: {merged_df.columns.tolist()}")
 
-        try:
-            result_df = fuel_leak_calculate_standart(merged_df, norma_data_pandas)
-            logger.info(
-                f"Результат расчёта утечек (fuel_leak_calculate_standart): {result_df.shape if result_df is not None else 'None'}, колонки: {result_df.columns.tolist() if result_df is not None else 'None'}")
-        except KeyError as e:
-            logger.error(f"Ошибка в fuel_leak_calculate_standart: отсутствует колонка {e}")
-            raise
+        result_df = fuel_leak_calculate_standart(merged_df, norma_data_pandas)
+        logger.info(
+            f"Результат расчёта утечек: {result_df.shape}, колонки: {result_df.columns.tolist()}")
 
         client, write_api = get_influx_write_client()
         points = []
-        for _, row in chunk_pandas.iterrows():
-            pos_s = float(row['pos_s']) if pd.notna(row['pos_s']) else None
-            fuel_level = float(row['calc_sensors_fuel_level']) if pd.notna(row['calc_sensors_fuel_level']) else 0.0
-            voltage = float(row['calc_sensors_voltage']) if pd.notna(row['calc_sensors_voltage']) else 0.0
-
-            point = Point(f"raw_data:{org_id}") \
+        for _, row in preprocessed_df.iterrows():
+            point = Point(f"preprocessed_data:{org_id}") \
                 .tag("organization", str(org_id)) \
                 .tag("auto", str(row['auto'])) \
-                .field("pos_s", pos_s) \
-                .field("calc_sensors_fuel_level", fuel_level) \
-                .field("calc_sensors_voltage", voltage)
+                .field("pos_s", float(row['pos_s']) if pd.notna(row['pos_s']) else 0.0) \
+                .field("calc_sensors_fuel_level", float(row['max_fuel']) if pd.notna(row['max_fuel']) else 0.0) \
+                .field("spent_fuel", float(row['spent_fuel']) if pd.notna(row['spent_fuel']) else 0.0) \
+                .time(row['timestamp'])
             points.append(point)
 
         write_api.write(bucket=INFLUXDB_BUCKET, record=points)
-        logger.info(f"Сохранено {len(points)} точек в InfluxDB для запроса отчёта {report_query_id}")
+        logger.info(f"Сохранено {len(points)} предобработанных точек в InfluxDB для запроса отчёта {report_query_id}")
         client.close()
 
         return result_df
@@ -571,12 +523,12 @@ def save_leak_results(self, results, report_query_id):
             for _, row in result_df[result_df['is_leak']].iterrows():
                 try:
                     car_id = str(row['auto'])
-                    car, created = Car.objects.get_or_create(id=car_id,defaults={
-                            'name': str(row['name']).strip(),
-                            'description': " ",
-                            'organization': organization,
-                            'engine_type':str(row['sl_tip_dvigat']).strip() if pd.notna(row['sl_tip_dvigat']) else ""
-                        })
+                    car, created = Car.objects.get_or_create(id=car_id, defaults={
+                        'name': str(row['name']).strip(),
+                        'description': " ",
+                        'organization': organization,
+                        'engine_type': str(row['sl_tip_dvigat']).strip() if pd.notna(row['sl_tip_dvigat']) else ""
+                    })
 
                     CarReport.objects.create(
                         car=car,

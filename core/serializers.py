@@ -1,13 +1,12 @@
-# core/serializers.py
-from rest_framework.exceptions import ValidationError
 from rest_framework import serializers
 from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car
 
 
 class UserOutputSerializer(serializers.Serializer):
-    class Meta:
-        model= OrgUser
-        fields = ('id', 'username', 'organization')
+    id = serializers.IntegerField()
+    username = serializers.CharField()
+    organization = serializers.CharField()
+
 
 class OrganizationOutputSerializer(serializers.ModelSerializer):
     class Meta:
@@ -97,10 +96,36 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         try:
             organization = Organization.objects.get(name=org_name)
         except Organization.DoesNotExist:
-            raise ValidationError(f"Organization with name '{org_name}' not found.")
+            raise serializers.ValidationError(f"Organization with name '{org_name}' not found.")
         user = OrgUser.objects.create_user(
             username=validated_data['username'],
             password=validated_data['password'],
             org=organization
         )
         return user
+
+
+class CarMetricSerializer(serializers.Serializer):
+    x = serializers.CharField(help_text="Дата")
+    y = serializers.FloatField(help_text="Значение")
+    metric = serializers.CharField(help_text="Тип метрики (fuel_level или speed)")
+
+
+class CarMetricsQuerySerializer(serializers.Serializer):
+    periodFrom = serializers.DateField(required=False, allow_null=True)
+    periodDue = serializers.DateField(required=False, allow_null=True)
+    car = serializers.CharField(required=True)
+    agg = serializers.CharField(required=False, allow_null=True)
+    func = serializers.ChoiceField(choices=['mean', 'median', 'sum'], default='mean')
+    metric = serializers.ChoiceField(choices=['fuel_level', 'speed', 'both'], default='both')
+
+
+class DailyLeaksSerializer(serializers.Serializer):
+    periodFrom = serializers.DateField(required=False, allow_null=True)
+    periodDue = serializers.DateField(required=False, allow_null=True)
+
+
+class CarLeaksSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    label = serializers.CharField()
+    value = serializers.FloatField()

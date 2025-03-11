@@ -6,7 +6,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ReportQueryListAPIView, ReportQueryDetailAPIView, \
     MediaListAPIView, MediaDetailAPIView, CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
-    DailyLeaksSumAPIView, DailyLeaksCountAPIView
+    DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView
 
 urlpatterns = [
 
@@ -16,6 +16,8 @@ urlpatterns = [
     path('user/info', UserInfoAPIView.as_view(), name='user_info'),
 
     path('register', UserRegistrationAPIView.as_view(), name='register'),
+
+    path('car-metrics', CarMetricsAPIView.as_view(), name='car-metrics'),
 
     path('media/upload', MediaUploadAPIView.as_view(), name='media-upload'),
 
