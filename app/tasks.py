@@ -24,7 +24,7 @@ from core.services.preprocessing.utils import fuel_leak_calculate_standart, prep
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-BATCH_SIZE = 500_000
+BATCH_SIZE = 500_00
 
 celery_app.conf.task_concurrency = 4
 
@@ -332,6 +332,8 @@ def process_raw_data_task(self, report_query_id):
             f"Данные автомобилей: {car_data.shape}, колонки: {car_data.columns}, пример ID: {car_data['id'].head().to_list()}")
 
         consumptions = CarConsumption.objects.filter(car__organization=organization).select_related('car')
+        test_norma_df = pd.DataFrame(list(consumptions.values()), columns=['sl_avto', 'norma_rasx_winter', 'norma_rasx_summer', 'period'])
+        test_norma_df.to_csv("./test_norm.csv")
         norma_df = pl.from_pandas(pd.DataFrame(list(consumptions.values(
             'car__id', 'winter_volume', 'summer_volume', 'valid_period'
         ))).astype({'car__id': str})).rename({
@@ -639,6 +641,7 @@ def parse_merged_data(self, report_query_id):
 
         error = None
         try:
+
             cars, norms = parse_merged_util(path)
         except FileNotFoundError:
             error = f"Файл по пути не найден: {path}"
@@ -679,7 +682,7 @@ def parse_merged_data(self, report_query_id):
                     continue
             for index, norm in enumerate( norms):
                 try:
-                    car = Car.objects.get(id=str(car.id), organization=organization)
+                    car = Car.objects.get(id=str(norm.car), organization=organization)
                     CarConsumption.objects.create(
                         car=car,
                         winter_volume=float(norm.winter_norm) if pd.notna(norm.winter_norm) else -1,

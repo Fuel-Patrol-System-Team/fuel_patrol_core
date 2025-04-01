@@ -297,9 +297,9 @@ class MediaUploadAPIView(APIView):
 
         existing_media = Media.objects.filter(filename=uploaded_file.name, size=file_size, type=file_type, file_hash=file_hash).first()
         # TODO: если статус для файла ошибка файл можно загружать повторно (упростит дебаггинг)
-        if existing_media:
-            logger.info(f"Идентичный файл уже существует: {existing_media.id}")
-            return error_response("Такой файл уже был загружен", status.HTTP_400_BAD_REQUEST)
+        # if existing_media:
+        #     logger.info(f"Идентичный файл уже существует: {existing_media.id}")
+        #     return error_response("Такой файл уже был загружен", status.HTTP_400_BAD_REQUEST)
 
         report_query = ReportQuery.objects.create(organization=organization, status="created")
         media = Media(
