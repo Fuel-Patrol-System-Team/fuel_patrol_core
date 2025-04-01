@@ -15,7 +15,7 @@ import logging
 import mimetypes
 import uuid
 
-from app.tasks import parse_cars_task, parse_norms_task, process_raw_data_task
+from app.tasks import parse_merged_data, process_raw_data_task
 from drf_yasg.utils import swagger_auto_schema
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver
 from .pagination import StandardResultsSetPagination
@@ -214,6 +214,7 @@ class CarLeaksCountAPIView(APIView):
         return success_response(result, status.HTTP_200_OK)
 
 
+
 class CarLeaksVolumeAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -270,7 +271,6 @@ class UserInfoAPIView(APIView):
         })
         return user_response(serializer.data, status.HTTP_200_OK)
 
-
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
     permission_classes = [IsOrgMember]
@@ -283,7 +283,7 @@ class MediaUploadAPIView(APIView):
             return error_response("No file uploaded", status.HTTP_400_BAD_REQUEST)
 
         file_type = request.data.get('type')
-        if file_type not in ["norm", "raw", "auto"]:
+        if file_type not in ["raw", "auto"]:
             logger.error(f"Неверный тип файла: {file_type}")
             return error_response("Invalid file type", status.HTTP_400_BAD_REQUEST)
 
@@ -296,9 +296,10 @@ class MediaUploadAPIView(APIView):
         organization = request.user.org
 
         existing_media = Media.objects.filter(filename=uploaded_file.name, size=file_size, type=file_type, file_hash=file_hash).first()
+        # TODO: если статус для файла ошибка файл можно загружать повторно (упростит дебаггинг)
         if existing_media:
             logger.info(f"Идентичный файл уже существует: {existing_media.id}")
-            return error_response("File already exists", status.HTTP_400_BAD_REQUEST)
+            return error_response("Такой файл уже был загружен", status.HTTP_400_BAD_REQUEST)
 
         report_query = ReportQuery.objects.create(organization=organization, status="created")
         media = Media(
@@ -313,25 +314,19 @@ class MediaUploadAPIView(APIView):
         upload_path = get_upload_path(new_filename)
         media.file.save(upload_path, uploaded_file)
         media.save()
-
+        report_query.save()
         try:
             if file_type == "auto":
-                parse_cars_task.delay(report_query.id)
-            elif file_type == "norm":
-                if not ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists():
-                    return error_response("Please upload and process 'auto' file first", status.HTTP_400_BAD_REQUEST)
-                parse_norms_task.delay(report_query.id)
+                parse_merged_data.delay(report_query.id)
             elif file_type == "raw":
-                if not (ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists() and
-                        ReportQuery.objects.filter(organization=organization, media__type="norm", status="completed").exists()):
-                    return error_response("Please upload and process 'auto' and 'norm' files first", status.HTTP_400_BAD_REQUEST)
+                if not (ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists()):
+                    return error_response("Загрузите  'auto' сначала", status.HTTP_400_BAD_REQUEST)
                 process_raw_data_task.delay(report_query.id)
             logger.info(f"Медиафайл успешно загружен: {media.id}")
             return attach_media_response(report_query)
         except CeleryError as e:
             logger.error(f"Ошибка Celery при запуске задачи: {e}")
             return error_response(f"Failed to launch processing task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
-
 
 class UserRegistrationAPIView(APIView):
     @swagger_auto_schema(responses={201: UserRegistrationSerializer(), 400: "Bad Request", 404: "Organization not found"})

@@ -15,7 +15,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from app.celery import app as celery_app
 from app.settings import BASE_DIR
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
-from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, \
+from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, parse_merged_util, \
     parse_norms
 from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
 from core.services.notifications.tg_bot import send_telegram_message
@@ -307,13 +307,6 @@ def process_raw_data_task(self, report_query_id):
             send_telegram_message(organization.bot_token, organization.chat_id,
                                   f"Сначала загрузите и обработайте файл 'auto' для запроса отчёта {report_query_id}")
             return
-        if not ReportQuery.objects.filter(organization=organization, media__type="norm", status="completed").exists():
-            logger.error(f"Данные норм для организации {organization.name} не завершены")
-            report_query.status = 'error'
-            report_query.save()
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"Сначала загрузите и обработайте файл 'norm' для запроса отчёта {report_query_id}")
-            return
 
         raw_media = Media.objects.filter(report_query=report_query, type="raw").first()
         if not raw_media:
@@ -323,12 +316,11 @@ def process_raw_data_task(self, report_query_id):
             send_telegram_message(organization.bot_token, organization.chat_id,
                                   f"Сырой медиафайл не найден для запроса отчёта {report_query_id}.")
             return
-
-        raw_df = pl.read_csv(
+        # тут проблема
+        raw_df = pd.read_excel(
             raw_media.file.path,
-            columns=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
-            try_parse_dates=True,
-            batch_size=BATCH_SIZE,
+            usecols=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
+            parse_dates=True,
             dtypes={'auto': pl.Utf8}
         )
         logger.info(f"Загружено {raw_df.height} строк сырых данных для обработки. Колонки: {raw_df.columns}")
@@ -348,6 +340,7 @@ def process_raw_data_task(self, report_query_id):
             'summer_volume': 'norma_rasx_summer',
             'valid_period': 'period'
         })
+        print(norma_df.columns)
         logger.info(
             f"Данные норм: {norma_df.shape}, колонки: {norma_df.columns}, пример sl_avto: {norma_df['sl_avto'].head().to_list()}")
 
@@ -609,4 +602,135 @@ def check_and_process_raw_reports(self):
 
     except Exception as e:
         logger.error(f"Ошибка в check_and_process_raw_reports: {e}")
+        raise self.retry(exc=e)
+
+@shared_task(
+    bind=True,
+    autoretry_for=(Exception,),
+    max_retries=3, # бесполезно из-за условия фильтра
+    retry_backoff=True,
+    soft_time_limit=300,
+    priority=5,
+    rate_limit="10/m"
+)
+def parse_merged_data(self, report_query_id):
+    report_query = None
+    organization = None
+
+    try:
+        logger.info(f"Начат парсинг норм для запроса отчёта {report_query_id}...")
+        report_query = ReportQuery.objects.get(id=report_query_id)
+        organization = report_query.organization
+
+        media = Media.objects.filter(report_query=report_query, type="auto").first()
+        if not media:
+            logger.error(f"Медиафайл норм не найден для запроса отчёта {report_query_id}.")
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Медиафайл норм не найден для запроса отчёта {report_query_id}.")
+            return
+
+        norm_file_path = media.file.path
+        logger.info(f"Обработка файла норм: {norm_file_path}")
+        path = pathlib.Path(norm_file_path)
+        logger.info(f"Путь к файлу: {path}")
+
+        error = None
+        try:
+            cars, norms = parse_merged_util(path)
+        except FileNotFoundError:
+            error = f"Файл по пути не найден: {path}"
+        except KeyError as error:
+            error = f"{error}"
+
+        if error != None:
+            logger.error(error)
+            if report_query:
+                report_query.status = 'error'
+                report_query.save()
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"{error}")
+
+        with transaction.atomic():
+            for obj in cars:
+                try:
+                    # TODO: обработаь иначе если надо
+                    # if not all(pd.notna(row[col]) for col in required_columns):
+                        # logger.warning(f"Отсутствуют или содержат NaN значения в строке: {index}")
+                        # continue
+                    car, created = Car.objects.get_or_create(
+                        id=obj.id,
+                        defaults={
+                            'name': str(obj.name).strip(),
+                            'description': str(obj.description).strip() if pd.notna(obj.description) else "",
+                            'organization': organization,
+                            'engine_type': str(obj.engine_type).strip() if pd.notna(obj.engine_type) else ""
+                        }
+                    )
+                    if not created:
+                        car.name = str(obj.name).strip()
+                        car.description = str(obj.description).strip() if pd.notna(obj.description) else ""
+                        car.save()
+                    logger.debug(f"Автомобиль {car.id} сохранён или обновлён: {car.name}")
+                except Exception as e:
+                    logger.error(f"Ошибка при сохранении автомобиля {car.id}: {e}")
+                    continue
+                for index, norm in enumerate( norms):
+                    try:
+                        car = Car.objects.get(id=str(car.id), organization=organization)
+                        CarConsumption.objects.create(
+                            car=car,
+                            winter_volume=float(norm.winter_norm) if pd.notna(norm.winter_norm) else -1,
+                            summer_volume=float(norm.summer_norm) if pd.notna(norm.summer_norm) else -1,
+                            valid_period=pd.to_datetime(norm.due).date() if pd.notna(
+                                norm.due) else None
+                        )
+                    except Car.DoesNotExist:
+                        logger.warning(f"Автомобиль с id {norm.car} не найден для организации {organization.name}.")
+                        continue
+                    except (ValueError, TypeError) as e:
+                        logger.error(f"Неверный тип данных в строке {index}: {e}")
+                        continue
+                    except Exception as e:
+                        logger.error(f"Неожиданная ошибка при обработке строки {index}: {e}")
+                        continue
+
+                    
+        if report_query:
+            report_query.status = 'completed'
+            report_query.save()
+            logger.info(f"Данные норм успешно распаршены и сохранены для запроса отчёта {report_query_id}.")
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                f"Данные норм успешно распарсены и сохранены для запроса отчёта {report_query_id}.")
+
+    except SoftTimeLimitExceeded as e:
+        logger.error(f"Превышено временное ограничение в parse_norms_task для запроса отчёта {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Превышено временное ограничение в parse_norms_task для запроса отчёта {report_query_id}")
+        raise
+
+    except ObjectDoesNotExist as e:
+        logger.error(f"ReportQuery или Media не найдены для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"ReportQuery или Media не найдены для запроса отчёта {report_query_id}")
+        raise self.retry(exc=e)
+
+    except Exception as e:
+        logger.error(f"Ошибка в parse_norms_task для report_query_id {report_query_id}: {e}")
+        if report_query:
+            report_query.status = 'error'
+            report_query.save()
+        if organization:
+            send_telegram_message(organization.bot_token, organization.chat_id,
+                                  f"Ошибка в parse_norms_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)

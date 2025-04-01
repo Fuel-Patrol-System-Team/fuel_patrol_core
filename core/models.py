@@ -137,7 +137,7 @@ MEDIA_TYPE = [
 
 class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    media_type = models.CharField(max_length=50, **NULLABLE, verbose_name="Тип медиа")
+    media_type = models.CharField(max_length=256, **NULLABLE, verbose_name="Тип медиа")
     file = models.FileField(**NULLABLE, upload_to='media/', verbose_name="Файл")
     size = models.IntegerField(default=0, **NULLABLE, verbose_name="Размер")
     filename = models.CharField(max_length=255, verbose_name="Имя файла")

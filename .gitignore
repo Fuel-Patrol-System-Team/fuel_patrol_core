@@ -7,3 +7,5 @@ venv
 *.env*
 /core/migrations
 /*.csv
+debug.log
+.vscode

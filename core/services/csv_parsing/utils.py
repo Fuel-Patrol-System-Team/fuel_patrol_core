@@ -2,6 +2,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 import warnings
+from dataclasses import dataclass
 ## TODO: (YShipik) - блоки кода из тасков перенеси сюда, почему то когда вызываю в функциях - у меня вечная ошика, я напрямую писал в тасках
 def parse_cars(path: Path) -> pd.DataFrame:
     with warnings.catch_warnings():
@@ -31,6 +32,7 @@ def parse_norms(path: Path) -> pd.DataFrame:
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
         norms = pd.read_csv(path,usecols=['sl_avto', 'period', 'norma_rasx', 'vid_norm_rasx', 'deystvuet_do'])
+        norms.to_csv("./norms_parsing_test.csv")
         try:
             norms = norms.groupby(['sl_avto', 'vid_norm_rasx']).last().reset_index()
             norms['vid_norm_rasx'].unique()
@@ -56,3 +58,30 @@ def parse_norms(path: Path) -> pd.DataFrame:
         except KeyError:
             diff = list( set(PARSE_NORMS_REQUIRED_COLUMNS).difference(norms.columns))
             raise KeyError(f"Не найдены колонки {diff}")
+@dataclass
+class CarPrimitive:
+    name: str
+    description: str
+    id: str
+    engine_type: int
+
+@dataclass
+class NormsPrimitive:
+    winter_norm: int
+    summer_norm: int
+    due: str
+    car: str
+
+def parse_merged_util(path: Path) -> tuple[tuple[CarPrimitive], tuple[NormsPrimitive]]:
+    dataframe = pd.read_excel(path, usecols=['guid', 'name', 'description', 'winter_norm', 'summer_norm', 'due', 'engine_type' ])
+
+    cars: tuple[CarPrimitive] = []
+    norms: tuple[NormsPrimitive] = []
+    for obj in dataframe.itertuples(index=False):
+        cars.append(
+            CarPrimitive(obj.name, obj.description, obj.guid, int(obj.engine_type))
+        )
+        norms.append(
+            NormsPrimitive(obj.winter_norm, obj.summer_norm, obj.due, obj.guid)
+        )
+    return (cars, norms)
