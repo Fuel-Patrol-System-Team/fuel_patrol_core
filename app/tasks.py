@@ -317,12 +317,12 @@ def process_raw_data_task(self, report_query_id):
                                   f"Сырой медиафайл не найден для запроса отчёта {report_query_id}.")
             return
         # тут проблема
-        raw_df = pd.read_excel(
-            raw_media.file.path,
-            usecols=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
-            parse_dates=True,
-            dtypes={'auto': pl.Utf8}
-        )
+        raw_df = pl.read_csv(raw_media.file.path, 
+                             columns=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
+                             try_parse_dates=True,
+                             batch_size=BATCH_SIZE,
+                             dtypes={'auto': pl.Utf8}
+                             )
         logger.info(f"Загружено {raw_df.height} строк сырых данных для обработки. Колонки: {raw_df.columns}")
 
         cars = Car.objects.filter(organization=organization).select_related('organization')
