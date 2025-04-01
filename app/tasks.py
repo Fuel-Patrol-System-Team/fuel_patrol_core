@@ -332,8 +332,6 @@ def process_raw_data_task(self, report_query_id):
             f"Данные автомобилей: {car_data.shape}, колонки: {car_data.columns}, пример ID: {car_data['id'].head().to_list()}")
 
         consumptions = CarConsumption.objects.filter(car__organization=organization).select_related('car')
-        test_norma_df = pd.DataFrame(list(consumptions.values()), columns=['sl_avto', 'norma_rasx_winter', 'norma_rasx_summer', 'period'])
-        test_norma_df.to_csv("./test_norm.csv")
         norma_df = pl.from_pandas(pd.DataFrame(list(consumptions.values(
             'car__id', 'winter_volume', 'summer_volume', 'valid_period'
         ))).astype({'car__id': str})).rename({
