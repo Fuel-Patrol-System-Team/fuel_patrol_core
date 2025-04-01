@@ -633,7 +633,7 @@ def parse_merged_data(self, report_query_id):
             return
 
         norm_file_path = media.file.path
-        logger.info(f"Обработка файла норм: {norm_file_path}")
+        logger.info(f"Обработка файла машин и норм: {norm_file_path}")
         path = pathlib.Path(norm_file_path)
         logger.info(f"Путь к файлу: {path}")
 
@@ -650,8 +650,8 @@ def parse_merged_data(self, report_query_id):
             if report_query:
                 report_query.status = 'error'
                 report_query.save()
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                  f"{error}")
+            # send_telegram_message(organization.bot_token, organization.chat_id,
+            #                       f"{error}")
 
         with transaction.atomic():
             for obj in cars:
@@ -677,33 +677,33 @@ def parse_merged_data(self, report_query_id):
                 except Exception as e:
                     logger.error(f"Ошибка при сохранении автомобиля {car.id}: {e}")
                     continue
-                for index, norm in enumerate( norms):
-                    try:
-                        car = Car.objects.get(id=str(car.id), organization=organization)
-                        CarConsumption.objects.create(
-                            car=car,
-                            winter_volume=float(norm.winter_norm) if pd.notna(norm.winter_norm) else -1,
-                            summer_volume=float(norm.summer_norm) if pd.notna(norm.summer_norm) else -1,
-                            valid_period=pd.to_datetime(norm.due).date() if pd.notna(
-                                norm.due) else None
-                        )
-                    except Car.DoesNotExist:
-                        logger.warning(f"Автомобиль с id {norm.car} не найден для организации {organization.name}.")
-                        continue
-                    except (ValueError, TypeError) as e:
-                        logger.error(f"Неверный тип данных в строке {index}: {e}")
-                        continue
-                    except Exception as e:
-                        logger.error(f"Неожиданная ошибка при обработке строки {index}: {e}")
-                        continue
+            for index, norm in enumerate( norms):
+                try:
+                    car = Car.objects.get(id=str(car.id), organization=organization)
+                    CarConsumption.objects.create(
+                        car=car,
+                        winter_volume=float(norm.winter_norm) if pd.notna(norm.winter_norm) else -1,
+                        summer_volume=float(norm.summer_norm) if pd.notna(norm.summer_norm) else -1,
+                        valid_period=pd.to_datetime(norm.due).date() if pd.notna(
+                            norm.due) else None
+                    )
+                except Car.DoesNotExist:
+                    logger.warning(f"Автомобиль с id {norm.car} не найден для организации {organization.name}.")
+                    continue
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Неверный тип данных в строке {index}: {e}")
+                    continue
+                except Exception as e:
+                    logger.error(f"Неожиданная ошибка при обработке строки {index}: {e}")
+                continue
 
                     
         if report_query:
             report_query.status = 'completed'
             report_query.save()
-            logger.info(f"Данные норм успешно распаршены и сохранены для запроса отчёта {report_query_id}.")
-            send_telegram_message(organization.bot_token, organization.chat_id,
-                                f"Данные норм успешно распарсены и сохранены для запроса отчёта {report_query_id}.")
+            logger.info(f"Данные норм и машин успешно распаршены и сохранены для запроса отчёта {report_query_id}.")
+            # send_telegram_message(organization.bot_token, organization.chat_id,
+            #                     f"Данные норм и машин успешно распарсены и сохранены для запроса отчёта {report_query_id}.")
 
     except SoftTimeLimitExceeded as e:
         logger.error(f"Превышено временное ограничение в parse_norms_task для запроса отчёта {report_query_id}: {e}")
