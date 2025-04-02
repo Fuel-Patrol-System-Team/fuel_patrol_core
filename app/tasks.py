@@ -30,15 +30,10 @@ celery_app.conf.task_concurrency = 4
 
 logger = logging.getLogger(__name__)
 
-
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
     soft_time_limit=300,
-    priority=5,
-    rate_limit="10/m"
+    priority=5
 )
 def parse_cars_task(self, report_query_id):
     report_query = None
@@ -162,15 +157,10 @@ def parse_cars_task(self, report_query_id):
                                   f"Ошибка в parse_cars_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
     soft_time_limit=300,
-    priority=5,
-    rate_limit="10/m"
+    priority=5
 )
 def parse_norms_task(self, report_query_id):
     report_query = None
@@ -282,12 +272,8 @@ def parse_norms_task(self, report_query_id):
                                   f"Ошибка в parse_norms_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
     soft_time_limit=1800,
     priority=2,
     rate_limit="2/m"
@@ -376,11 +362,8 @@ def process_raw_data_task(self, report_query_id):
             for chunk in chunks
         ]
 
-        chord(chunk_tasks)(save_leak_results.s(report_query_id)).on_error(
-            lambda *args, **kwargs: save_leak_results.apply_async(args=[None, report_query_id])
-        )
+        chord(chunk_tasks)(save_leak_results.s(report_query_id))
 
-        report_query.flux_parsed = True
         report_query.save()
         logger.info(f"Завершена обработка сырых данных для запроса отчёта {report_query_id}.")
 
@@ -415,14 +398,10 @@ def process_raw_data_task(self, report_query_id):
                                   f"Ошибка в process_raw_data_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
     soft_time_limit=300,
-    priority=3,
+    priority=3
 )
 def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id):
     try:
@@ -482,14 +461,10 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
         logger.error(f"Ошибка в process_chunk для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
     soft_time_limit=600,
-    priority=4,
+    priority=4
 )
 def save_leak_results(self, results, report_query_id):
     report_query = None
@@ -560,14 +535,10 @@ def save_leak_results(self, results, report_query_id):
                                   f"Ошибка в save_leak_results для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
 @celery_app.task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3,
-    retry_backoff=True,
     soft_time_limit=300,
-    priority=0,
+    priority=0
 )
 def check_and_process_raw_reports(self):
     report_query = None
@@ -606,12 +577,8 @@ def check_and_process_raw_reports(self):
 
 @shared_task(
     bind=True,
-    autoretry_for=(Exception,),
-    max_retries=3, # бесполезно из-за условия фильтра
-    retry_backoff=True,
     soft_time_limit=300,
-    priority=5,
-    rate_limit="10/m"
+    priority=5
 )
 def parse_merged_data(self, report_query_id):
     report_query = None

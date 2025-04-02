@@ -107,13 +107,11 @@ QUERY_STATUS = [
     ("error", "Ошибка")
 ]
 
-
 class ReportQuery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
     organization = models.ForeignKey(Organization, on_delete=models.CASCADE, verbose_name="Организация")
     status = models.CharField(max_length=50, choices=QUERY_STATUS, **NULLABLE, verbose_name="Статус")
-    flux_parsed = models.BooleanField(default=False, verbose_name="Обработано Flux")
-    csv_parsed = models.BooleanField(default=False, verbose_name="Обработано CSV")
+
 
     class Meta:
         verbose_name = "Запрос отчёта"
@@ -129,11 +127,9 @@ class ReportQuery(models.Model):
 
 
 MEDIA_TYPE = [
-    ("norm", "Нормы"),
     ("raw", "Сырые данные"),
-    ("auto", "Автомобили")
+    ("auto_data", "Данные об автомобилях")
 ]
-
 
 class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
@@ -142,7 +138,7 @@ class Media(models.Model):
     size = models.IntegerField(default=0, **NULLABLE, verbose_name="Размер")
     filename = models.CharField(max_length=255, verbose_name="Имя файла")
     type = models.CharField(max_length=50, **NULLABLE, choices=MEDIA_TYPE, verbose_name="Тип файла")
-    report_query = models.ForeignKey(ReportQuery, **NULLABLE, on_delete=models.CASCADE, verbose_name="Запрос отчёта")
+    report_query = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, **NULLABLE, verbose_name="Запрос отчёта")
     file_hash = models.CharField(max_length=64, unique=True, **NULLABLE, verbose_name="Хэш файла")
 
     class Meta:

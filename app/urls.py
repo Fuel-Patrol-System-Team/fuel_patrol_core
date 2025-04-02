@@ -9,6 +9,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework import permissions
 
+from core.views import api_docs_view
+
 schema_view = get_schema_view(
     openapi.Info(
         title="Fuel API",
@@ -28,11 +30,14 @@ urlpatterns = [
 
     path('api/v1/swagger', schema_view.with_ui('swagger', cache_timeout=0), name='schema-swagger-ui'),
     path('api/v1/redoc', schema_view.with_ui('redoc', cache_timeout=0), name='schema-redoc'),
+    path('api/v1/swagger.json', schema_view.without_ui(cache_timeout=0), name='schema-json'),
+    path('api/v1/docs', api_docs_view, name='api-docs'),
+
 ]
 
 if settings.DEBUG:
     import debug_toolbar
 
-    urlpatterns += [
-                       path('__debug__/', include(debug_toolbar.urls)),
-                   ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+urlpatterns += [
+                   path('__debug__/', include(debug_toolbar.urls)),
+               ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

@@ -4,8 +4,9 @@ from datetime import datetime
 from celery.exceptions import CeleryError
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDay
+from django.shortcuts import render, get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
-from influxdb_client import InfluxDBClient
+
 from rest_framework.filters import SearchFilter
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView
@@ -29,6 +30,7 @@ from .serializers import (
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer, CarMetricSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer
 )
+from .services.databases.influx_db import get_influx_write_client
 from .services.media.utils import get_upload_path, calculate_file_hash
 from .responses import error_response, user_registered_response, attach_media_response, user_response, success_response
 from .permissions import IsOrgMember
@@ -59,12 +61,14 @@ class CarMetricsAPIView(APIView):
         agg_func = data.get('func')
         metric = data.get('metric')
 
-        if not Car.objects.filter(id=car_id, organization=request.user.org).exists():
+        try:
+            car = get_object_or_404(Car, id=car_id, organization=request.user.org)
+        except Car.DoesNotExist:
             logger.info(f"Автомобиль {car_id} не найден или не принадлежит организации {request.user.org.id}")
-            return error_response("Автомобиль не найден или не принадлежит вашей организации", status.HTTP_404_NOT_FOUND)
+            return error_response("Автомобиль не найден или не принадлежит вашей организации",
+                                  status.HTTP_404_NOT_FOUND)
 
-        client = InfluxDBClient(url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG)
-        query_api = client.query_api()
+        client,query_api = get_influx_write_client()
         org_id = str(request.user.org.id)
 
         range_clause = "range(start: -10y)"
@@ -174,7 +178,6 @@ class DailyLeaksSumAPIView(APIView):
         result = [{"value": item['value'], "day": item['day'].strftime('%Y-%m-%d')} for item in daily_sums]
         return success_response(result, status.HTTP_200_OK)
 
-
 class CarLeaksCountAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -212,8 +215,6 @@ class CarLeaksCountAPIView(APIView):
             for car in cars
         ]
         return success_response(result, status.HTTP_200_OK)
-
-
 
 class CarLeaksVolumeAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -253,7 +254,6 @@ class CarLeaksVolumeAPIView(APIView):
         ]
         return success_response(result, status.HTTP_200_OK)
 
-
 class UserInfoAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -270,7 +270,6 @@ class UserInfoAPIView(APIView):
             'organization': user.org.name
         })
         return user_response(serializer.data, status.HTTP_200_OK)
-
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
     permission_classes = [IsOrgMember]
@@ -295,11 +294,21 @@ class MediaUploadAPIView(APIView):
         file_size = uploaded_file.size
         organization = request.user.org
 
-        existing_media = Media.objects.filter(filename=uploaded_file.name, size=file_size, type=file_type, file_hash=file_hash).first()
-        # TODO: если статус для файла ошибка файл можно загружать повторно (упростит дебаггинг)
-        # if existing_media:
-        #     logger.info(f"Идентичный файл уже существует: {existing_media.id}")
-        #     return error_response("Такой файл уже был загружен", status.HTTP_400_BAD_REQUEST)
+        try:
+            existing_media = Media.objects.get(
+                filename=uploaded_file.name,
+                size=file_size,
+                type=file_type,
+                file_hash=file_hash
+            )
+            if existing_media.report_query.status == "completed":
+                logger.info(f"Идентичный файл уже существует и заявка завершена успешно: {existing_media.id}")
+                return error_response("Такой файл уже был загружен и обработан", status.HTTP_400_BAD_REQUEST)
+            else:
+                logger.info(
+                    f"Идентичный файл существует, но заявка не завершена успешно (статус: {existing_media.report_query.status}). Разрешаем повторную загрузку.")
+        except Media.DoesNotExist:
+            existing_media = None
 
         report_query = ReportQuery.objects.create(organization=organization, status="created")
         media = Media(
@@ -320,7 +329,7 @@ class MediaUploadAPIView(APIView):
                 parse_merged_data.delay(report_query.id)
             elif file_type == "raw":
                 if not (ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists()):
-                    return error_response("Загрузите  'auto' сначала", status.HTTP_400_BAD_REQUEST)
+                    return error_response("Загрузите 'auto' сначала", status.HTTP_400_BAD_REQUEST)
                 process_raw_data_task.delay(report_query.id)
             logger.info(f"Медиафайл успешно загружен: {media.id}")
             return attach_media_response(report_query)
@@ -491,3 +500,8 @@ class DriverDetailAPIView(RetrieveAPIView):
     serializer_class = DriverOutputSerializer
     queryset = Driver.objects.all()
     lookup_field = 'pk'
+
+def api_docs_view(request):
+    return render(request, 'api_docs.html', {
+        'api_description_url': '/api/v1/swagger.json'
+    })

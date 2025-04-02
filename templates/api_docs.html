@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Документация API - Fuel API</title>
+    <script type="module" src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        elements-api {
+            height: 100vh;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <elements-api
+        apiDescriptionUrl="{{ api_description_url }}"
+        router="hash"
+        layout="sidebar"
+        hideTryIt="false"
+        hideExport="false"
+    ></elements-api>
+</body>
+</html>
