@@ -3,7 +3,7 @@ from drf_yasg import openapi
 from core.serializers import CarMetricSerializer
 
 MEDIA_UPLOAD_SCHEMA = {
-    "tags": ["Media"],
+    "tags": ["media"],
     "operation_description": "Загружает медиафайл.",
     "manual_parameters": [
         openapi.Parameter("file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True,
@@ -17,7 +17,7 @@ MEDIA_UPLOAD_SCHEMA = {
 }
 
 LEAKS_COUNT_SCHEMA = {
-    "tags": ["Leaks"],
+    "tags": ["leaks"],
     "operation_description": "Получает количество сливов по автомобилям",
     "manual_parameters": [
         openapi.Parameter('periodFrom', openapi.IN_QUERY,
@@ -47,7 +47,7 @@ LEAKS_COUNT_SCHEMA = {
 }
 
 LEAKS_VOLUME_SCHEMA = {
-    "tags": ["Leaks"],
+    "tags": ["leaks"],
     "operation_description": "Получает объем сливов по автомобилям",
     "manual_parameters": [
         openapi.Parameter('periodFrom', openapi.IN_QUERY,
@@ -77,7 +77,7 @@ LEAKS_VOLUME_SCHEMA = {
 }
 
 DAILY_LEAKS_SUM_SCHEMA = {
-    "tags": ["Leaks"],
+    "tags": ["leaks"],
     "operation_description": "Получает сумму сливов по дням за указанный период или за всё время",
     "manual_parameters": [
         openapi.Parameter('periodFrom', openapi.IN_QUERY,
@@ -108,7 +108,7 @@ DAILY_LEAKS_SUM_SCHEMA = {
 }
 
 DAILY_LEAKS_COUNT_SCHEMA = {
-    "tags": ["Leaks"],
+    "tags": ["leaks"],
     "operation_description": "Получает количество сливов по дням за указанный период или за всё время",
     "manual_parameters": [
         openapi.Parameter('periodFrom', openapi.IN_QUERY,

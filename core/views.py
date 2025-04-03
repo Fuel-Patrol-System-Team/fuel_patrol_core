@@ -270,6 +270,7 @@ class UserInfoAPIView(APIView):
             'organization': user.org.name
         })
         return user_response(serializer.data, status.HTTP_200_OK)
+
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
     permission_classes = [IsOrgMember]
@@ -293,7 +294,6 @@ class MediaUploadAPIView(APIView):
         new_filename = f"{file_id}.{file_extension}"
         file_size = uploaded_file.size
         organization = request.user.org
-
         try:
             existing_media = Media.objects.get(
                 filename=uploaded_file.name,

@@ -128,7 +128,7 @@ class ReportQuery(models.Model):
 
 MEDIA_TYPE = [
     ("raw", "Сырые данные"),
-    ("auto_data", "Данные об автомобилях")
+    ("auto", "Данные об автомобилях")
 ]
 
 class Media(models.Model):
