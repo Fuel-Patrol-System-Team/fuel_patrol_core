@@ -435,3 +435,5 @@ DOCKER_CONFIG = {
     'REDIS_CONTAINER': 'fuel-patrol-redis',
     'INFLUXDB_CONTAINER': 'fuel-patrol-influxdb'
 }
+
+BASE_URL = os.getenv('BASE_URL', 'http://127.0.0.1:13000')
