@@ -1,30 +1,63 @@
-#### README
-# Установка переменных среды
+# Fuel Patrol System - Документация по развертыванию
+
+## Требования
+- Docker 20.10+
+- Docker Compose 1.29+
+- Python 3.11 (для локальной разработки)
+
+## Конфигурация
+
+# 1. Настройка переменных окружения
+
+Скопируйте и отредактируйте файл окружения:
 ```bash
-    cp .env.dev .env
+cp .env.example .env
+nano .env  # или ваш любимый редактор
 ```
-# Для запуска проекта
+# 2. Команды для запуска и администрирования
+### Сборка и запуск
 ```bash
-    python3 manage.py runserver
+docker-compose up -d --build
 ```
-# Для сбора статики
+
+### Применение миграций
 ```bash
-    python manage.py collectstatic
+docker-compose exec fuel-patrol-api python manage.py migrate
+
 ```
-# Celery
-### Для запуска celery_worker
+#### Создание суперпользователя
 ```bash
-    celery -A app worker --loglevel=info --pool=solo
+docker-compose exec fuel-patrol-api python manage.py createsuperuser
 ```
-### Для запуска celery_beat
+
+### Сбор статики
 ```bash
-    celery -A app beat --loglevel=info
+docker-compose exec fuel-patrol-api python manage.py collectstatic --noinput
 ```
-### Для запуска celery_flower
+
+# 3. Управления сервисами
+### Остановка
 ```bash
-    celery -A app flower --port=5555 --basic_auth=admin:admin
+docker-compose down
 ```
-### Для очистки очереди celery
+
+
+### Перезапуск
 ```bash
-    celery -A app purge
+docker-compose restart
 ```
+
+### Просмотр логов
+```bash
+docker-compose logs -f [service_name]  # api|db|redis|celery|beat|flower|influxdb
+```
+# 4. Доступ к сервисам
+После запуска сервисы будут доступны по следующим адресам:
+
+Django API: http://сервер:8001
+
+Flower (мониторинг Celery): http://сервер:5556
+
+InfluxDB UI: http://сервер:8087
+
+

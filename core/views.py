@@ -30,7 +30,8 @@ from .serializers import (
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer, CarMetricSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer
 )
-from .services.databases.influx_db import get_influx_write_client
+from .services.databases.influx_db import query_influxdb
+
 from .services.media.utils import get_upload_path, calculate_file_hash
 from .responses import error_response, user_registered_response, attach_media_response, user_response, success_response
 from .permissions import IsOrgMember
@@ -68,49 +69,19 @@ class CarMetricsAPIView(APIView):
             return error_response("Автомобиль не найден или не принадлежит вашей организации",
                                   status.HTTP_404_NOT_FOUND)
 
-        client,query_api = get_influx_write_client()
         org_id = str(request.user.org.id)
 
-        range_clause = "range(start: -10y)"
-        if period_from and period_due:
-            range_clause = f'range(start: {period_from.strftime("%Y-%m-%dT00:00:00Z")}, stop: {period_due.strftime("%Y-%m-%dT23:59:59Z")})'
-        elif period_from:
-            range_clause = f'range(start: {period_from.strftime("%Y-%m-%dT00:00:00Z")})'
-        elif period_due:
-            range_clause = f'range(start: -10y, stop: {period_due.strftime("%Y-%m-%dT23:59:59Z")})'
+        result = query_influxdb(
+            org_id=org_id,
+            car_id=car_id,
+            metric=metric,
+            period_from=period_from,
+            period_due=period_due,
+            agg_window=agg_window,
+            agg_func=agg_func
+        )
 
-        metric_filter = 'r["_field"] == "calc_sensors_fuel_level" or r["_field"] == "pos_s"'
-        if metric == 'fuel_level':
-            metric_filter = 'r["_field"] == "calc_sensors_fuel_level"'
-        elif metric == 'speed':
-            metric_filter = 'r["_field"] == "pos_s"'
-
-        base_query = f'''
-            from(bucket: "{INFLUXDB_BUCKET}")
-            |> {range_clause}
-            |> filter(fn: (r) => r["_measurement"] == "preprocessed_data:{org_id}")
-            |> filter(fn: (r) => r["auto"] == "{car_id}")
-            |> filter(fn: (r) => {metric_filter})
-        '''
-
-        if agg_window:
-            base_query += f'|> aggregateWindow(every: {agg_window}, fn: {agg_func}, createEmpty: false)'
-
-        logger.info(f"Flux query: {base_query}")
-        tables = query_api.query(base_query)
         logger.info(f"Выполнен запрос к InfluxDB для автомобиля {car_id}")
-
-        result = [
-            CarMetricSerializer({
-                "x": record.get_time().strftime('%Y-%m-%d %H:%M:%S'),
-                "y": float(record.get_value()),
-                "metric": "fuel_level" if record["_field"] == "calc_sensors_fuel_level" else "speed"
-            }).data
-            for table in tables
-            for record in table.records
-        ]
-
-        client.close()
 
         if not result:
             logger.info(f"Данные для автомобиля {car_id} не найдены")
@@ -178,6 +149,7 @@ class DailyLeaksSumAPIView(APIView):
         result = [{"value": item['value'], "day": item['day'].strftime('%Y-%m-%d')} for item in daily_sums]
         return success_response(result, status.HTTP_200_OK)
 
+
 class CarLeaksCountAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -215,6 +187,7 @@ class CarLeaksCountAPIView(APIView):
             for car in cars
         ]
         return success_response(result, status.HTTP_200_OK)
+
 
 class CarLeaksVolumeAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -254,6 +227,7 @@ class CarLeaksVolumeAPIView(APIView):
         ]
         return success_response(result, status.HTTP_200_OK)
 
+
 class UserInfoAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -270,6 +244,7 @@ class UserInfoAPIView(APIView):
             'organization': user.org.name
         })
         return user_response(serializer.data, status.HTTP_200_OK)
+
 
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
@@ -328,7 +303,8 @@ class MediaUploadAPIView(APIView):
             if file_type == "auto":
                 parse_merged_data.delay(report_query.id)
             elif file_type == "raw":
-                if not (ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists()):
+                if not (
+                ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists()):
                     return error_response("Загрузите 'auto' сначала", status.HTTP_400_BAD_REQUEST)
                 process_raw_data_task.delay(report_query.id)
             logger.info(f"Медиафайл успешно загружен: {media.id}")
@@ -337,8 +313,10 @@ class MediaUploadAPIView(APIView):
             logger.error(f"Ошибка Celery при запуске задачи: {e}")
             return error_response(f"Failed to launch processing task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
 
+
 class UserRegistrationAPIView(APIView):
-    @swagger_auto_schema(responses={201: UserRegistrationSerializer(), 400: "Bad Request", 404: "Organization not found"})
+    @swagger_auto_schema(
+        responses={201: UserRegistrationSerializer(), 400: "Bad Request", 404: "Organization not found"})
     def post(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
@@ -416,7 +394,8 @@ class CarConsumptionListAPIView(ListAPIView):
     search_fields = ['car__name', 'valid_period']
 
     def get_queryset(self):
-        return CarConsumption.objects.filter(car__organization=self.request.user.org).select_related('car__organization').order_by('id')
+        return CarConsumption.objects.filter(car__organization=self.request.user.org).select_related(
+            'car__organization').order_by('id')
 
 
 class CarConsumptionDetailAPIView(RetrieveAPIView):
@@ -435,7 +414,8 @@ class ReportQueryListAPIView(ListAPIView):
     search_fields = ['organization__name', 'status']
 
     def get_queryset(self):
-        return ReportQuery.objects.filter(organization=self.request.user.org).select_related('organization').prefetch_related('media_set').order_by('id')
+        return ReportQuery.objects.filter(organization=self.request.user.org).select_related(
+            'organization').prefetch_related('media_set').order_by('id')
 
 
 class ReportQueryDetailAPIView(RetrieveAPIView):
@@ -454,7 +434,8 @@ class MediaListAPIView(ListAPIView):
     search_fields = ['filename', 'media_type', 'type']
 
     def get_queryset(self):
-        return Media.objects.filter(report_query__organization=self.request.user.org).select_related('report_query__organization').order_by('id')
+        return Media.objects.filter(report_query__organization=self.request.user.org).select_related(
+            'report_query__organization').order_by('id')
 
 
 class MediaDetailAPIView(RetrieveAPIView):
@@ -473,7 +454,8 @@ class CarReportListAPIView(ListAPIView):
     search_fields = ['car__name', 'datetime']
 
     def get_queryset(self):
-        return CarReport.objects.filter(car__organization=self.request.user.org).select_related('car__organization').order_by('datetime')
+        return CarReport.objects.filter(car__organization=self.request.user.org).select_related(
+            'car__organization').order_by('datetime')
 
 
 class CarReportDetailAPIView(RetrieveAPIView):
@@ -492,7 +474,8 @@ class DriverListAPIView(ListAPIView):
     search_fields = ['fullname', 'address', 'phone', 'car__name']
 
     def get_queryset(self):
-        return Driver.objects.filter(car__organization=self.request.user.org).prefetch_related('car__organization').order_by('id')
+        return Driver.objects.filter(car__organization=self.request.user.org).prefetch_related(
+            'car__organization').order_by('id')
 
 
 class DriverDetailAPIView(RetrieveAPIView):
@@ -500,6 +483,7 @@ class DriverDetailAPIView(RetrieveAPIView):
     serializer_class = DriverOutputSerializer
     queryset = Driver.objects.all()
     lookup_field = 'pk'
+
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

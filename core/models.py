@@ -7,6 +7,7 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 
 from core.services.media.utils import calculate_file_hash
+from core.services.notifications.tg_bot import logger
 
 NULLABLE = {
     "blank": True,
@@ -134,7 +135,7 @@ MEDIA_TYPE = [
 class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
     media_type = models.CharField(max_length=256, **NULLABLE, verbose_name="Тип медиа")
-    file = models.FileField(**NULLABLE, upload_to='media/', verbose_name="Файл")
+    file = models.FileField(**NULLABLE, upload_to='', verbose_name="Файл")
     size = models.IntegerField(default=0, **NULLABLE, verbose_name="Размер")
     filename = models.CharField(max_length=255, verbose_name="Имя файла")
     type = models.CharField(max_length=50, **NULLABLE, choices=MEDIA_TYPE, verbose_name="Тип файла")
@@ -204,4 +205,6 @@ def delete_media_file(sender, instance, **kwargs):
     Удаляет файл медиа после удаления записи из базы данных.
     """
     if instance.file and os.path.isfile(instance.file.path):
+        print(instance.file.path)
+        logger.info(instance.file.path)
         os.remove(instance.file.path)

@@ -15,9 +15,10 @@ from django.core.exceptions import ObjectDoesNotExist
 from app.celery import app as celery_app
 from app.settings import BASE_DIR
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption
-from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, parse_merged_util, \
+from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, PARSE_NORMS_REQUIRED_COLUMNS, parse_cars, \
+    parse_merged_util, \
     parse_norms
-from core.services.databases.influx_db import get_influx_write_client, INFLUXDB_BUCKET
+from core.services.databases.influx_db import INFLUXDB_BUCKET, write_to_influxdb
 from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, preprocess, merge
 
@@ -29,6 +30,7 @@ BATCH_SIZE = 500_00
 celery_app.conf.task_concurrency = 4
 
 logger = logging.getLogger(__name__)
+
 
 @shared_task(
     bind=True,
@@ -157,6 +159,7 @@ def parse_cars_task(self, report_query_id):
                                   f"Ошибка в parse_cars_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 @shared_task(
     bind=True,
     soft_time_limit=300,
@@ -272,6 +275,7 @@ def parse_norms_task(self, report_query_id):
                                   f"Ошибка в parse_norms_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 @shared_task(
     bind=True,
     soft_time_limit=1800,
@@ -303,7 +307,7 @@ def process_raw_data_task(self, report_query_id):
                                   f"Сырой медиафайл не найден для запроса отчёта {report_query_id}.")
             return
         # тут проблема
-        raw_df = pl.read_csv(raw_media.file.path, 
+        raw_df = pl.read_csv(raw_media.file.path,
                              columns=['timestamp', 'calc_sensors_fuel_level', 'pos_s', 'calc_sensors_voltage', 'auto'],
                              try_parse_dates=True,
                              batch_size=BATCH_SIZE,
@@ -398,9 +402,10 @@ def process_raw_data_task(self, report_query_id):
                                   f"Ошибка в process_raw_data_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 @shared_task(
     bind=True,
-    soft_time_limit=300,
+    soft_time_limit=1000,
     priority=3
 )
 def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id):
@@ -439,21 +444,7 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
         logger.info(
             f"Результат расчёта утечек: {result_df.shape}, колонки: {result_df.columns.tolist()}")
 
-        client, write_api = get_influx_write_client()
-        points = []
-        for _, row in preprocessed_df.iterrows():
-            point = Point(f"preprocessed_data:{org_id}") \
-                .tag("organization", str(org_id)) \
-                .tag("auto", str(row['auto'])) \
-                .field("pos_s", float(row['pos_s']) if pd.notna(row['pos_s']) else 0.0) \
-                .field("calc_sensors_fuel_level", float(row['max_fuel']) if pd.notna(row['max_fuel']) else 0.0) \
-                .field("spent_fuel", float(row['spent_fuel']) if pd.notna(row['spent_fuel']) else 0.0) \
-                .time(row['timestamp'])
-            points.append(point)
-
-        write_api.write(bucket=INFLUXDB_BUCKET, record=points)
-        logger.info(f"Сохранено {len(points)} предобработанных точек в InfluxDB для запроса отчёта {report_query_id}")
-        client.close()
+        write_to_influxdb(preprocessed_df, org_id, report_query_id)
 
         return result_df
 
@@ -461,9 +452,10 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
         logger.error(f"Ошибка в process_chunk для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 @shared_task(
     bind=True,
-    soft_time_limit=600,
+    soft_time_limit=1000,
     priority=4
 )
 def save_leak_results(self, results, report_query_id):
@@ -535,9 +527,10 @@ def save_leak_results(self, results, report_query_id):
                                   f"Ошибка в save_leak_results для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 @celery_app.task(
     bind=True,
-    soft_time_limit=300,
+    soft_time_limit=1000,
     priority=0
 )
 def check_and_process_raw_reports(self):
@@ -574,6 +567,7 @@ def check_and_process_raw_reports(self):
     except Exception as e:
         logger.error(f"Ошибка в check_and_process_raw_reports: {e}")
         raise self.retry(exc=e)
+
 
 @shared_task(
     bind=True,
@@ -626,8 +620,8 @@ def parse_merged_data(self, report_query_id):
                 try:
                     # TODO: обработаь иначе если надо
                     # if not all(pd.notna(row[col]) for col in required_columns):
-                        # logger.warning(f"Отсутствуют или содержат NaN значения в строке: {index}")
-                        # continue
+                    # logger.warning(f"Отсутствуют или содержат NaN значения в строке: {index}")
+                    # continue
                     car, created = Car.objects.get_or_create(
                         id=obj.id,
                         defaults={
@@ -645,7 +639,7 @@ def parse_merged_data(self, report_query_id):
                 except Exception as e:
                     logger.error(f"Ошибка при сохранении автомобиля {car.id}: {e}")
                     continue
-            for index, norm in enumerate( norms):
+            for index, norm in enumerate(norms):
                 try:
                     car = Car.objects.get(id=str(norm.car), organization=organization)
                     CarConsumption.objects.create(
@@ -665,7 +659,6 @@ def parse_merged_data(self, report_query_id):
                     logger.error(f"Неожиданная ошибка при обработке строки {index}: {e}")
                 continue
 
-                    
         if report_query:
             report_query.status = 'completed'
             report_query.save()

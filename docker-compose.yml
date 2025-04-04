@@ -1,0 +1,183 @@
+services:
+  fuel-patrol-api:
+    container_name: fuel-patrol-api
+    build: .
+    user: root
+    command: >
+      sh -c "sleep 10 &&
+             chown -R myuser:myuser /app/media &&
+             chmod -R 755 /app/media &&
+             chown -R myuser:myuser /app/static &&
+             chmod -R 755 /app/static &&
+             su - myuser -c 'cd /app && umask 0222 && python manage.py migrate &&
+                             python manage.py collectstatic --noinput &&
+                             gunicorn app.wsgi:application --bind 0.0.0.0:8000 --workers 3 --threads 2 --timeout 120 --name fuel_patrol'"
+    hostname: fuel-patrol-api
+    volumes:
+      - .:/app
+      - fuel-patrol-static:/app/static
+      - fuel-patrol-media:/app/media:rw
+    ports:
+      - "${DOCKER_DJANGO_PORT}:8000"
+    env_file:
+      - .env
+    depends_on:
+      - fuel-patrol-db
+      - fuel-patrol-keydb
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+
+  fuel-patrol-db:
+    container_name: fuel-patrol-db
+    image: postgres:15-alpine
+    hostname: fuel-patrol-db
+    volumes:
+      - fuel-patrol-postgres-data:/var/lib/postgresql/data/
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASS}
+    ports:
+      - "${DOCKER_POSTGRES_PORT}:5432"
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  fuel-patrol-keydb:
+    container_name: fuel-patrol-keydb
+    image: eqalpha/keydb:latest
+    hostname: fuel-patrol-keydb
+    command: keydb-server --requirepass ${KEYDB_PASSWORD} --multi-master no --active-replica yes
+    volumes:
+      - fuel-patrol-keydb-data:/data
+    ports:
+      - "${DOCKER_KEYDB_PORT}:6379"
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD", "keydb-cli", "-a", "${KEYDB_PASSWORD}", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  fuel-patrol-keydb-replica:
+    container_name: fuel-patrol-keydb-replica
+    image: eqalpha/keydb:latest
+    hostname: fuel-patrol-keydb-replica
+    command: keydb-server --requirepass ${KEYDB_PASSWORD} --multi-master no --active-replica yes --replicaof fuel-patrol-keydb 6379 --masterauth ${KEYDB_PASSWORD}
+    volumes:
+      - fuel-patrol-keydb-replica-data:/data
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD", "keydb-cli", "-a", "${KEYDB_PASSWORD}", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  fuel-patrol-celery:
+    container_name: fuel-patrol-celery
+    build: .
+    hostname: fuel-patrol-celery
+    command: >
+      sh -c "sleep 10 &&
+             celery -A app worker --loglevel=info --pool=solo --hostname=fuel_patrol_worker@%h"
+    volumes:
+      - .:/app
+      - fuel-patrol-media:/app/media:rw
+    env_file:
+      - .env
+    depends_on:
+      fuel-patrol-db:
+        condition: service_healthy
+      fuel-patrol-keydb:
+        condition: service_healthy
+      fuel-patrol-api:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+
+  fuel-patrol-celery-beat:
+    container_name: fuel-patrol-celery-beat
+    build: .
+    hostname: fuel-patrol-celery-beat
+    command: >
+      sh -c "sleep 10 &&
+             celery -A app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    volumes:
+      - .:/app
+    env_file:
+      - .env
+    depends_on:
+      fuel-patrol-db:
+        condition: service_healthy
+      fuel-patrol-keydb:
+        condition: service_healthy
+      fuel-patrol-api:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+
+  fuel-patrol-flower:
+    container_name: fuel-patrol-flower
+    build: .
+    hostname: fuel-patrol-flower
+    command: celery -A app flower --port=5555 --basic_auth=${CELERY_FLOWER_USER}:${CELERY_FLOWER_PASSWORD}
+    ports:
+      - "${DOCKER_FLOWER_PORT}:5555"
+    env_file:
+      - .env
+    depends_on:
+      fuel-patrol-keydb:
+        condition: service_healthy
+      fuel-patrol-celery:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - fuel-patrol-net
+
+  fuel-patrol-influxdb:
+    container_name: fuel-patrol-influxdb
+    image: influxdb:${INFLUXDB_VERSION}
+    hostname: fuel-patrol-influxdb
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=${INFLUXDB_ADMIN_USER}
+      - DOCKER_INFLUXDB_INIT_PASSWORD=${INFLUXDB_ADMIN_PASSWORD}
+      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG}
+      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET}
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN}
+    volumes:
+      - fuel-patrol-influxdb-data:/var/lib/influxdb2
+    ports:
+      - "${INFLUXDB_DOCKER_PORT}:8086"
+    networks:
+      - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8086/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  fuel-patrol-postgres-data:
+  fuel-patrol-keydb-data:
+  fuel-patrol-keydb-replica-data:
+  fuel-patrol-static:
+  fuel-patrol-media:
+  fuel-patrol-influxdb-data:
+
+networks:
+  fuel-patrol-net:
+    driver: bridge
+    name: fuel-patrol-network
