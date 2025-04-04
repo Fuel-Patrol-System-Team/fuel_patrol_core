@@ -30,7 +30,6 @@ warnings.simplefilter("ignore", MissingPivotFunction)
 SECRET_KEY = os.getenv('SECRET_KEY')
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split()
-INTERNAL_IPS = os.getenv('INTERNAL_IPS', '127.0.0.1').split()
 ROOT_URLCONF = 'app.urls'
 WSGI_APPLICATION = 'app.wsgi.application'
 APPEND_SLASH = False
