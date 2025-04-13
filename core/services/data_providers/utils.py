@@ -187,6 +187,7 @@ class GlonassSoftProvider:
                 flat_message["parameters.fuel1"] = parameters["fuel1"]
         return flat_message
 
+
     def _save_to_csv(self, vehicle_id: int, data: List[Dict[str, Any]]) -> None:
         if not data:
             logger.info(f"Нет данных для сохранения в CSV для vehicleId={vehicle_id}.")
@@ -198,8 +199,15 @@ class GlonassSoftProvider:
 
         flat_data = [self._flatten_parameters(record) for record in data]
 
+        try:
+            car = Car.objects.get(id_in_provider_system=vehicle_id)
+            vehicle_guid = car.id  # Это vehicleGuid (UUID)
+        except Car.DoesNotExist:
+            logger.error(f"Автомобиль с vehicleId={vehicle_id} не найден в базе данных.")
+            return
+
         for record in flat_data:
-            record["vehicleId"] = vehicle_id
+            record["vehicleId"] = vehicle_guid
 
         filtered_data = []
         for record in flat_data:
@@ -237,7 +245,7 @@ class GlonassSoftProvider:
         with open(self.csv_file_path, "a", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=headers)
             writer.writerows(renamed_data)
-            logger.info(f"Добавлено {len(renamed_data)} записей в CSV для vehicleId={vehicle_id}.")
+            logger.info(f"Добавлено {len(renamed_data)} записей в CSV для vehicleGuid={vehicle_guid}.")
 
     def save_to_db(self, vehicle_data: Dict[str, Any]) -> None:
         try:

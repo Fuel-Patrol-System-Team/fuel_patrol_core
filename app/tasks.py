@@ -297,7 +297,6 @@ def parse_norms_task(self, report_query_id):
                                   f"Ошибка в parse_norms_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
 @shared_task(
     bind=True,
     soft_time_limit=1800,
@@ -329,7 +328,6 @@ def process_raw_data_task(self, report_query_id):
             f"Провайдер: {provider.name}, is_csv_provider: {is_csv_provider}, is_glonasssoft_provider: {is_glonasssoft_provider}")
 
         if is_csv_provider or is_glonasssoft_provider:
-
             if is_csv_provider and not ReportQuery.objects.filter(organization_id=organization,
                                                                   status="completed").exists():
                 logger.error(f"Данные об автомобилей для организации {organization.name} не завершены")
@@ -375,7 +373,6 @@ def process_raw_data_task(self, report_query_id):
             car_data = car_data.rename({'engine_type': 'sl_tip_dvigat'})
             logger.info(
                 f"Данные автомобилей: {car_data.shape}, колонки: {car_data.columns}, пример ID: {car_data['id'].head().to_list()}")
-
 
             if is_glonasssoft_provider:
                 consumptions = CarConsumption.objects.filter(
@@ -473,8 +470,6 @@ def process_raw_data_task(self, report_query_id):
             send_telegram_message(organization.bot_token, organization.chat_id,
                                   f"Ошибка в process_raw_data_task для запроса отчёта {report_query_id}: {e}")
         raise self.retry(exc=e)
-
-
 @shared_task(
     bind=True,
     soft_time_limit=1000,
@@ -505,7 +500,9 @@ def process_chunk(self, chunk_df, car_data, norma_data, report_query_id, org_id)
         logger.info(
             f"Norma data в формате pandas: {norma_data_pandas.shape}, колонки: {norma_data_pandas.columns.tolist()}")
 
+
         car_data_pandas['id'] = car_data_pandas['id'].astype(str)
+        preprocessed_df['auto'] = preprocessed_df['auto'].astype(str)
         norma_data_pandas['sl_avto'] = norma_data_pandas['sl_avto'].astype(str)
 
         merged_df = merge(car_data_pandas, preprocessed_df)
