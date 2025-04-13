@@ -1,10 +1,12 @@
 import os
 import uuid
 
-from django.contrib.auth.models import User, AbstractUser
+
+from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
+from django.utils import timezone
 
 from core.services.media.utils import calculate_file_hash
 from core.services.notifications.tg_bot import logger
@@ -14,141 +16,115 @@ NULLABLE = {
     "null": True
 }
 
-
 class Organization(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    name = models.CharField(max_length=100, verbose_name="Название")
-    bot_token = models.CharField(max_length=255, **NULLABLE, verbose_name="Токен бота")
-    chat_id = models.CharField(max_length=255, **NULLABLE, verbose_name="ID чата")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100)
+    bot_token = models.CharField(max_length=255, **NULLABLE)
+    chat_id = models.CharField(max_length=255, **NULLABLE)
 
     class Meta:
-        verbose_name = "Организация"
-        verbose_name_plural = "Организации"
+        verbose_name = "Organization"
+        verbose_name_plural = "Organizations"
         ordering = ['name']
-        indexes = [
-            models.Index(fields=['name'], name='idx_organization_name'),
-        ]
 
     def __str__(self):
         return self.name
-
-
 
 class OrgUser(AbstractUser):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    org = models.ForeignKey(Organization, on_delete=models.CASCADE, null=True, verbose_name="Организация")
-
-    groups = models.ManyToManyField(
-        'auth.Group',
-        related_name='orguser_groups',
-        blank=True,
-        verbose_name="Группы"
-    )
-    user_permissions = models.ManyToManyField(
-        'auth.Permission',
-        related_name='orguser_permissions',
-        blank=True,
-        verbose_name="Разрешения"
-    )
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    username = models.CharField(max_length=150, unique=True)
+    org = models.ForeignKey(Organization, on_delete=models.SET_NULL, **NULLABLE, related_name='users')
+    password = models.CharField(max_length=128)
+    email = models.EmailField(max_length=254, **NULLABLE)
+    first_name = models.CharField(max_length=30, **NULLABLE)
+    last_name = models.CharField(max_length=150, **NULLABLE)
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
+    is_superuser = models.BooleanField(default=False)
+    last_login = models.DateTimeField(**NULLABLE)
+    date_joined = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        verbose_name = "Пользователь организации"
-        verbose_name_plural = "Пользователи организаций"
+        verbose_name = "Org User"
+        verbose_name_plural = "Org Users"
         ordering = ['username']
-        indexes = [
-            models.Index(fields=['username', 'org'], name='idx_orguser_username_org'),
-        ]
 
     def __str__(self):
-        return str(self.id)
-
+        return self.username
 
 class Car(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    name = models.CharField(max_length=100, verbose_name="Название")
-    description = models.TextField(verbose_name="Описание")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    id_in_provider_system = models.IntegerField(default=0)
+    name = models.CharField(max_length=255)
+    description = models.TextField()
     engine_type = models.FloatField(default=0.0)
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, verbose_name="Организация")
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        verbose_name = "Автомобиль"
-        verbose_name_plural = "Автомобили"
+        verbose_name = "Car"
+        verbose_name_plural = "Cars"
         ordering = ['name']
-        indexes = [
-            models.Index(fields=['name', 'organization'], name='idx_car_name_org'),
-            models.Index(fields=['id'], name='idx_car_id'),
-        ]
 
     def __str__(self):
         return self.name
 
-
 class CarConsumption(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    car = models.ForeignKey(Car, on_delete=models.CASCADE, verbose_name="Автомобиль")
-    winter_volume = models.FloatField(**NULLABLE, verbose_name="Зимний расход")
-    summer_volume = models.FloatField(**NULLABLE, verbose_name="Летний расход")
-    valid_period = models.DateField(**NULLABLE, verbose_name="Период действия")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='consumptions')
+    winter_volume = models.FloatField(**NULLABLE)
+    summer_volume = models.FloatField(**NULLABLE)
+    valid_period = models.DateField(**NULLABLE)
 
     class Meta:
-        verbose_name = "Расход топлива"
-        verbose_name_plural = "Расходы топлива"
-        ordering = ['car__name', 'valid_period']
-        indexes = [
-            models.Index(fields=['car', 'valid_period'], name='idx_carconsumption_car_period'),
-        ]
+        verbose_name = "Car Consumption"
+        verbose_name_plural = "Car Consumptions"
+        ordering = ['car_id']
 
     def __str__(self):
-        return self.car.name
+        return f"{self.car_id.name} Consumption"
 
+class DataProvider(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    metadata = models.JSONField(**NULLABLE)
+    cars = models.ManyToManyField(Car,related_name='data_providers',**NULLABLE)
 
-QUERY_STATUS = [
-    ("pending", "В обработке"),
-    ("completed", "Завершено"),
-    ("error", "Ошибка")
-]
+    class Meta:
+        verbose_name = "Data Provider"
+        verbose_name_plural = "Data Providers"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
 
 class ReportQuery(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, verbose_name="Организация")
-    status = models.CharField(max_length=50, choices=QUERY_STATUS, **NULLABLE, verbose_name="Статус")
-
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(max_length=50, **NULLABLE)
+    provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
+    organization_id = models.ForeignKey(Organization, on_delete=models.SET_NULL, **NULLABLE, related_name='report_queries')
 
     class Meta:
-        verbose_name = "Запрос отчёта"
-        verbose_name_plural = "Запросы отчётов"
+        verbose_name = "Report Query"
+        verbose_name_plural = "Report Queries"
         ordering = ['-id']
-        indexes = [
-            models.Index(fields=['organization', 'status'], name='idx_reportquery_org_status'),
-        ]
 
     def __str__(self):
-        return self.organization.name
-
-
-
-MEDIA_TYPE = [
-    ("raw", "Сырые данные"),
-    ("auto", "Данные об автомобилях")
-]
+        return f"Report {self.id}"
 
 class Media(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    media_type = models.CharField(max_length=256, **NULLABLE, verbose_name="Тип медиа")
-    file = models.FileField(**NULLABLE, upload_to='', verbose_name="Файл")
-    size = models.IntegerField(default=0, **NULLABLE, verbose_name="Размер")
-    filename = models.CharField(max_length=255, verbose_name="Имя файла")
-    type = models.CharField(max_length=50, **NULLABLE, choices=MEDIA_TYPE, verbose_name="Тип файла")
-    report_query = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, **NULLABLE, verbose_name="Запрос отчёта")
-    file_hash = models.CharField(max_length=64, unique=True, **NULLABLE, verbose_name="Хэш файла")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    media_type = models.CharField(max_length=255, **NULLABLE)
+    file = models.FileField(**NULLABLE, upload_to='')
+    size = models.IntegerField(default=0, **NULLABLE)
+    filename = models.CharField(max_length=255)
+    type = models.CharField(max_length=255, **NULLABLE)
+    report_query_id = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, **NULLABLE, related_name='media')
+    file_hash = models.CharField(max_length=64, unique=True, **NULLABLE)
 
     class Meta:
-        verbose_name = "Медиафайл"
-        verbose_name_plural = "Медиафайлы"
+        verbose_name = "Media"
+        verbose_name_plural = "Media Files"
         ordering = ['filename']
-        indexes = [
-            models.Index(fields=['type', 'report_query'], name='idx_media_type_query'),
-        ]
 
     def __str__(self):
         return self.filename
@@ -159,52 +135,49 @@ class Media(models.Model):
             self.file_hash = calculate_file_hash(self.file)
         super().save(*args, **kwargs)
 
-
 class CarReport(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    car = models.ForeignKey(Car, on_delete=models.CASCADE, verbose_name="Автомобиль")
-    datetime = models.DateTimeField(verbose_name="Дата и время")
-    volume = models.IntegerField(verbose_name="Объём")
-    status = models.BooleanField(verbose_name="Статус утечки")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='reports')
+    datetime = models.DateTimeField()
+    volume = models.IntegerField()
+    status = models.BooleanField()
 
     class Meta:
-        verbose_name = "Отчёт об автомобиле"
-        verbose_name_plural = "Отчёты об автомобилях"
+        verbose_name = "Car Report"
+        verbose_name_plural = "Car Reports"
         ordering = ['-datetime']
-        indexes = [
-            models.Index(fields=['car', 'datetime'], name='idx_carreport_car_datetime'),
-        ]
 
     def __str__(self):
-        return self.car.name
-
-
+        return f"{self.car_id.name} - {self.datetime}"
 
 class Driver(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, verbose_name="Идентификатор")
-    car = models.ManyToManyField(Car, verbose_name="Автомобили")
-    fullname = models.CharField(max_length=255, verbose_name="ФИО")
-    address = models.CharField(max_length=255, verbose_name="Адрес")
-    phone = models.CharField(max_length=255, verbose_name="Телефон")
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    fullname = models.CharField(max_length=255)
+    address = models.CharField(max_length=255)
+    phone = models.CharField(max_length=255)
 
     class Meta:
-        verbose_name = "Водитель"
-        verbose_name_plural = "Водители"
+        verbose_name = "Driver"
+        verbose_name_plural = "Drivers"
         ordering = ['fullname']
-        indexes = [
-            models.Index(fields=['fullname', 'phone'], name='idx_driver_fullname_phone'),
-        ]
 
     def __str__(self):
         return self.fullname
 
+class DriverCar(models.Model):
+    driver_id = models.ForeignKey(Driver, on_delete=models.CASCADE, related_name='driver_cars')
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='driver_cars')
+
+    class Meta:
+        verbose_name = "Driver-Car Assignment"
+        verbose_name_plural = "Driver-Car Assignments"
+        unique_together = ('driver_id', 'car_id')
+
+    def __str__(self):
+        return f"{self.driver_id.fullname} - {self.car_id.name}"
 
 @receiver(post_delete, sender=Media)
 def delete_media_file(sender, instance, **kwargs):
-    """
-    Удаляет файл медиа после удаления записи из базы данных.
-    """
     if instance.file and os.path.isfile(instance.file.path):
-        print(instance.file.path)
-        logger.info(instance.file.path)
+        logger.info(f"Deleting file: {instance.file.path}")
         os.remove(instance.file.path)

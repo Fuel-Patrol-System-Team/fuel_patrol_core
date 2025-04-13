@@ -16,19 +16,21 @@ import logging
 import mimetypes
 import uuid
 
-from app.tasks import parse_merged_data, process_raw_data_task
+from app.tasks import parse_merged_data, process_raw_data_task, fetch_data_from_provider
 from drf_yasg.utils import swagger_auto_schema
-from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver
+from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
+    DriverCar
 from .pagination import StandardResultsSetPagination
 from .rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
-    DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA
+    DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA
 )
 from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
-    CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer, CarMetricSerializer,
-    CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer
+    CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
+    CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer, DriverCarOutputSerializer,
+    DataProviderOutputSerializer
 )
 from .services.databases.influx_db import query_influxdb
 
@@ -246,9 +248,67 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
+class ProviderDataRequestAPIView(APIView):
+    # permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_description="Создаёт заявку на получение данных от провайдера.",
+        request_body=PROVIDER_DATA_REQUEST_SCHEMA,
+        responses={
+            201: "Заявка успешно создана",
+            400: "Неверные данные",
+            503: "Ошибка при запуске задачи"
+        }
+    )
+    def post(self, request):
+        provider_name = request.data.get('provider_name')
+        if not provider_name:
+            logger.error("Имя провайдера не указано")
+            return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
+
+        organization = request.user.org
+        if not organization:
+            logger.error("Организация не найдена для пользователя")
+            return error_response("User must be associated with an organization", status.HTTP_400_BAD_REQUEST)
+
+        try:
+            provider = DataProvider.objects.get(name=provider_name)
+        except DataProvider.DoesNotExist:
+            logger.error(f"Провайдер {provider_name} не найден")
+            return error_response(f"Provider {provider_name} not found", status.HTTP_400_BAD_REQUEST)
+
+        metadata = provider.metadata or {}
+        if not metadata:
+            logger.error(f"Метаданные провайдера {provider_name} отсутствуют")
+            return error_response(f"Provider {provider_name} metadata is required", status.HTTP_400_BAD_REQUEST)
+
+        report_query = ReportQuery.objects.create(
+            organization_id=organization,
+            provider_id=provider,
+            status="created"
+        )
+
+        try:
+
+            fetch_data_from_provider.delay(
+                provider_name=provider_name,
+                metadata=metadata,
+                report_query_id=report_query.id
+            )
+            logger.info(f"Заявка на получение данных от провайдера {provider_name} создана: {report_query.id}")
+            return success_response({"report_query_id": report_query.id}, status.HTTP_201_CREATED)
+
+        except CeleryError as e:
+            logger.error(f"Ошибка Celery при запуске задачи: {e}")
+            report_query.status = "error"
+            report_query.save()
+            return error_response(f"Failed to launch provider data task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
-    permission_classes = [IsOrgMember]
+
+    # permission_classes = [IsOrgMember]
 
     @swagger_auto_schema(**MEDIA_UPLOAD_SCHEMA)
     def post(self, request):
@@ -268,7 +328,8 @@ class MediaUploadAPIView(APIView):
         file_hash = calculate_file_hash(uploaded_file)
         new_filename = f"{file_id}.{file_extension}"
         file_size = uploaded_file.size
-        organization = request.user.org
+        organization = request.user.org_id
+
         try:
             existing_media = Media.objects.get(
                 filename=uploaded_file.name,
@@ -276,39 +337,60 @@ class MediaUploadAPIView(APIView):
                 type=file_type,
                 file_hash=file_hash
             )
-            if existing_media.report_query.status == "completed":
+            if existing_media.report_query_id.status == "completed":
                 logger.info(f"Идентичный файл уже существует и заявка завершена успешно: {existing_media.id}")
                 return error_response("Такой файл уже был загружен и обработан", status.HTTP_400_BAD_REQUEST)
             else:
                 logger.info(
-                    f"Идентичный файл существует, но заявка не завершена успешно (статус: {existing_media.report_query.status}). Разрешаем повторную загрузку.")
+                    f"Идентичный файл существует, но заявка не завершена успешно (статус: {existing_media.report_query_id.status}). Разрешаем повторную загрузку.")
         except Media.DoesNotExist:
             existing_media = None
 
-        report_query = ReportQuery.objects.create(organization=organization, status="created")
+        try:
+            organization = Organization.objects.get(id=organization)
+        except Organization.DoesNotExist:
+            return error_response({"error": f"Organization with id {organization} not found"},
+                                  status.HTTP_404_NOT_FOUND)
+
+        provider, _ = DataProvider.objects.get_or_create(
+            name='csv',
+            defaults={'metadata': {}}
+        )
+        report_query = ReportQuery.objects.create(
+            organization_id=organization,
+            provider_id=provider,
+            status="created"
+        )
+
         media = Media(
             id=file_id,
             media_type=media_type,
             size=file_size,
             filename=uploaded_file.name,
             type=file_type,
-            report_query=report_query,
+            report_query_id=report_query,
             file_hash=file_hash
         )
         upload_path = get_upload_path(new_filename)
         media.file.save(upload_path, uploaded_file)
         media.save()
         report_query.save()
+
         try:
+
             if file_type == "auto":
                 parse_merged_data.delay(report_query.id)
             elif file_type == "raw":
-                if not (
-                ReportQuery.objects.filter(organization=organization, media__type="auto", status="completed").exists()):
-                    return error_response("Загрузите 'auto' сначала", status.HTTP_400_BAD_REQUEST)
+                # if not ReportQuery.objects.filter(
+                #         organization_id=organization,
+                #         status="completed"
+                # ).exists():
+                #     return error_response("Загрузите 'auto' сначала", status.HTTP_400_BAD_REQUEST)
                 process_raw_data_task.delay(report_query.id)
+
             logger.info(f"Медиафайл успешно загружен: {media.id}")
             return attach_media_response(report_query)
+
         except CeleryError as e:
             logger.error(f"Ошибка Celery при запуске задачи: {e}")
             return error_response(f"Failed to launch processing task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -337,7 +419,7 @@ class OrganizationListAPIView(ListAPIView):
     search_fields = ['name', 'bot_token', 'chat_id']
 
     def get_queryset(self):
-        return Organization.objects.filter(orguser=self.request.user).select_related().order_by('id')
+        return Organization.objects.filter(users=self.request.user).order_by('id')
 
 
 class OrganizationDetailAPIView(RetrieveAPIView):
@@ -352,11 +434,11 @@ class OrgUserListAPIView(ListAPIView):
     serializer_class = OrgUserOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['org', 'username']
-    search_fields = ['username', 'org__name']
+    filterset_fields = ['org_id', 'username']
+    search_fields = ['username', 'org_id__name']
 
     def get_queryset(self):
-        return OrgUser.objects.filter(org=self.request.user.org).select_related('org').order_by('id')
+        return OrgUser.objects.filter(org_id=self.request.user.org_id).select_related('org_id').order_by('id')
 
 
 class OrgUserDetailAPIView(RetrieveAPIView):
@@ -371,11 +453,11 @@ class CarListAPIView(ListAPIView):
     serializer_class = CarOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['organization', 'name']
-    search_fields = ['name', 'description', 'organization__name']
+    filterset_fields = ['name']
+    search_fields = ['name', 'description']
 
     def get_queryset(self):
-        return Car.objects.filter(organization=self.request.user.org).select_related('organization').order_by('id')
+        return Car.objects.all().order_by('id')
 
 
 class CarDetailAPIView(RetrieveAPIView):
@@ -390,12 +472,11 @@ class CarConsumptionListAPIView(ListAPIView):
     serializer_class = CarConsumptionOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['car', 'valid_period']
-    search_fields = ['car__name', 'valid_period']
+    filterset_fields = ['car_id', 'valid_period']
+    search_fields = ['car_id__name', 'valid_period']
 
     def get_queryset(self):
-        return CarConsumption.objects.filter(car__organization=self.request.user.org).select_related(
-            'car__organization').order_by('id')
+        return CarConsumption.objects.filter(car_id__in=Car.objects.all()).select_related('car_id').order_by('id')
 
 
 class CarConsumptionDetailAPIView(RetrieveAPIView):
@@ -410,12 +491,12 @@ class ReportQueryListAPIView(ListAPIView):
     serializer_class = ReportQueryOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['status', 'organization', 'flux_parsed', 'csv_parsed']
-    search_fields = ['organization__name', 'status']
+    filterset_fields = ['status', 'organization_id']
+    search_fields = ['organization_id__name', 'status']
 
     def get_queryset(self):
-        return ReportQuery.objects.filter(organization=self.request.user.org).select_related(
-            'organization').prefetch_related('media_set').order_by('id')
+        return ReportQuery.objects.filter(organization_id=self.request.user.org_id).select_related(
+            'organization_id', 'provider_id').order_by('id')
 
 
 class ReportQueryDetailAPIView(RetrieveAPIView):
@@ -430,12 +511,12 @@ class MediaListAPIView(ListAPIView):
     serializer_class = MediaOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['type', 'report_query']
+    filterset_fields = ['type', 'report_query_id']
     search_fields = ['filename', 'media_type', 'type']
 
     def get_queryset(self):
-        return Media.objects.filter(report_query__organization=self.request.user.org).select_related(
-            'report_query__organization').order_by('id')
+        return Media.objects.filter(report_query_id__organization_id=self.request.user.org_id).select_related(
+            'report_query_id__organization_id').order_by('id')
 
 
 class MediaDetailAPIView(RetrieveAPIView):
@@ -450,12 +531,11 @@ class CarReportListAPIView(ListAPIView):
     serializer_class = CarReportOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['car', 'datetime', 'status']
-    search_fields = ['car__name', 'datetime']
+    filterset_fields = ['car_id', 'datetime', 'status']
+    search_fields = ['car_id__name', 'datetime']
 
     def get_queryset(self):
-        return CarReport.objects.filter(car__organization=self.request.user.org).select_related(
-            'car__organization').order_by('datetime')
+        return CarReport.objects.all().select_related('car_id').order_by('datetime')
 
 
 class CarReportDetailAPIView(RetrieveAPIView):
@@ -470,18 +550,56 @@ class DriverListAPIView(ListAPIView):
     serializer_class = DriverOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['car', 'phone']
-    search_fields = ['fullname', 'address', 'phone', 'car__name']
+    filterset_fields = ['phone']
+    search_fields = ['fullname', 'address', 'phone']
 
     def get_queryset(self):
-        return Driver.objects.filter(car__organization=self.request.user.org).prefetch_related(
-            'car__organization').order_by('id')
+        return Driver.objects.filter(driver_cars__car_id__in=Car.objects.all()).prefetch_related(
+            'driver_cars__car_id').order_by('id')
 
 
 class DriverDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DriverOutputSerializer
     queryset = Driver.objects.all()
+    lookup_field = 'pk'
+
+
+class DataProviderListAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = DataProviderOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['name', 'car_id']
+    search_fields = ['name', 'car_id__name']
+
+    def get_queryset(self):
+        return DataProvider.objects.all().select_related('car_id').order_by('id')
+
+
+class DataProviderDetailAPIView(RetrieveAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = DataProviderOutputSerializer
+    queryset = DataProvider.objects.all()
+    lookup_field = 'pk'
+
+
+class DriverCarListAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = DriverCarOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['driver_id', 'car_id']
+    search_fields = ['driver_id__fullname', 'car_id__name']
+
+    def get_queryset(self):
+        return DriverCar.objects.all().select_related('driver_id', 'car_id').order_by('driver_id')
+
+
+class DriverCarDetailAPIView(RetrieveAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = DriverCarOutputSerializer
+    queryset = DriverCar.objects.all()
     lookup_field = 'pk'
 
 

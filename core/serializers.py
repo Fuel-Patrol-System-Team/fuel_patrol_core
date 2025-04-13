@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car
+from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car, DriverCar, \
+    DataProvider
 
 
 class UserOutputSerializer(serializers.Serializer):
@@ -14,41 +15,47 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 
-class MediaOutputSerializer(serializers.ModelSerializer):
-    report_query = serializers.PrimaryKeyRelatedField(queryset=ReportQuery.objects.all(), required=False)
+class OrgUserOutputSerializer(serializers.ModelSerializer):
+    org_id = OrganizationOutputSerializer(read_only=True)
 
     class Meta:
-        model = Media
-        fields = '__all__'
-
-
-class ReportQueryOutputSerializer(serializers.ModelSerializer):
-    organization = OrganizationOutputSerializer(read_only=True)
-    media = MediaOutputSerializer(many=True, source='media_set', read_only=True)
-
-    class Meta:
-        model = ReportQuery
+        model = OrgUser
         fields = '__all__'
 
 
 class CarOutputSerializer(serializers.ModelSerializer):
-    organization = OrganizationOutputSerializer(read_only=True)
-
     class Meta:
         model = Car
         fields = '__all__'
 
 
 class CarConsumptionOutputSerializer(serializers.ModelSerializer):
-    car = CarOutputSerializer(read_only=True)
+    car_id = CarOutputSerializer(read_only=True)
 
     class Meta:
         model = CarConsumption
         fields = '__all__'
 
 
+class ReportQueryOutputSerializer(serializers.ModelSerializer):
+    organization_id = OrganizationOutputSerializer(read_only=True)
+    provider_id = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = ReportQuery
+        fields = '__all__'
+
+
+class MediaOutputSerializer(serializers.ModelSerializer):
+    report_query_id = ReportQueryOutputSerializer(read_only=True)
+
+    class Meta:
+        model = Media
+        fields = '__all__'
+
+
 class CarReportOutputSerializer(serializers.ModelSerializer):
-    car = CarOutputSerializer(read_only=True)
+    car_id = CarOutputSerializer(read_only=True)
 
     class Meta:
         model = CarReport
@@ -56,18 +63,25 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
 
 
 class DriverOutputSerializer(serializers.ModelSerializer):
-    car = CarOutputSerializer(many=True, read_only=True)
-
     class Meta:
         model = Driver
         fields = '__all__'
 
 
-class OrgUserOutputSerializer(serializers.ModelSerializer):
-    org = OrganizationOutputSerializer(read_only=True)
+class DriverCarOutputSerializer(serializers.ModelSerializer):
+    driver_id = DriverOutputSerializer(read_only=True)
+    car_id = CarOutputSerializer(read_only=True)
 
     class Meta:
-        model = OrgUser
+        model = DriverCar
+        fields = '__all__'
+
+
+class DataProviderOutputSerializer(serializers.ModelSerializer):
+    car_id = CarOutputSerializer(read_only=True)
+
+    class Meta:
+        model = DataProvider
         fields = '__all__'
 
 

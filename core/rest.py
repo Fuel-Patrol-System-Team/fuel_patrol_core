@@ -2,13 +2,25 @@ from drf_yasg import openapi
 
 from core.serializers import CarMetricSerializer
 
+PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "provider_name": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            description="Имя провайдера (например, 'glonasssoft')",
+            example="glonasssoft"
+        )
+    },
+    required=["provider_name"]
+)
+
 MEDIA_UPLOAD_SCHEMA = {
     "tags": ["media"],
     "operation_description": "Загружает медиафайл.",
     "manual_parameters": [
         openapi.Parameter("file", openapi.IN_FORM, type=openapi.TYPE_FILE, required=True,
                           description="Файл для загрузки."),
-        openapi.Parameter("type", openapi.IN_FORM, type=openapi.TYPE_STRING, required=False, description="Тип файла."),
+        openapi.Parameter("type", openapi.IN_FORM, type=openapi.TYPE_STRING, required=False, description="Тип файла.")
     ],
     "responses": {
         201: "Успешно",
