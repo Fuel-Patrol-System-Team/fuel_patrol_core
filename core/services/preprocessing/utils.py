@@ -73,7 +73,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
 
-        df_values['spent_fuel'].mask(df_values['spent_fuel'].gt(0), other=0, inplace=True)
+        df_values['spent_fuel'].mask(df_values['spent_fuel'].lt(0), other=0, inplace=True)
         df_values['spent_fuel'] = df_values['spent_fuel'].abs()
 
 
