@@ -5,7 +5,30 @@ import warnings
 
 
 
+###
+###
+###
+###
+###
 def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = 4) -> pd.DataFrame:
+    """ Функция для препроцессинга
+    
+    Получает датафрейм, вычислеяет расход топлива между записями, максимальный уровень напряжения и агрегриует данные по ANTI_BUG_TIME_SECONDS, отбрасывая лишние данные, в которых замечается резкое падение уровня напряжения. Пополнение уровня топлива при отсутствии движения считается заправкой, и заменяется нулями, таким образом оставляя только данные повышение и паденмя уровня топлива. Показатель max_fuel используется для последующего опеределения колебания, берется максимальный уровень топлива за период. Рассчитывает пройденное расстояние, используя время между пакетами и перемножая на скорость.
+    
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Датафрейм
+    ANTI_BUG_TIME_SECONDS : int
+        Время первого периода агрегации
+    PRE_PERIOD_TIME : int
+        Время второгоо периода агрекации
+    PERIOD_2_MIN : int
+        Время последнего периода агрегации
+    VOLTAGE_LIMIT : int
+        Лимит разницы между максимальным и обычным напряжением, если превышен, то данные отрасываются
+    """
     with warnings.catch_warnings():
         warnings.simplefilter(action="ignore")
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
@@ -63,6 +86,37 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         return period_1_df
 
 def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
+    """ Функция для объединения данных машин и данных после препроцессинга
+    
+    Получает данные машин и данные препроцессинга и делает inner join для машин  и данных препроцессинга, датафреймы должны иметь следующие поля
+    
+    preprocessed_df:
+        timestamp
+        pos_s
+        spent_fuel
+        max_fuel
+        dtime
+        dtime_per_hour
+        travel
+        spent_per_100
+        max_fuel
+    car_data:
+        name
+        description
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Датафрейм
+    ANTI_BUG_TIME_SECONDS : int
+        Время первого периода агрегации
+    PRE_PERIOD_TIME : int
+        Время второгоо периода агрекации
+    PERIOD_2_MIN : int
+        Время последнего периода агрегации
+    VOLTAGE_LIMIT : int
+        Лимит разницы между максимальным и обычным напряжением, если превышен, то данные отрасываются
+    """
     result_df = preprocessed_df.merge(right=car_data, how='inner', left_on='auto', right_on='id')
     # опустим касты к numeric, надеясь что прокатит
     return result_df
@@ -70,6 +124,24 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 # принимает пару median и std для данной машины
 def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60):
+    """Функция для рассчета сливов по объединенным данным
+    
+    Функция для рассчета объединенных данных. Для начала отсекает записи, в которых было только повышение топлива за период времени, далее рассчитывает предполагаемый расход на 100 километов. После используя специальную форму делает поправку этого расхода на скорость автомобиля. Далее сравнивает с полученными показателями. Имеет две метрики.Первая определяет, что уровень топлива превышает предполагаемый расхода. Вторая метрика смотрит превышает ли машина средний средний расход среди других записей. Далее идет поиск на колебания, если уровень топлива поднялся, (а так как мы исключили заправка, поднятся он может только из-за колебаний) мы помечаем эту запись как колебание.
+    
+    Parameters
+    ----------
+    df_values : pd.DataFrame
+        датафрейм с объединенными данными
+    norma_rasx_df : pd.DataFrame
+        датафрейм с нормами расхода
+    LEAK_LIMIT : int
+        если слив меньше этого значения, этот слив отсекается
+    SIGMA_LIMIT: int
+        уровень отклонения от среднего в разнице между уровнем расхода и полученным значением в сигмах
+    SPEED_ETALON: int
+        эталонная скорость чем выше она, тем сильнее алгоритм будет строже к машинам с низкой скоростью
+    
+    """
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
 
@@ -174,8 +246,25 @@ def fuel_leak_calculate_tricky(df_values: pd.DataFrame, norma_rasx_df: pd.DataFr
 def compute_leaks_chunk(auto_df: pd.DataFrame, data_df: pl.DataFrame, norma_df: pd.DataFrame):
     result_df = fuel_leak_calculate_standart(merge(auto_df, preprocess(data_df)), norma_rasx_df=norma_df)
     return result_df
-
+# TODO: перепроверить логику расчетов, убрать расчет лишних полей, если такие расчеты есть
 def preprocess_influx(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 2, PERIOD_2_MIN = 10, VOLTAGE_LIMIT = 4) -> pd.DataFrame:
+    """Функция для очистки данных, для построения графиков
+    
+    Функция для очистки данных, которые далее используются для построения графиков, аналогично функционалу предоставляемому препроцессингом, за исключением более мелкого периода агрегации, аналогичным образом отсеивает неправильные данные.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Датафрейм
+    ANTI_BUG_TIME_SECONDS : int
+        Время первого периода агрегации
+    PRE_PERIOD_TIME : int
+        Время второгоо периода агрекации
+    PERIOD_2_MIN : int
+        Время последнего периода агрегации
+    VOLTAGE_LIMIT : int
+        Лимит разницы между максимальным и обычным напряжением, если превышен, то данные отрасываются
+    """
     with warnings.catch_warnings():
         warnings.simplefilter(action="ignore")
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
