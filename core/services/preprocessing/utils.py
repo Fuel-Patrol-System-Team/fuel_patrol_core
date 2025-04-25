@@ -5,7 +5,7 @@ import warnings
 
 
 
-def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = 4) -> pd.DataFrame:
+def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = .16, REFUELING_LIMIT = 4000, is_debug = False) -> pd.DataFrame:
     with warnings.catch_warnings():
         warnings.simplefilter(action="ignore")
         df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
@@ -69,29 +69,48 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 
 # принимает пару median и std для данной машины
-def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60):
+def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60, FUEL_JIGGLE_FACTOR = 15, is_save_bad_data = False):
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
-
-        df_values['spent_fuel'].mask(df_values['spent_fuel'].lt(0), other=0, inplace=True)
+        # проверки на сломанные датчики
+        # можно ускорить алгоритм, сохранив данные для машин, пока нет смысла
+        max_fuel_level_cars = df_values.groupby("auto")['max_fuel'].max().reset_index()
+        max_fuel_level_cars.rename(columns={"max_fuel": "max_fuel_per_car"})
+        df_values = df_values.merge(max_fuel_level_cars, how='inner', on='auto')
+        # прыжки туда сюда за 30 минут в FUEL_JIGGLE_FACTOR раз чем объем топлива, немного много пока хватит, лучше время не юзать
+        df_values['is_bad_data'] = df_values['spent_fuel_abs'].div(df_values['max_fuel_per_car']).ge(FUEL_JIGGLE_FACTOR)
+        df_values = df_values[ df_values['is_bad_data'].eq(False)]
+        bad_data = None
+        if is_save_bad_data == True:
+            bad_data = df_values[df_values['is_bad_data'].eq(True)]
+        # РАСЧЕТЫ
+        df_values['spent_fuel'] = df_values['spent_fuel'].mask(df_values['spent_fuel'].ge(0), other=0)
         df_values['spent_fuel'] = df_values['spent_fuel'].abs()
 
 
+        # тарирование
+        df_values['spent_fuel'] = df_values['spent_fuel'].mul(df_values['in']).div(df_values['out'])
+        df_values['max_fuel'] = df_values['spent_fuel'].mul(df_values['in']).div(df_values['out'])
+
+        # остальные скучные вычисления
         df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
 
         df_values['timestamp'] = pd.to_datetime(df_values['timestamp'])
 
-        season_result = df_values.merge(norma_rasx_df, how='inner', left_on='auto', right_on='sl_avto')
+        season_result = df_values.merge(norma_rasx_df, how='inner', left_on='auto', right_on='sl_avto') 
         season_result['norma_rasx'] = np.where(
             season_result['timestamp'].dt.month.between(3, 10),
             season_result['norma_rasx_summer'],
             season_result['norma_rasx_winter']
         )
+
         season_result['norma_rasx_per_travel'] = season_result['norma_rasx'].mul(season_result['travel']).div(100)
 
         season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(3))
-        season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
+
+        season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0), 
                                             season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1/6) & season_result['sl_tip_dvigat'].eq(1)], [True, True, True], default=False)
+
         season_result['leak'] = np.select(
             [
             season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0),
@@ -116,9 +135,12 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
         season_result['is_max_fuel_diff_2'] = season_result['max_fuel_diff'].lt(0) & ( season_result['leak'].le(-season_result['max_fuel_diff']) )
         season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
-        season_result['is_leak'] = season_result['is_leak'] & season_result['is_leak_delta_sp']
-
+        
+        if is_save_bad_data:
+            return (season_result, bad_data)
+        
         return season_result
+        
 
 
 def fuel_leak_calculate_tricky(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, SIGMA_VALUE, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60):
