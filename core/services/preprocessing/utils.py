@@ -19,11 +19,18 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         df['dtime_per_hour'] = df['dtime'].dt.total_seconds() / 3600
 
         df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])['calc_sensors_voltage'].transform(max)
-        
-        df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).lt(VOLTAGE_LIMIT)]
-        
+
+        df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).div(df["voltage_max"]).lt(VOLTAGE_LIMIT)]
+
         df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
-        
+        df['pos_a'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['pos_s'].transform(lambda x: x.diff())
+        df['spent_fuel_abs'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff().abs())
+
+        df['spent_fuel'].mask(df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
+        # pos_a для дополнительных рассчетов по поводу заправки
+        df['pos_a'] = np.where(df['pos_a'] == np.nan, df['pos_s'], df['pos_a'])
+        df['spent_fuel'].replace(np.nan, 0, inplace=True)
+        df['spent_fuel_abs'].replace(np.nan, 0, inplace=True)
         anti_bug_aggregation = df.groupby(
             ['auto', df['timestamp'].dt.floor(f'{ANTI_BUG_TIME_SECONDS}s')]
         ).agg({
@@ -32,35 +39,37 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
             'spent_fuel': 'sum',
             'dtime': 'sum',
             'dtime_per_hour': 'sum',
+            'spent_fuel_abs': 'sum'
         }).reset_index()
-        
+
         anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
-        
+
         pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
             'pos_s': 'median',
             'spent_fuel': 'sum',
             'max_fuel': 'max',
             'dtime': 'sum',
             'dtime_per_hour': 'sum',
+            'spent_fuel_abs': 'sum'
         }).reset_index()
-        
-        pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(8), np.nan, inplace=True)
 
+        pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
         pre_period_df['spent_fuel'].replace(np.nan, 0, inplace=True)
-        
         period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
-            
             'pos_s': 'mean',
             'spent_fuel': 'sum',
             'max_fuel': 'max',
             'dtime': 'sum',
             'dtime_per_hour': 'sum',
+            'spent_fuel_abs': 'sum'
         } ).reset_index()
-        
         period_1_df['travel'] = period_1_df['pos_s'].mul(period_1_df['dtime_per_hour'])
         period_1_df['spent_per_100'] = period_1_df['spent_fuel'].div(period_1_df['travel']).mul(100)
-        
-        return period_1_df
+        period_1_df['spent_fuel_abs_metric'] = period_1_df['spent_fuel_abs'].div(period_1_df['dtime_per_hour'])
+        if is_debug:
+            return (df, pre_period_df, period_1_df)
+        else:
+            return period_1_df
 
 def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
     result_df = preprocessed_df.merge(right=car_data, how='inner', left_on='auto', right_on='id')
@@ -75,7 +84,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
         # проверки на сломанные датчики
         # можно ускорить алгоритм, сохранив данные для машин, пока нет смысла
         max_fuel_level_cars = df_values.groupby("auto")['max_fuel'].max().reset_index()
-        max_fuel_level_cars.rename(columns={"max_fuel": "max_fuel_per_car"})
+        max_fuel_level_cars = max_fuel_level_cars.rename(columns={"max_fuel": "max_fuel_per_car"})
         df_values = df_values.merge(max_fuel_level_cars, how='inner', on='auto')
         # прыжки туда сюда за 30 минут в FUEL_JIGGLE_FACTOR раз чем объем топлива, немного много пока хватит, лучше время не юзать
         df_values['is_bad_data'] = df_values['spent_fuel_abs'].div(df_values['max_fuel_per_car']).ge(FUEL_JIGGLE_FACTOR)
@@ -89,8 +98,8 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
 
         # тарирование
-        df_values['spent_fuel'] = df_values['spent_fuel'].mul(df_values['in']).div(df_values['out'])
-        df_values['max_fuel'] = df_values['spent_fuel'].mul(df_values['in']).div(df_values['out'])
+        df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['in']).mul(df_values['out'])
+        df_values['max_fuel'] = df_values['spent_fuel'].div(df_values['in']).mul(df_values['out'])
 
         # остальные скучные вычисления
         df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])

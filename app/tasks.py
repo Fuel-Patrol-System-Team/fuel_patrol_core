@@ -369,7 +369,7 @@ def process_raw_data_task(self, report_query_id):
                                       f"Не найдено автомобилей для обработки в запросе {report_query_id}")
                 return
 
-            car_data = pl.from_pandas(pd.DataFrame(list(cars.values('id', 'name', 'engine_type'))).astype({'id': str}))
+            car_data = pl.from_pandas(pd.DataFrame(list(cars.values('id', 'name', 'engine_type', 'in', 'out'))).astype({'id': str}))
             car_data = car_data.rename({'engine_type': 'sl_tip_dvigat'})
             logger.info(
                 f"Данные автомобилей: {car_data.shape}, колонки: {car_data.columns}, пример ID: {car_data['id'].head().to_list()}")
