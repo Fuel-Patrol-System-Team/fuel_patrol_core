@@ -58,6 +58,8 @@ class Car(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField()
     engine_type = models.FloatField(default=0.0)
+    input = models.FloatField(default=1.0)
+    output = models.FloatField(default=1.0)
     created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
@@ -82,12 +84,11 @@ class CarConsumption(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} Consumption"
-
 class DataProvider(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     metadata = models.JSONField(**NULLABLE)
-    cars = models.ManyToManyField(Car,related_name='data_providers',**NULLABLE)
+    cars = models.ManyToManyField(Car, related_name='data_providers', blank=True)
 
     class Meta:
         verbose_name = "Data Provider"

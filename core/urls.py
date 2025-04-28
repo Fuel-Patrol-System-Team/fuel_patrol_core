@@ -7,7 +7,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     MediaListAPIView, MediaDetailAPIView, CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
     DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView, DataProviderListAPIView, DataProviderDetailAPIView, \
-    DriverCarListAPIView, DriverCarDetailAPIView, ProviderDataRequestAPIView
+    DriverCarListAPIView, DriverCarDetailAPIView, ProviderDataRequestAPIView, CarLeaksAPIView
 
 urlpatterns = [
 
@@ -26,6 +26,7 @@ urlpatterns = [
     path('leaks/volume', CarLeaksVolumeAPIView.as_view(), name='leaks-volume'),
     path('leaks/daily-sum', DailyLeaksSumAPIView.as_view(), name='daily-leaks-sum'),
     path('leaks/daily-count', DailyLeaksCountAPIView.as_view(), name='daily-leaks-count'),
+    path('leaks/history', CarLeaksAPIView.as_view(), name='car-leaks-list'),
 
     path('organizations', OrganizationListAPIView.as_view(), name='organization-list'),
     path('organizations/<uuid:pk>', OrganizationDetailAPIView.as_view(), name='organization-detail'),

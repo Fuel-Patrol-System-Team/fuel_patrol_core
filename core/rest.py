@@ -1,6 +1,6 @@
 from drf_yasg import openapi
 
-from core.serializers import CarMetricSerializer
+from core.serializers import CarMetricSerializer, CarReportOutputSerializer
 
 PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -13,6 +13,20 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     },
     required=["provider_name"]
 )
+
+CAR_LEAKS_SCHEMA = {
+    'operation_description': "Получение всех сливов по указанному автомобилю организации с опциональной фильтрацией по датам.",
+    'manual_parameters': [
+        openapi.Parameter('car_id', openapi.IN_QUERY, description="ID автомобиля", type=openapi.TYPE_STRING, required=True),
+        openapi.Parameter('periodFrom', openapi.IN_QUERY, description="Начальная дата (YYYY-MM-DD)", type=openapi.TYPE_STRING, required=False),
+        openapi.Parameter('periodDue', openapi.IN_QUERY, description="Конечная дата (YYYY-MM-DD)", type=openapi.TYPE_STRING, required=False),
+    ],
+    'responses': {
+        200: CarReportOutputSerializer(many=True),
+        400: "Bad Request",
+        404: "Car not found or not associated with organization"
+    }
+}
 
 MEDIA_UPLOAD_SCHEMA = {
     "tags": ["media"],

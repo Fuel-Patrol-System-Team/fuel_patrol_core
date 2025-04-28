@@ -1,4 +1,3 @@
-
 import requests
 import logging
 from typing import Dict, Any, Optional, List
@@ -15,6 +14,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+
 class GlonassSoftProvider:
     def __init__(self, metadata: Dict[str, Any], report_query_id: str):
         self.metadata = metadata
@@ -30,7 +30,7 @@ class GlonassSoftProvider:
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         if time_since_last_request < 1.0:
-            sleep_time = 1.0 - time_since_last_request
+            sleep_time = 1.0
             logger.info(f"Задержка запроса на {sleep_time:.2f} секунд для соблюдения ограничения частоты.")
             time.sleep(sleep_time)
         self.last_request_time = time.time()
@@ -53,7 +53,8 @@ class GlonassSoftProvider:
             return True
         except requests.RequestException as e:
             logger.error(f"Ошибка авторизации для провайдера GlonassSoft: {e}")
-            logger.debug(f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
+            logger.debug(
+                f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
             return False
 
     def get_vehicles(self, name: Optional[str] = None) -> Optional[List[Dict[str, Any]]]:
@@ -65,7 +66,8 @@ class GlonassSoftProvider:
         url = f"{self.base_url}/vehicles/find"
         params = {"name": name}
         headers = {"X-Auth": self.auth_token}
-        logger.info(f"Отправка запроса на получение списка автомобилей: URL={url}, Method=POST, Params={json.dumps(params, ensure_ascii=False)}, Headers={json.dumps(headers, ensure_ascii=False)}")
+        logger.info(
+            f"Отправка запроса на получение списка автомобилей: URL={url}, Method=POST, Params={json.dumps(params, ensure_ascii=False)}, Headers={json.dumps(headers, ensure_ascii=False)}")
         try:
             response = requests.post(url, json=params, headers=headers)
             response.raise_for_status()
@@ -87,7 +89,6 @@ class GlonassSoftProvider:
                     self.save_to_db(vehicle_details)
                     self.get_terminal_messages(vehicle_id, vehicle_details["createdAt"])
 
-
             if self.csv_initialized and os.path.exists(self.csv_file_path):
                 report_query = ReportQuery.objects.get(id=self.report_query_id)
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -96,10 +97,8 @@ class GlonassSoftProvider:
                 new_file_name = f"raw_data_{self.report_query_id}_{timestamp}.csv"
                 new_file_path = media_dir / new_file_name
 
-
                 shutil.move(self.csv_file_path, new_file_path)
                 logger.info(f"Файл перемещён в {new_file_path}")
-
 
                 media = Media.objects.create(
                     report_query_id=report_query,
@@ -111,24 +110,46 @@ class GlonassSoftProvider:
             return data
         except requests.RequestException as e:
             logger.error(f"Ошибка при получении списка автомобилей от GlonassSoft: {e}")
-            logger.debug(f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
+            logger.debug(
+                f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
             return None
 
     def get_vehicle_details(self, vehicle_id: int) -> Optional[Dict[str, Any]]:
         self._enforce_rate_limit()
         url = f"{self.base_url}/vehicles/{vehicle_id}"
         headers = {"X-Auth": self.auth_token}
-        logger.info(f"Отправка запроса на получение данных машины: URL={url}, Method=GET, Headers={json.dumps(headers, ensure_ascii=False)}")
+        logger.info(
+            f"Отправка запроса на получение данных машины: URL={url}, Method=GET, Headers={json.dumps(headers, ensure_ascii=False)}")
         try:
             response = requests.get(url, headers=headers)
             response.raise_for_status()
             data = response.json()
             logger.info(f"Успешно получены данные машины с vehicleId={vehicle_id} от GlonassSoft.")
             logger.debug(f"Полный ответ: {json.dumps(data, ensure_ascii=False)}")
+
+            input_value, output_value = None, None
+            sensors = data.get("sensors", [])
+            for sensor in sensors:
+                if "FuelLvl" in sensor.get("type", ""):
+                    if sensor.get("gradeType") == "GradeTable":
+                        record = sensor.get("gradesTables", [{}])[0].get("grades", [{}])[-1]
+                        input_value = record.get("input")
+                        output_value = record.get("output")
+                        break
+
+            if input_value is not None and output_value is not None:
+                logger.info(f"Найдены input={input_value}, output={output_value} для vehicleId={vehicle_id}")
+            else:
+                logger.warning(f"Input или output не найдены для vehicleId={vehicle_id}")
+
+            data["input"] = input_value if input_value is not None else 1.0
+            data["output"] = output_value if output_value is not None else 1.0
+
             return data
         except requests.RequestException as e:
             logger.error(f"Ошибка при получении данных машины с vehicleId={vehicle_id} от GlonassSoft: {e}")
-            logger.debug(f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
+            logger.debug(
+                f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
             return None
 
     def get_terminal_messages(self, vehicle_id: int, created_at: str) -> None:
@@ -153,12 +174,14 @@ class GlonassSoftProvider:
             "to": end_date.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         }
         headers = {"X-Auth": self.auth_token}
-        logger.info(f"Отправка запроса на получение исторических данных: URL={url}, Payload={json.dumps(payload, ensure_ascii=False)}, Headers={json.dumps(headers, ensure_ascii=False)}")
+        logger.info(
+            f"Отправка запроса на получение исторических данных: URL={url}, Payload={json.dumps(payload, ensure_ascii=False)}, Headers={json.dumps(headers, ensure_ascii=False)}")
         try:
             response = requests.post(url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
-            logger.info(f"Успешно получены исторические данные для vehicleId={vehicle_id} за период {start_date} - {end_date}.")
+            logger.info(
+                f"Успешно получены исторические данные для vehicleId={vehicle_id} за период {start_date} - {end_date}.")
 
             with open(self.res_file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -176,7 +199,8 @@ class GlonassSoftProvider:
 
         except requests.RequestException as e:
             logger.error(f"Ошибка при получении исторических данных для vehicleId={vehicle_id}: {e}")
-            logger.debug(f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
+            logger.debug(
+                f"Код ответа: {e.response.status_code if e.response else 'N/A'}, Текст ответа: {e.response.text if e.response else 'N/A'}")
             return
 
     def _flatten_parameters(self, message: Dict[str, Any]) -> Dict[str, Any]:
@@ -186,7 +210,6 @@ class GlonassSoftProvider:
             if "fuel1" in parameters:
                 flat_message["parameters.fuel1"] = parameters["fuel1"]
         return flat_message
-
 
     def _save_to_csv(self, vehicle_id: int, data: List[Dict[str, Any]]) -> None:
         if not data:
@@ -257,7 +280,6 @@ class GlonassSoftProvider:
                     logger.error(f"Провайдер не найден для report_query_id={self.report_query_id}")
                     raise ValueError("Provider not found")
 
-
                 custom_fields = {field["name"]: field["value"] for field in vehicle_data.get("customFields", [])}
                 engine_type = 1.0 if custom_fields.get("Тип учета") == "Моточасы" else 0.0
                 vehicle_guid = vehicle_data.get("vehicleGuid")
@@ -267,7 +289,6 @@ class GlonassSoftProvider:
                     logger.error(f"Отсутствуют vehicleGuid или vehicleId в данных машины: {vehicle_data}")
                     raise ValueError("Missing vehicleGuid or vehicleId")
 
-
                 car, created = Car.objects.update_or_create(
                     id=vehicle_guid,
                     defaults={
@@ -275,19 +296,18 @@ class GlonassSoftProvider:
                         "name": vehicle_data.get("name", ""),
                         "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                         "engine_type": engine_type,
+                        "input": vehicle_data.get("input", 0.0),
+                        "output": vehicle_data.get("output", 0.0),
                     }
                 )
                 logger.info(f"Машина {'создана' if created else 'обновлена'}: {car.id} ({car.name})")
 
-
                 provider.cars.add(car)
                 logger.info(f"Машина {car.id} добавлена к провайдеру {provider.name}")
-
 
                 created_at = datetime.strptime(vehicle_data["createdAt"], "%Y-%m-%dT%H:%M:%S.%fZ")
                 valid_period = (created_at + timedelta(days=365 * 10)).date()
                 consumption = vehicle_data.get("consumptionPer100Km", 0.0)
-
 
                 consumption_record, consumption_created = CarConsumption.objects.update_or_create(
                     car_id=car,
@@ -298,13 +318,16 @@ class GlonassSoftProvider:
                     }
                 )
                 if consumption_created:
-                    logger.info(f"Созданы нормы для машины {car.id}: winter_volume={consumption}, summer_volume={consumption}, valid_period={valid_period}")
+                    logger.info(
+                        f"Созданы нормы для машины {car.id}: winter_volume={consumption}, summer_volume={consumption}, valid_period={valid_period}")
                 else:
-                    logger.info(f"Обновлены нормы для машины {car.id}: winter_volume={consumption}, summer_volume={consumption}, valid_period={valid_period}")
+                    logger.info(
+                        f"Обновлены нормы для машины {car.id}: winter_volume={consumption}, summer_volume={consumption}, valid_period={valid_period}")
 
         except Exception as e:
             logger.error(f"Ошибка при сохранении данных машины в БД: {e}")
             raise
+
 
 def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_id: str) -> Optional[Any]:
     providers = {
@@ -315,6 +338,7 @@ def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_
         logger.error(f"Провайдер {provider_name} не поддерживается.")
         return None
     return provider_class(metadata, report_query_id)
+
 
 def save_response_to_file(data: Dict[str, Any], filename: str = "response.json") -> None:
     file_path = settings.BASE_DIR / filename

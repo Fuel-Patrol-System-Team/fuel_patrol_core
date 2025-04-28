@@ -3,55 +3,22 @@ from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport
     DataProvider
 
 
-class UserOutputSerializer(serializers.Serializer):
-    id = serializers.IntegerField()
-    username = serializers.CharField()
-    organization = serializers.CharField()
-
-
 class OrganizationOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Organization
-        fields = '__all__'
-
-
-class OrgUserOutputSerializer(serializers.ModelSerializer):
-    org_id = OrganizationOutputSerializer(read_only=True)
-
-    class Meta:
-        model = OrgUser
-        fields = '__all__'
+        fields = ['id', 'name', 'bot_token', 'chat_id']
 
 
 class CarOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Car
-        fields = '__all__'
+        fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output', 'created_at']
 
 
-class CarConsumptionOutputSerializer(serializers.ModelSerializer):
-    car_id = CarOutputSerializer(read_only=True)
-
+class DriverOutputSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CarConsumption
-        fields = '__all__'
-
-
-class ReportQueryOutputSerializer(serializers.ModelSerializer):
-    organization_id = OrganizationOutputSerializer(read_only=True)
-    provider_id = serializers.PrimaryKeyRelatedField(read_only=True)
-
-    class Meta:
-        model = ReportQuery
-        fields = '__all__'
-
-
-class MediaOutputSerializer(serializers.ModelSerializer):
-    report_query_id = ReportQueryOutputSerializer(read_only=True)
-
-    class Meta:
-        model = Media
-        fields = '__all__'
+        model = Driver
+        fields = ['id', 'fullname', 'address', 'phone']
 
 
 class CarReportOutputSerializer(serializers.ModelSerializer):
@@ -59,13 +26,15 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CarReport
-        fields = '__all__'
+        fields = ['id', 'car_id', 'datetime', 'volume', 'status']
 
 
-class DriverOutputSerializer(serializers.ModelSerializer):
+class CarConsumptionOutputSerializer(serializers.ModelSerializer):
+    car_id = CarOutputSerializer(read_only=True)
+
     class Meta:
-        model = Driver
-        fields = '__all__'
+        model = CarConsumption
+        fields = ['id', 'car_id', 'winter_volume', 'summer_volume', 'valid_period']
 
 
 class DriverCarOutputSerializer(serializers.ModelSerializer):
@@ -74,21 +43,75 @@ class DriverCarOutputSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DriverCar
-        fields = '__all__'
+        fields = ['driver_id', 'car_id']
 
 
 class DataProviderOutputSerializer(serializers.ModelSerializer):
-    car_id = CarOutputSerializer(read_only=True)
+    cars = CarOutputSerializer(many=True, read_only=True)
 
     class Meta:
         model = DataProvider
-        fields = '__all__'
+        fields = ['id', 'name', 'metadata', 'cars']
+
+
+class MediaOutputSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Media
+        fields = ['id', 'media_type', 'size', 'filename', 'type', 'file_hash']
+
+
+class ReportQueryOutputSerializer(serializers.ModelSerializer):
+    organization_id = OrganizationOutputSerializer(read_only=True)
+    provider_id = DataProviderOutputSerializer(read_only=True)
+    media = MediaOutputSerializer(read_only=True)
+    cars = serializers.SerializerMethodField()
+    car_reports = serializers.SerializerMethodField()
+    car_consumptions = serializers.SerializerMethodField()
+    driver_cars = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ReportQuery
+        fields = [
+            'id', 'status', 'organization_id', 'provider_id', 'media',
+            'cars', 'car_reports', 'car_consumptions', 'driver_cars'
+        ]
+
+    def get_cars(self, obj):
+        cars = Car.objects.filter(data_providers=obj.provider_id)
+        return CarOutputSerializer(cars, many=True).data
+
+    def get_car_reports(self, obj):
+        car_reports = CarReport.objects.filter(car_id__data_providers=obj.provider_id)
+        return CarReportOutputSerializer(car_reports, many=True).data
+
+    def get_car_consumptions(self, obj):
+        car_consumptions = CarConsumption.objects.filter(car_id__data_providers=obj.provider_id)
+        return CarConsumptionOutputSerializer(car_consumptions, many=True).data
+
+    def get_driver_cars(self, obj):
+        driver_cars = DriverCar.objects.filter(car_id__data_providers=obj.provider_id)
+        return DriverCarOutputSerializer(driver_cars, many=True).data
+
+
+class UserOutputSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    username = serializers.CharField()
+    organization = OrganizationOutputSerializer(read_only=True, source='org')
+
+
+class OrgUserOutputSerializer(serializers.ModelSerializer):
+    org = OrganizationOutputSerializer(read_only=True)
+
+    class Meta:
+        model = OrgUser
+        fields = ['id', 'username', 'org', 'email', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser',
+                  'last_login', 'date_joined']
 
 
 class AttachMediaSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReportQuery
-        fields = ['id', 'organization', 'media']
+        fields = ['id', 'organization_id', 'provider_id', 'status']
         read_only_fields = ['id']
 
     def create(self, validated_data):
@@ -128,7 +151,7 @@ class CarMetricSerializer(serializers.Serializer):
 class CarMetricsQuerySerializer(serializers.Serializer):
     periodFrom = serializers.DateField(required=False, allow_null=True)
     periodDue = serializers.DateField(required=False, allow_null=True)
-    car = serializers.CharField(required=True)
+    car = serializers.UUIDField(required=True)
     agg = serializers.CharField(required=False, allow_null=True)
     func = serializers.ChoiceField(choices=['mean', 'median', 'sum'], default='mean')
     metric = serializers.ChoiceField(choices=['fuel_level', 'speed', 'both'], default='both')
@@ -140,6 +163,12 @@ class DailyLeaksSerializer(serializers.Serializer):
 
 
 class CarLeaksSerializer(serializers.Serializer):
-    id = serializers.CharField()
+    id = serializers.UUIDField()
     label = serializers.CharField()
     value = serializers.FloatField()
+
+
+class CarLeaksFilterSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField(required=True, help_text="ID автомобиля")
+    periodFrom = serializers.DateField(required=False, allow_null=True, help_text="Начальная дата фильтрации")
+    periodDue = serializers.DateField(required=False, allow_null=True, help_text="Конечная дата фильтрации")
