@@ -98,8 +98,8 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
 
         # тарирование
-        df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['in']).mul(df_values['out'])
-        df_values['max_fuel'] = df_values['spent_fuel'].div(df_values['in']).mul(df_values['out'])
+        df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
+        df_values['max_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
 
         # остальные скучные вычисления
         df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
