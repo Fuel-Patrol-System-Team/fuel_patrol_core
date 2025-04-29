@@ -26,7 +26,7 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         df['pos_a'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['pos_s'].transform(lambda x: x.diff())
         df['spent_fuel_abs'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff().abs())
 
-        df['spent_fuel'].mask(df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
+        
         # pos_a для дополнительных рассчетов по поводу заправки
         df['pos_a'] = np.where(df['pos_a'] == np.nan, df['pos_s'], df['pos_a'])
         df['spent_fuel'].replace(np.nan, 0, inplace=True)
@@ -42,6 +42,7 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
             'spent_fuel_abs': 'sum'
         }).reset_index()
 
+        anti_bug_aggregation['spent_fuel'].mask(df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
         anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
 
         pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
@@ -144,6 +145,9 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
         season_result['is_max_fuel_diff_2'] = season_result['max_fuel_diff'].lt(0) & ( season_result['leak'].le(-season_result['max_fuel_diff']) )
         season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
+
+
+        season_result['is_leak'] = season_result['is_leak'] & season_result['is_leak_delta_sp']
         
         if is_save_bad_data:
             return (season_result, bad_data)
