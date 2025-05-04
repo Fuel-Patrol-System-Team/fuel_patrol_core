@@ -79,7 +79,7 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 
 # принимает пару median и std для данной машины
-def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60, FUEL_JIGGLE_FACTOR = 15, is_save_bad_data = False):
+def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60, FUEL_JIGGLE_FACTOR = 15, is_save_bad_data = False, is_filter = False, FILTER_PERC = .03):
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
         # проверки на сломанные датчики
@@ -100,7 +100,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
         # тарирование
         df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
-        df_values['max_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
+        df_values['max_fuel'] = df_values['max_fuel'].div(df_values['input']).mul(df_values['output'])
 
         # остальные скучные вычисления
         df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
@@ -149,6 +149,14 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
         season_result['is_leak'] = season_result['is_leak'] & season_result['is_leak_delta_sp']
         
+        # новый фильтр
+        season_result['untariffed'] = season_result['input'].eq(1) & season_result['output'].eq(1)
+
+        season_result['filtered_leak'] = season_result['leak_to_volume'].gt(FILTER_PERC) & season_result['is_leak'] & season_result['untariffed'].eq(True)
+        season_result['filtered_leak'] = season_result['is_leak'] & season_result['untariffed'].eq(False)
+
+        if is_filter:
+            season_result['is_leak'] = season_result['filtered_leak']
         if is_save_bad_data:
             return (season_result, bad_data)
         
