@@ -23,14 +23,15 @@ from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumpti
 from .pagination import StandardResultsSetPagination
 from .rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
-    DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA, CAR_LEAKS_SCHEMA
+    DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
+    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA
 )
 from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer, DriverCarOutputSerializer,
-    DataProviderOutputSerializer, CarLeaksFilterSerializer
+    DataProviderOutputSerializer, CarLeaksFilterSerializer, DataProviderSerializer
 )
 from .services.databases.influx_db import query_influxdb
 
@@ -422,6 +423,42 @@ class UserRegistrationAPIView(APIView):
         return user_registered_response(user)
 
 
+class DataProviderCreateAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**DATA_PROVIDER_CREATE_SCHEMA)
+    def post(self, request):
+        serializer = DataProviderSerializer(data=request.data)
+        if not serializer.is_valid():
+            logger.error(f"Ошибка валидации данных провайдера: {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+
+        validated_data = serializer.validated_data
+        cars = validated_data.pop('cars', [])
+
+
+        if cars:
+            valid_cars = Car.objects.filter(
+                id__in=[car.id for car in cars],
+                data_providers__report_queries__organization_id=request.user.org
+            )
+            if len(valid_cars) != len(cars):
+                logger.error("Некоторые автомобили не принадлежат организации пользователя")
+                return error_response(
+                    "Один или несколько автомобилей не принадлежат вашей организации",
+                    status.HTTP_404_NOT_FOUND
+                )
+
+        data_provider = DataProvider.objects.create(**validated_data)
+
+        if cars:
+            data_provider.cars.set(valid_cars)
+            logger.info(f"Автомобили {valid_cars} привязаны к провайдеру {data_provider.id}")
+
+        output_serializer = DataProviderOutputSerializer(data_provider)
+        logger.info(f"Создан DataProvider: {data_provider.id} пользователем {request.user.username}")
+        return success_response(output_serializer.data, status.HTTP_201_CREATED)
+
 class OrganizationListAPIView(ListAPIView):
     # permission_classes = [IsOrgMember]
     serializer_class = OrganizationOutputSerializer
@@ -591,6 +628,7 @@ class DriverDetailAPIView(RetrieveAPIView):
         return Driver.objects.filter(
             driver_cars__car_id__data_providers__report_queries__organization_id=self.request.user.org
         )
+
 class DataProviderListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DataProviderOutputSerializer
@@ -602,8 +640,7 @@ class DataProviderListAPIView(ListAPIView):
     def get_queryset(self):
         return DataProvider.objects.filter(
             report_queries__organization_id=self.request.user.org
-        ).select_related('cars').order_by('id')
-
+        ).prefetch_related('cars').order_by('id')
 
 class DataProviderDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]

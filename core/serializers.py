@@ -46,6 +46,7 @@ class DriverCarOutputSerializer(serializers.ModelSerializer):
         fields = ['driver_id', 'car_id']
 
 
+
 class DataProviderOutputSerializer(serializers.ModelSerializer):
     cars = CarOutputSerializer(many=True, read_only=True)
 
@@ -172,3 +173,14 @@ class CarLeaksFilterSerializer(serializers.Serializer):
     car_id = serializers.UUIDField(required=True, help_text="ID автомобиля")
     periodFrom = serializers.DateField(required=False, allow_null=True, help_text="Начальная дата фильтрации")
     periodDue = serializers.DateField(required=False, allow_null=True, help_text="Конечная дата фильтрации")
+
+class DataProviderSerializer(serializers.ModelSerializer):
+    cars = serializers.PrimaryKeyRelatedField(
+        queryset=Car.objects.all(),
+        many=True,
+        required=False,
+        help_text="Список ID автомобилей, связанных с провайдером"
+    )
+    class Meta:
+        model = DataProvider
+        fields = ['name', 'metadata', 'cars']

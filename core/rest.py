@@ -1,6 +1,6 @@
 from drf_yasg import openapi
 
-from core.serializers import CarMetricSerializer, CarReportOutputSerializer
+from core.serializers import CarMetricSerializer, CarReportOutputSerializer, DataProviderSerializer
 
 PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -25,6 +25,29 @@ CAR_LEAKS_SCHEMA = {
         200: CarReportOutputSerializer(many=True),
         400: "Bad Request",
         404: "Car not found or not associated with organization"
+    }
+}
+
+DATA_PROVIDER_CREATE_SCHEMA = {
+    'operation_description': 'Создаёт нового провайдера данных.',
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['name'],
+        properties={
+            'name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя провайдера'),
+            'metadata': openapi.Schema(type=openapi.TYPE_OBJECT, description='Метаданные провайдера (опционально)', nullable=True),
+            'cars': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(type=openapi.TYPE_STRING, format='uuid'),
+                description='Список ID автомобилей (опционально)'
+            ),
+        }
+    ),
+    'responses': {
+        201: DataProviderSerializer,
+        400: openapi.Response(description='Неверные данные'),
+        403: openapi.Response(description='Доступ запрещён'),
+        404: openapi.Response(description='Автомобили не найдены или не принадлежат организации'),
     }
 }
 
