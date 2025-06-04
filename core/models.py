@@ -1,6 +1,6 @@
 import os
 import uuid
-
+from idlelib.pyparse import trans
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -16,6 +16,7 @@ NULLABLE = {
     "null": True
 }
 
+
 class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
@@ -29,6 +30,7 @@ class Organization(models.Model):
 
     def __str__(self):
         return self.name
+
 
 class OrgUser(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -52,6 +54,7 @@ class OrgUser(AbstractUser):
     def __str__(self):
         return self.username
 
+
 class Car(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     id_in_provider_system = models.IntegerField(default=0)
@@ -70,6 +73,7 @@ class Car(models.Model):
     def __str__(self):
         return self.name
 
+
 class CarConsumption(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='consumptions')
@@ -84,10 +88,13 @@ class CarConsumption(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} Consumption"
+
+
 class DataProvider(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     metadata = models.JSONField(**NULLABLE)
+    org_id = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='organization', **NULLABLE)
     cars = models.ManyToManyField(Car, related_name='data_providers', blank=True)
 
     class Meta:
@@ -98,11 +105,11 @@ class DataProvider(models.Model):
     def __str__(self):
         return self.name
 
+
 class ReportQuery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
     provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
-    organization_id = models.ForeignKey(Organization, on_delete=models.SET_NULL, **NULLABLE, related_name='report_queries')
 
     class Meta:
         verbose_name = "Report Query"
@@ -111,6 +118,7 @@ class ReportQuery(models.Model):
 
     def __str__(self):
         return f"Report {self.id}"
+
 
 class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -136,6 +144,7 @@ class Media(models.Model):
             self.file_hash = calculate_file_hash(self.file)
         super().save(*args, **kwargs)
 
+
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='reports')
@@ -151,11 +160,13 @@ class CarReport(models.Model):
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
 
+
 class Driver(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     fullname = models.CharField(max_length=255)
     address = models.CharField(max_length=255)
     phone = models.CharField(max_length=255)
+    car_id = models.ManyToManyField(Car,blank=True, related_name='drivers')
 
     class Meta:
         verbose_name = "Driver"
@@ -165,17 +176,6 @@ class Driver(models.Model):
     def __str__(self):
         return self.fullname
 
-class DriverCar(models.Model):
-    driver_id = models.ForeignKey(Driver, on_delete=models.CASCADE, related_name='driver_cars')
-    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='driver_cars')
-
-    class Meta:
-        verbose_name = "Driver-Car Assignment"
-        verbose_name_plural = "Driver-Car Assignments"
-        unique_together = ('driver_id', 'car_id')
-
-    def __str__(self):
-        return f"{self.driver_id.fullname} - {self.car_id.name}"
 
 @receiver(post_delete, sender=Media)
 def delete_media_file(sender, instance, **kwargs):

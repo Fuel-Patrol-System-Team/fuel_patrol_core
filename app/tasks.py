@@ -43,7 +43,7 @@ def parse_cars_task(self, report_query_id):
     try:
         logger.info(f"Начат парсинг автомобилей для запроса отчёта {report_query_id}...")
         report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization_id
+        organization = report_query.provider_id.org_id
 
         provider = report_query.provider_id
         if not provider:
@@ -180,7 +180,7 @@ def parse_norms_task(self, report_query_id):
     try:
         logger.info(f"Начат парсинг норм для запроса отчёта {report_query_id}...")
         report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization_id
+        organization = report_query.provider.org_id
 
         provider = report_query.provider_id
         if not provider:
@@ -204,7 +204,7 @@ def parse_norms_task(self, report_query_id):
                                       f"Медиафайл норм не найден для запроса отчёта {report_query_id}")
                 return
 
-            if not ReportQuery.objects.filter(organization_id=organization, status="completed").exists():
+            if not ReportQuery.objects.filter(provider_id__org_id=organization, status="completed").exists():
                 logger.error(f"Данные об автомобилях для организации {organization.name} не завершены")
                 report_query.status = 'error'
                 report_query.save()
@@ -309,7 +309,7 @@ def process_raw_data_task(self, report_query_id):
     try:
         logger.info(f"Начат обработка сырых данных для запроса отчёта {report_query_id}...")
         report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization_id
+        organization = report_query.provider_id.org_id
 
         provider = report_query.provider_id
         if not provider:
@@ -328,7 +328,7 @@ def process_raw_data_task(self, report_query_id):
             f"Провайдер: {provider.name}, is_csv_provider: {is_csv_provider}, is_glonasssoft_provider: {is_glonasssoft_provider}")
 
         if is_csv_provider or is_glonasssoft_provider:
-            if is_csv_provider and not ReportQuery.objects.filter(organization_id=organization,
+            if is_csv_provider and not ReportQuery.objects.filter(provider_id__org_id=organization,
                                                                   status="completed").exists():
                 logger.error(f"Данные об автомобилей для организации {organization.name} не завершены")
                 report_query.status = 'error'
@@ -533,7 +533,7 @@ def save_leak_results(self, results, report_query_id):
     try:
         logger.info(f"Сохранение результатов утечек для запроса отчёта {report_query_id}...")
         report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization_id
+        organization = report_query.provider_id.org_id
 
         if results is None or not results:
             logger.error(f"Нет результатов для сохранения для запроса отчёта {report_query_id}")
@@ -619,7 +619,7 @@ def check_and_process_raw_reports(self):
 
         for organization in organizations:
             report_query = ReportQuery.objects.filter(
-                organization_id=organization,
+                provider_id__org_id=organization,
                 status="created"
             ).exclude(
                 Q(status="completed") | Q(status="error")
@@ -650,10 +650,10 @@ def check_and_process_raw_reports(self):
 
 
                 if is_csv_provider:
-                    if not ReportQuery.objects.filter(organization_id=organization, status="completed").exists():
+                    if not ReportQuery.objects.filter(provider_id__org_id=organization, status="completed").exists():
                         logger.info(f"Данные об автомобилях для организации {organization.name} не завершены")
                         continue
-                    if not ReportQuery.objects.filter(organization_id=organization, status="completed").exists():
+                    if not ReportQuery.objects.filter(provider_id__org_id=organization, status="completed").exists():
                         logger.info(f"Данные норм для организации {organization.name} не завершены")
                         continue
 
@@ -687,7 +687,7 @@ def parse_merged_data(self, report_query_id):
     try:
         logger.info(f"Начат парсинг объединённых данных для запроса отчёта {report_query_id}...")
         report_query = ReportQuery.objects.get(id=report_query_id)
-        organization = report_query.organization_id
+        organization = report_query.provider_id.org_id
 
         provider = report_query.provider_id
         if not provider:

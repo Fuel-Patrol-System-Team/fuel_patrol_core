@@ -31,7 +31,9 @@ WORKDIR /app
 
 COPY . .
 
-RUN useradd -m -r myuser && chown -R myuser:myuser /app
+RUN useradd -m -r myuser && \
+    chown -R myuser:myuser /app && \
+    chmod -R u+rwx /app
 
 RUN find /usr/local -type d -name '__pycache__' -exec rm -rf {} + \
     && find /usr/local -type f -name '*.pyc' -delete

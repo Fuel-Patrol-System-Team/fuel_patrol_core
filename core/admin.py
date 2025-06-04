@@ -6,7 +6,7 @@ from django.utils.safestring import mark_safe
 
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
-    Media, ReportQuery, DataProvider, DriverCar
+    Media, ReportQuery, DataProvider
 )
 from django_celery_beat.models import (
     ClockedSchedule, CrontabSchedule, IntervalSchedule, PeriodicTask, SolarSchedule
@@ -52,19 +52,19 @@ class CarConsumptionInline(admin.TabularInline):
     can_delete = True
 
 class DriverCarInline(admin.TabularInline):
-    model = DriverCar
+    model = Driver.car_id.through
     extra = 0
-    fields = ('driver_id', 'car_id')
-    readonly_fields = ('driver_id', 'car_id')
-    verbose_name = "Назначение водителя-автомобиля"
-    verbose_name_plural = "Назначения водителей-автомобилей"
+    fields = ('car_id',)
+    readonly_fields = ('car_id',)
+    verbose_name = "Назначение автомобиля"
+    verbose_name_plural = "Назначения автомобилей"
     can_delete = True
 
 class ReportQueryInline(admin.TabularInline):
     model = ReportQuery
     extra = 0
-    fields = ('status', 'provider_id', 'organization_id')
-    readonly_fields = ('status', 'provider_id', 'organization_id')
+    fields = ('status', 'provider_id')
+    readonly_fields = ('status', 'provider_id')
     verbose_name = "Запрос отчета"
     verbose_name_plural = "Запросы отчетов"
     can_delete = True
@@ -96,7 +96,7 @@ class OrganizationAdmin(ImportExportMixin, ModelAdmin):
     list_per_page = 25
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
-    inlines = [OrgUserInline, ReportQueryInline]
+    inlines = [OrgUserInline]  # Убрали ReportQueryInline
     verbose_name = "Организация"
     verbose_name_plural = "Организации"
     actions = ['export_selected']
@@ -150,7 +150,7 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
     actions = ['export_selected']
 
     def data_providers_display(self, obj):
-        providers = obj.data_providers.all()
+        providers = DataProvider.objects.filter(cars=obj)
         if not providers:
             return "Нет провайдеров"
         provider_links = [
@@ -226,7 +226,7 @@ class DriverAdmin(ImportExportMixin, ModelAdmin):
     actions = ['export_selected']
 
     def cars_display(self, obj):
-        cars = Car.objects.filter(driver_cars__driver_id=obj)
+        cars = obj.car_id.all()
         car_links = [
             f'<a href="{reverse("admin:core_car_change", args=[car.id])}">{car.name}</a>'
             for car in cars[:3]
@@ -235,38 +235,11 @@ class DriverAdmin(ImportExportMixin, ModelAdmin):
         return mark_safe(result) if cars else "Нет автомобилей"
     cars_display.short_description = "Автомобили"
 
-@admin.register(DriverCar)
-class DriverCarAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('driver_display', 'car_display')
-    list_filter = ('driver_id', 'car_id')
-    search_fields = ('driver_id__fullname', 'car_id__name')
-    ordering = ('driver_id',)
-    list_per_page = 25
-    export_form_class = UnfoldExportForm
-    import_form_class = UnfoldImportForm
-    verbose_name = "Назначение водителя-автомобиля"
-    verbose_name_plural = "Назначения водителей-автомобилей"
-    actions = ['export_selected']
-
-    def driver_display(self, obj):
-        if obj.driver_id:
-            url = reverse("admin:core_driver_change", args=[obj.driver_id.id])
-            return mark_safe(f'<a href="{url}">{obj.driver_id.fullname}</a>')
-        return "Не указан"
-    driver_display.short_description = "Водитель"
-
-    def car_display(self, obj):
-        if obj.car_id:
-            url = reverse("admin:core_car_change", args=[obj.car_id.id])
-            return mark_safe(f'<a href="{url}">{obj.car_id.name}</a>')
-        return "Не указан"
-    car_display.short_description = "Автомобиль"
-
 @admin.register(Media)
 class MediaAdmin(ImportExportMixin, ModelAdmin):
     list_display = ('id', 'filename', 'report_query_display', 'media_type', 'size', 'type', 'file_hash')
-    list_filter = ('type', 'report_query_id__organization_id')
-    search_fields = ('filename', 'report_query_id__organization_id__name')
+    list_filter = ('type',)
+    search_fields = ('filename',)
     ordering = ('filename',)
     list_per_page = 25
     export_form_class = UnfoldExportForm
@@ -284,9 +257,9 @@ class MediaAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(ReportQuery)
 class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'organization_display', 'provider_display', 'status')
-    list_filter = ('status', 'organization_id', 'provider_id')
-    search_fields = ('organization_id__name', 'provider_id__name')
+    list_display = ('id', 'provider_display', 'status')
+    list_filter = ('status', 'provider_id')
+    search_fields = ('provider_id__name',)
     ordering = ('-id',)
     list_per_page = 25
     inlines = [MediaInline]
@@ -295,13 +268,6 @@ class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
     verbose_name = "Запрос отчета"
     verbose_name_plural = "Запросы отчетов"
     actions = ['export_selected', 'mark_as_completed', 'mark_as_error']
-
-    def organization_display(self, obj):
-        if obj.organization_id:
-            url = reverse("admin:core_organization_change", args=[obj.organization_id.id])
-            return mark_safe(f'<a href="{url}">{obj.organization_id.name}</a>')
-        return "Не указана"
-    organization_display.short_description = "Организация"
 
     def provider_display(self, obj):
         if obj.provider_id:

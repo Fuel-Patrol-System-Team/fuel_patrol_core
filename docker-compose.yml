@@ -11,14 +11,14 @@ services:
              chmod -R 755 /app/static &&
              su - myuser -c 'cd /app && umask 0222 && python manage.py migrate &&
                              python manage.py collectstatic --noinput &&
-                             gunicorn app.wsgi:application --bind 0.0.0.0:8000 --workers 3 --threads 2 --timeout 120 --name fuel_patrol'"
+                             gunicorn app.wsgi:application --bind 0.0.0.0:8000 --timeout 120 --name fuel_patrol'"
     hostname: fuel-patrol-api
     volumes:
       - .:/app
       - fuel-patrol-static:/app/static
       - fuel-patrol-media:/app/media:rw
     ports:
-      - "${DOCKER_DJANGO_PORT}:8000"
+      - "8000:8000"
     env_file:
       - .env
     depends_on:
@@ -88,8 +88,8 @@ services:
     build: .
     hostname: fuel-patrol-celery
     command: >
-      sh -c "sleep 10 &&
-             celery -A app worker --loglevel=info --pool=solo --hostname=fuel_patrol_worker@%h"
+      sh -c "sleep 30 &&
+             celery -A app.celery worker --loglevel=info --pool=solo --hostname=fuel_patrol_worker@%h"
     volumes:
       - .:/app
       - fuel-patrol-media:/app/media:rw
@@ -100,19 +100,22 @@ services:
         condition: service_healthy
       fuel-patrol-keydb:
         condition: service_healthy
-      fuel-patrol-api:
-        condition: service_started
     restart: unless-stopped
     networks:
       - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD", "celery", "-A", "app.celery", "inspect", "ping", "-d", "fuel_patrol_worker@%%h" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   fuel-patrol-celery-beat:
     container_name: fuel-patrol-celery-beat
     build: .
     hostname: fuel-patrol-celery-beat
     command: >
-      sh -c "sleep 10 &&
-             celery -A app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+      sh -c "sleep 30 &&
+             celery -A app.celery beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
     volumes:
       - .:/app
     env_file:
@@ -122,29 +125,39 @@ services:
         condition: service_healthy
       fuel-patrol-keydb:
         condition: service_healthy
-      fuel-patrol-api:
-        condition: service_started
     restart: unless-stopped
     networks:
       - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD", "celery", "-A", "app.celery", "inspect", "ping", "-d", "fuel_patrol_worker@%%h" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-  fuel-patrol-flower:
-    container_name: fuel-patrol-flower
-    build: .
-    hostname: fuel-patrol-flower
-    command: celery -A app flower --port=5555 --basic_auth=${CELERY_FLOWER_USER}:${CELERY_FLOWER_PASSWORD}
+  fuel-patrol-grafana:
+    container_name: fuel-patrol-grafana
+    image: grafana/grafana:latest
+    hostname: fuel-patrol-grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_SERVER_ROOT_URL=${GRAFANA_SERVER_ROOT_URL}
+    volumes:
+      - fuel-patrol-grafana-data:/var/lib/grafana
     ports:
-      - "${DOCKER_FLOWER_PORT}:5555"
-    env_file:
-      - .env
+      - "${DOCKER_GRAFANA_PORT}:3000"
     depends_on:
-      fuel-patrol-keydb:
+      fuel-patrol-influxdb:
         condition: service_healthy
-      fuel-patrol-celery:
-        condition: service_started
     restart: unless-stopped
     networks:
       - fuel-patrol-net
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:3000/api/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   fuel-patrol-influxdb:
     container_name: fuel-patrol-influxdb
@@ -176,6 +189,7 @@ volumes:
   fuel-patrol-static:
   fuel-patrol-media:
   fuel-patrol-influxdb-data:
+  fuel-patrol-grafana-data:
 
 networks:
   fuel-patrol-net:

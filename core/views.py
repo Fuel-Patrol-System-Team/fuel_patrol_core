@@ -18,8 +18,7 @@ import uuid
 
 from app.tasks import parse_merged_data, process_raw_data_task, fetch_data_from_provider
 from drf_yasg.utils import swagger_auto_schema
-from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    DriverCar
+from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider
 from .pagination import StandardResultsSetPagination
 from .rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -30,7 +29,7 @@ from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
-    CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer, DriverCarOutputSerializer,
+    CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer,
     DataProviderOutputSerializer, CarLeaksFilterSerializer, DataProviderSerializer
 )
 from .services.databases.influx_db import query_influxdb
@@ -67,7 +66,7 @@ class CarMetricsAPIView(APIView):
         try:
             car = Car.objects.filter(
                 id=car_id,
-                data_providers__report_queries__organization_id=request.user.org
+                data_providers__org_id=request.user.org
             ).first()
             if not car:
                 logger.info(f"Автомобиль {car_id} не найден или не принадлежит организации {request.user.org.id}")
@@ -111,7 +110,7 @@ class DailyLeaksCountAPIView(APIView):
         period_due = data.get('periodDue')
 
         queryset = CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=request.user.org,
+            car_id__data_providers__org_id=request.user.org,
             status=True
         )
         if period_from:
@@ -145,7 +144,7 @@ class DailyLeaksSumAPIView(APIView):
         period_due = data.get('periodDue')
 
         queryset = CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=request.user.org,
+            car_id__data_providers__org_id=request.user.org,
             status=True
         )
         if period_from:
@@ -177,7 +176,7 @@ class CarLeaksCountAPIView(APIView):
         period_due = data.get('periodDue')
 
         queryset = CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=request.user.org,
+            car_id__data_providers__org_id=request.user.org,
             status=True
         )
         if period_from:
@@ -195,7 +194,7 @@ class CarLeaksCountAPIView(APIView):
         car_ids = [item['car_id'] for item in leaks_count]
         cars = Car.objects.filter(
             id__in=car_ids,
-            data_providers__report_queries__organization_id=request.user.org
+            data_providers__org_id=request.user.org
         )
 
         result = [
@@ -223,7 +222,7 @@ class CarLeaksVolumeAPIView(APIView):
         period_due = data.get('periodDue')
 
         queryset = CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=request.user.org,
+            car_id__data_providers__org_id=request.user.org,
             status=True
         )
         if period_from:
@@ -241,7 +240,7 @@ class CarLeaksVolumeAPIView(APIView):
         car_ids = [item['car_id'] for item in leaks_volume]
         cars = Car.objects.filter(
             id__in=car_ids,
-            data_providers__report_queries__organization_id=request.user.org
+            data_providers__org_id=request.user.org
         )
 
         result = [
@@ -307,7 +306,6 @@ class ProviderDataRequestAPIView(APIView):
             return error_response(f"Provider {provider_name} metadata is required", status.HTTP_400_BAD_REQUEST)
 
         report_query = ReportQuery.objects.create(
-            organization_id=organization,
             provider_id=provider,
             status="created"
         )
@@ -348,7 +346,6 @@ class MediaUploadAPIView(APIView):
         file_hash = calculate_file_hash(uploaded_file)
         new_filename = f"{file_id}.{file_extension}"
         file_size = uploaded_file.size
-        organization = request.user.org
 
         try:
             existing_media = Media.objects.get(
@@ -367,18 +364,11 @@ class MediaUploadAPIView(APIView):
         except Media.DoesNotExist:
             existing_media = None
 
-        try:
-            organization = Organization.objects.get(id=organization.id)
-        except Organization.DoesNotExist:
-            return error_response({"error": f"Organization with id {organization.id} not found"},
-                                 status.HTTP_404_NOT_FOUND)
-
         provider, _ = DataProvider.objects.get_or_create(
             name='csv',
             defaults={'metadata': {}}
         )
         report_query = ReportQuery.objects.create(
-            organization_id=organization,
             provider_id=provider,
             status="created"
         )
@@ -440,7 +430,7 @@ class DataProviderCreateAPIView(APIView):
         if cars:
             valid_cars = Car.objects.filter(
                 id__in=[car.id for car in cars],
-                data_providers__report_queries__organization_id=request.user.org
+                data_providers__org_id=request.user.org
             )
             if len(valid_cars) != len(cars):
                 logger.error("Некоторые автомобили не принадлежат организации пользователя")
@@ -459,8 +449,8 @@ class DataProviderCreateAPIView(APIView):
         logger.info(f"Создан DataProvider: {data_provider.id} пользователем {request.user.username}")
         return success_response(output_serializer.data, status.HTTP_201_CREATED)
 
+
 class OrganizationListAPIView(ListAPIView):
-    # permission_classes = [IsOrgMember]
     serializer_class = OrganizationOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -472,7 +462,6 @@ class OrganizationListAPIView(ListAPIView):
 
 
 class OrganizationDetailAPIView(RetrieveAPIView):
-    # permission_classes = [IsOrgMember]
     serializer_class = OrganizationOutputSerializer
     queryset = Organization.objects.all()
     lookup_field = 'pk'
@@ -506,7 +495,7 @@ class CarListAPIView(ListAPIView):
 
     def get_queryset(self):
         return Car.objects.filter(
-            data_providers__report_queries__organization_id=self.request.user.org
+            data_providers__org_id=self.request.user.org
         ).order_by('id')
 
 
@@ -517,7 +506,7 @@ class CarDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return Car.objects.filter(
-            data_providers__report_queries__organization_id=self.request.user.org
+            data_providers__org_id=self.request.user.org
         )
 
 
@@ -545,13 +534,12 @@ class ReportQueryListAPIView(ListAPIView):
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['status']
-    search_fields = ['organization_id__name', 'status']
+    search_fields = ['provider_id__name', 'status']
 
     def get_queryset(self):
         return ReportQuery.objects.filter(
-            organization_id=self.request.user.org
-        ).select_related('organization_id', 'provider_id').prefetch_related('media', 'provider_id__cars').order_by('id')
-
+            provider_id__org_id=self.request.user.org
+        ).select_related('provider_id').prefetch_related('media', 'provider_id__cars').order_by('id')
 
 class ReportQueryDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
@@ -560,8 +548,8 @@ class ReportQueryDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return ReportQuery.objects.filter(
-            organization_id=self.request.user.org
-        ).select_related('organization_id', 'provider_id').prefetch_related('media', 'provider_id__cars')
+            provider_id__org_id=self.request.user.org  # Фильтрация через DataProvider
+        ).select_related('provider_id').prefetch_related('media', 'provider_id__cars')
 
 class MediaListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -572,9 +560,9 @@ class MediaListAPIView(ListAPIView):
     search_fields = ['filename', 'media_type', 'type']
 
     def get_queryset(self):
-        return Media.objects.filter(report_query_id__organization_id=self.request.user.org_id).select_related(
-            'report_query_id__organization_id').order_by('id')
-
+        return Media.objects.filter(
+            report_query_id__provider_id__org_id=self.request.user.org
+        ).select_related('report_query_id__provider_id').order_by('id')
 
 class MediaDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
@@ -592,7 +580,7 @@ class CarReportListAPIView(ListAPIView):
 
     def get_queryset(self):
         return CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=self.request.user.org
+            car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id').order_by('datetime')
 
 class CarReportDetailAPIView(RetrieveAPIView):
@@ -602,7 +590,7 @@ class CarReportDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=self.request.user.org
+            car_id__data_providers__org_id=self.request.user.org
         )
 
 class DriverListAPIView(ListAPIView):
@@ -615,7 +603,7 @@ class DriverListAPIView(ListAPIView):
 
     def get_queryset(self):
         return Driver.objects.filter(
-            driver_cars__car_id__data_providers__report_queries__organization_id=self.request.user.org
+            driver_cars__car_id__data_providers__org_id=self.request.user.org
         ).prefetch_related('driver_cars__car_id').order_by('id')
 
 
@@ -626,7 +614,7 @@ class DriverDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return Driver.objects.filter(
-            driver_cars__car_id__data_providers__report_queries__organization_id=self.request.user.org
+            driver_cars__car_id__data_providers__org_id=self.request.user.org
         )
 
 class DataProviderListAPIView(ListAPIView):
@@ -639,8 +627,8 @@ class DataProviderListAPIView(ListAPIView):
 
     def get_queryset(self):
         return DataProvider.objects.filter(
-            report_queries__organization_id=self.request.user.org
-        ).prefetch_related('cars').order_by('id')
+            org_id=self.request.user.org
+        ).order_by('id')
 
 class DataProviderDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
@@ -649,32 +637,10 @@ class DataProviderDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return DataProvider.objects.filter(
-            report_queries__organization_id=self.request.user.org
+            org_id=self.request.user.org
         )
 
-class DriverCarListAPIView(ListAPIView):
-    permission_classes = [IsOrgMember]
-    serializer_class = DriverCarOutputSerializer
-    pagination_class = StandardResultsSetPagination
-    filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['driver_id', 'car_id']
-    search_fields = ['driver_id__fullname', 'car_id__name']
 
-    def get_queryset(self):
-        return DriverCar.objects.filter(
-            car_id__data_providers__report_queries__organization_id=self.request.user.org
-        ).select_related('driver_id', 'car_id').order_by('driver_id')
-
-
-class DriverCarDetailAPIView(RetrieveAPIView):
-    permission_classes = [IsOrgMember]
-    serializer_class = DriverCarOutputSerializer
-    lookup_field = 'pk'
-
-    def get_queryset(self):
-        return DriverCar.objects.filter(
-            car_id__data_providers__report_queries__organization_id=self.request.user.org
-        )
 
 class CarLeaksAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -698,7 +664,7 @@ class CarLeaksAPIView(ListAPIView):
 
         car_exists = Car.objects.filter(
             id=car_id,
-            data_providers__report_queries__organization_id=request.user.org
+            data_providers__org_id=request.user.org
         ).exists()
         if not car_exists:
             logger.info(f"Автомобиль {car_id} не найден или не принадлежит организации {request.user.org.id}")
@@ -718,7 +684,7 @@ class CarLeaksAPIView(ListAPIView):
 
     def get_queryset(self):
         return CarReport.objects.filter(
-            car_id__data_providers__report_queries__organization_id=self.request.user.org,
+            car_id__data_providers__org_id=self.request.user.org,
             status=True
         ).select_related('car_id').order_by('-datetime')
 
