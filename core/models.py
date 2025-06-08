@@ -64,6 +64,7 @@ class Car(models.Model):
     input = models.FloatField(default=1.0)
     output = models.FloatField(default=1.0)
     created_at = models.DateTimeField(default=timezone.now)
+    last_processed_date = models.DateTimeField(**NULLABLE)
 
     class Meta:
         verbose_name = "Car"
@@ -124,7 +125,7 @@ class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     media_type = models.CharField(max_length=255, **NULLABLE)
     file = models.FileField(**NULLABLE, upload_to='')
-    size = models.IntegerField(default=0, **NULLABLE)
+    size = models.BigIntegerField(default=0, **NULLABLE)
     filename = models.CharField(max_length=255)
     type = models.CharField(max_length=255, **NULLABLE)
     report_query_id = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, **NULLABLE, related_name='media')

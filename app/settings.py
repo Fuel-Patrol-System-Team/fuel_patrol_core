@@ -237,7 +237,7 @@ CELERY_RESULT_EXPIRES = 60 * 60
 # INFLUXDB CONFIG
 # ======================
 INFLUXDB_CONFIG = {
-    'URL': os.getenv('INFLUXDB_URL', 'http://fuel-patrol-influxdb:8086'),
+    'URL': os.getenv('INFLUXDB_URL', 'http://127.0.0.0.1:8086'),
     'TOKEN': os.getenv('INFLUXDB_TOKEN', 'your-default-token-here'),
     'ORG': os.getenv('INFLUXDB_ORG', 'fuel_patrol'),
     'BUCKET': os.getenv('INFLUXDB_BUCKET', 'test_fuel'),
