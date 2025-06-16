@@ -1,6 +1,8 @@
 import logging
 import pathlib
 from datetime import datetime
+from typing import Dict, Optional, Any
+
 from celery import chord, shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 import pandas as pd
@@ -30,11 +32,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 celery_app.conf.task_concurrency = 4
 BATCH_SIZE = 500_000  # Увеличено для больших файлов
 
+
 def _log_resources(method: str) -> None:
     process = psutil.Process()
     ram_mb = process.memory_info().rss / 1024 ** 2
     cpu_percent = psutil.cpu_percent()
     logger.info(f"[{method}] RAM: {ram_mb:.2f} MB, CPU: {cpu_percent:.1f}%")
+
 
 def _timeit(method: str, func):
     start_time = time.time()
@@ -42,6 +46,7 @@ def _timeit(method: str, func):
     elapsed = time.time() - start_time
     logger.info(f"[{method}] Выполнено за {elapsed:.2f} сек")
     return result
+
 
 def _cleanup_temp_files(base_dir, report_id, timestamp):
     pattern = str(base_dir / f"*_{report_id}_{timestamp}_*.csv*")
@@ -52,17 +57,20 @@ def _cleanup_temp_files(base_dir, report_id, timestamp):
         except Exception as e:
             logger.error(f"Ошибка удаления {file_path}: {e}")
 
+
 @shared_task(
     bind=True,
     soft_time_limit=300,
     priority=5,
     rate_limit="1/s"
 )
-def fetch_data_from_provider(self, provider_name: str, metadata: dict, report_query_id: str):
+def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any], report_query_id: str,
+                             start_date: Optional[datetime] = None, end_date: Optional[datetime] = None):
     def _fetch():
         report_query = None
         try:
-            logger.info(f"Получение данных от {provider_name} для {report_query_id}...")
+            logger.info(
+                f"Получение данных от {provider_name} для {report_query_id}, start_date={start_date}, end_date={end_date}")
             report_query = ReportQuery.objects.get(id=report_query_id)
 
             provider = provider_factory(provider_name, metadata, report_query_id)
@@ -78,7 +86,7 @@ def fetch_data_from_provider(self, provider_name: str, metadata: dict, report_qu
                 report_query.save()
                 return
 
-            vehicles_data = provider.get_vehicles(name=None)
+            vehicles_data = provider.get_vehicles(name=None, start_date=start_date, end_date=end_date)
             if vehicles_data is None:
                 logger.error("Не удалось получить данные автомобилей.")
                 report_query.status = "error"
@@ -111,7 +119,10 @@ def fetch_data_from_provider(self, provider_name: str, metadata: dict, report_qu
                 report_query.status = "error"
                 report_query.save()
             raise
+
     return _timeit("fetch_data_from_provider", _fetch)
+
+
 @shared_task(
     bind=True,
     soft_time_limit=1800,
@@ -212,7 +223,8 @@ def process_raw_data_task(self, report_query_id: str):
                     'summer_volume': 'norma_rasx_summer',
                     'valid_period': 'period'
                 })
-                logger.info(f"Norma data: {norma_df.shape}, тип: {type(norma_df)}, колонки: {norma_df.columns.tolist()}")
+                logger.info(
+                    f"Norma data: {norma_df.shape}, тип: {type(norma_df)}, колонки: {norma_df.columns.tolist()}")
                 logger.info(f"Уникальные sl_avto: {norma_df['sl_avto'].unique()[:5]}")
 
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -228,7 +240,8 @@ def process_raw_data_task(self, report_query_id: str):
                         )
                         logger.info(f"Тип raw_df: {type(raw_df)}")
                         for chunk_idx, chunk_df in enumerate(raw_df):
-                            logger.info(f"Чанк {chunk_idx + 1}: {chunk_df.shape}, тип: {type(chunk_df)}, колонки: {chunk_df.columns.tolist()}")
+                            logger.info(
+                                f"Чанк {chunk_idx + 1}: {chunk_df.shape}, тип: {type(chunk_df)}, колонки: {chunk_df.columns.tolist()}")
                             chunk_df['auto'] = chunk_df['auto'].astype(str).str.strip().str.lower()
                             logger.info(f"Уникальные auto: {chunk_df['auto'].unique()[:5]}")
 
@@ -301,14 +314,17 @@ def process_raw_data_task(self, report_query_id: str):
                 send_telegram_message(organization.bot_token, organization.chat_id,
                                       f"Ошибка в process_raw_data_task для {report_query_id}: {e}")
             raise self.retry(exc=e)
+
     return _timeit("process_raw_data_task", _process)
+
 
 @shared_task(
     bind=True,
     soft_time_limit=1000,
     priority=3
 )
-def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_pickle: bytes, report_query_id: str, org_id: str):
+def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_pickle: bytes, report_query_id: str,
+                  org_id: str):
     def _process():
         try:
             logger.info(f"Обработка чанка для {report_query_id}")
@@ -326,7 +342,8 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
 
             logger.debug(f"Тип chunk_df после десериализации: {type(chunk_df)}, размер: {chunk_df.shape}")
             logger.debug(f"Тип car_data_df после десериализации: {type(car_data_df)}, размер: {car_data_df.shape}")
-            logger.debug(f"Тип norma_data_df после десериализации: {type(norma_data_df)}, размер: {norma_data_df.shape}")
+            logger.debug(
+                f"Тип norma_data_df после десериализации: {type(norma_data_df)}, размер: {norma_data_df.shape}")
 
             if not isinstance(chunk_df, pd.DataFrame):
                 logger.error(f"Ожидался pandas.DataFrame для chunk_df, получен {type(chunk_df)}")
@@ -343,17 +360,20 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
             logger.info(f"Уникальные auto: {chunk_df['auto'].unique()[:5]}")
 
             preprocessed_df = preprocess(chunk_df)
-            logger.info(f"Преобразовано: {preprocessed_df.shape}, тип: {type(preprocessed_df)}, колонки: {preprocessed_df.columns.tolist()}")
+            logger.info(
+                f"Преобразовано: {preprocessed_df.shape}, тип: {type(preprocessed_df)}, колонки: {preprocessed_df.columns.tolist()}")
             if not isinstance(preprocessed_df, pd.DataFrame):
                 logger.error(f"preprocess вернул {type(preprocessed_df)} вместо pandas.DataFrame")
                 raise TypeError(f"preprocess вернул {type(preprocessed_df)} вместо pandas.DataFrame")
 
             car_data_df['id'] = car_data_df['id'].astype(str).str.strip().str.lower()
-            logger.info(f"Car data: {car_data_df.shape}, тип: {type(car_data_df)}, колонки: {car_data_df.columns.tolist()}")
+            logger.info(
+                f"Car data: {car_data_df.shape}, тип: {type(car_data_df)}, колонки: {car_data_df.columns.tolist()}")
             logger.info(f"Уникальные id: {car_data_df['id'].unique()[:5]}")
 
             norma_data_df['sl_avto'] = norma_data_df['sl_avto'].astype(str).str.strip().str.lower()
-            logger.info(f"Norma data: {norma_data_df.shape}, тип: {type(norma_data_df)}, колонки: {norma_data_df.columns.tolist()}")
+            logger.info(
+                f"Norma data: {norma_data_df.shape}, тип: {type(norma_data_df)}, колонки: {norma_data_df.columns.tolist()}")
             logger.info(f"Уникальные sl_avto: {norma_data_df['sl_avto'].unique()[:5]}")
 
             preprocessed_df['auto'] = preprocessed_df['auto'].astype(str).str.strip().str.lower()
@@ -367,7 +387,8 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
                 logger.warning(f"merged_df пустой для {report_query_id}. Проверьте ключи id и auto.")
 
             result_df = fuel_leak_calculate_standart(merged_df, norma_data_df)
-            logger.info(f"Результат утечек: {result_df.shape}, тип: {type(result_df)}, колонки: {result_df.columns.tolist()}")
+            logger.info(
+                f"Результат утечек: {result_df.shape}, тип: {type(result_df)}, колонки: {result_df.columns.tolist()}")
             if not isinstance(result_df, pd.DataFrame):
                 logger.error(f"fuel_leak_calculate_standart вернул {type(result_df)} вместо pandas.DataFrame")
                 raise TypeError(f"fuel_leak_calculate_standart вернул {type(result_df)} вместо pandas.DataFrame")
@@ -381,7 +402,9 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
         except Exception as e:
             logger.error(f"Ошибка в process_chunk для {report_query_id}: {e}")
             raise self.retry(exc=e)
+
     return _timeit("process_chunk", _process)
+
 
 @shared_task(
     bind=True,
@@ -503,7 +526,7 @@ def parse_cars_task(self, report_query_id):
             report_query.save()
         if organization:
             send_telegram_message(organization.bot_token, organization.chat_id,
-                                      f"ReportQuery или Media не найдены для {report_query_id}")
+                                  f"ReportQuery или Media не найдены для {report_query_id}")
         raise self.retry(exc=e)
 
     except Exception as e:
@@ -515,6 +538,7 @@ def parse_cars_task(self, report_query_id):
             send_telegram_message(organization.bot_token, organization.chat_id,
                                   f"Ошибка в parse_cars_task для {report_query_id}: {e}")
         raise self.retry(exc=e)
+
 
 @shared_task(
     bind=True,
@@ -631,7 +655,7 @@ def parse_norms_task(self, report_query_id):
             report_query.save()
         if organization:
             send_telegram_message(organization.bot_token, organization.chat_id,
-                                      f"ReportQuery или Media не найдены для {report_query_id}")
+                                  f"ReportQuery или Media не найдены для {report_query_id}")
         raise self.retry(exc=e)
 
     except Exception as e:
@@ -643,6 +667,7 @@ def parse_norms_task(self, report_query_id):
             send_telegram_message(organization.bot_token, organization.chat_id,
                                   f"Ошибка в parse_norms_task для {report_query_id}: {e}")
         raise self.retry(exc=e)
+
 
 @shared_task(
     bind=True,
@@ -737,6 +762,7 @@ def save_leak_results(self, results, report_query_id):
                                   f"Ошибка в save_leak_results для {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 @shared_task(
     bind=True,
     soft_time_limit=1000,
@@ -802,6 +828,7 @@ def check_and_process_raw_reports(self):
     except Exception as e:
         logger.error(f"Ошибка в check_and_process_raw_reports: {e}")
         raise self.retry(exc=e)
+
 
 @shared_task(
     bind=True,

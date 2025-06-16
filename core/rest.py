@@ -1,7 +1,6 @@
 from drf_yasg import openapi
 
 from core.serializers import CarMetricSerializer, CarReportOutputSerializer, DataProviderSerializer
-
 PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
@@ -9,6 +8,18 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
             type=openapi.TYPE_STRING,
             description="Имя провайдера (например, 'glonasssoft')",
             example="glonasssoft"
+        ),
+        "start_date": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATETIME,
+            description="Начальная дата для запроса данных (ISO формат, необязательно)",
+            example="2025-01-01T00:00:00Z"
+        ),
+        "end_date": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATETIME,
+            description="Конечная дата для запроса данных (ISO формат, необязательно)",
+            example="2025-06-13T23:59:59Z"
         )
     },
     required=["provider_name"]

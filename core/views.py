@@ -1,6 +1,8 @@
 import os
 from datetime import datetime
 
+import py
+import pytz
 from celery.exceptions import CeleryError
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDay
@@ -44,6 +46,7 @@ INFLUXDB_URL = os.getenv('INFLUXDB_URL')
 INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN')
 INFLUXDB_ORG = os.getenv('INFLUXDB_ORG')
 INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET')
+
 
 class CarMetricsAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -95,6 +98,7 @@ class CarMetricsAPIView(APIView):
 
         return success_response(result, status.HTTP_200_OK)
 
+
 class DailyLeaksCountAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -129,6 +133,7 @@ class DailyLeaksCountAPIView(APIView):
         result = [{"value": item['value'], "day": item['day'].strftime('%Y-%m-%d')} for item in daily_counts]
         return success_response(result, status.HTTP_200_OK)
 
+
 class DailyLeaksSumAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -160,6 +165,7 @@ class DailyLeaksSumAPIView(APIView):
 
         result = [{"value": item['value'], "day": item['day'].strftime('%Y-%m-%d')} for item in daily_sums]
         return success_response(result, status.HTTP_200_OK)
+
 
 class CarLeaksCountAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -206,6 +212,7 @@ class CarLeaksCountAPIView(APIView):
             for car in cars
         ]
         return success_response(result, status.HTTP_200_OK)
+
 
 class CarLeaksVolumeAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -271,6 +278,7 @@ class UserInfoAPIView(APIView):
         })
         return user_response(serializer.data, status.HTTP_200_OK)
 
+
 class ProviderDataRequestAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -285,6 +293,9 @@ class ProviderDataRequestAPIView(APIView):
     )
     def post(self, request):
         provider_name = request.data.get('provider_name')
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+
         if not provider_name:
             logger.error("Имя провайдера не указано")
             return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
@@ -305,6 +316,18 @@ class ProviderDataRequestAPIView(APIView):
             logger.error(f"Метаданные провайдера {provider_name} отсутствуют")
             return error_response(f"Provider {provider_name} metadata is required", status.HTTP_400_BAD_REQUEST)
 
+        try:
+            if start_date:
+                start_date = datetime.fromisoformat(start_date).replace(tzinfo=pytz.UTC)
+            if end_date:
+                end_date = datetime.fromisoformat(end_date).replace(tzinfo=pytz.UTC)
+            if start_date and end_date and start_date > end_date:
+                logger.error("start_date не может быть позже end_date")
+                return error_response("start_date cannot be later than end_date", status.HTTP_400_BAD_REQUEST)
+        except ValueError as e:
+            logger.error(f"Неверный формат даты: {e}")
+            return error_response(f"Invalid date format: {e}", status.HTTP_400_BAD_REQUEST)
+
         report_query = ReportQuery.objects.create(
             provider_id=provider,
             status="created"
@@ -314,7 +337,9 @@ class ProviderDataRequestAPIView(APIView):
             fetch_data_from_provider.delay(
                 provider_name=provider_name,
                 metadata=metadata,
-                report_query_id=report_query.id
+                report_query_id=report_query.id,
+                start_date=start_date,
+                end_date=end_date
             )
             logger.info(f"Заявка на получение данных от провайдера {provider_name} создана: {report_query.id}")
             return success_response({"report_query_id": report_query.id}, status.HTTP_201_CREATED)
@@ -323,6 +348,7 @@ class ProviderDataRequestAPIView(APIView):
             report_query.status = "error"
             report_query.save()
             return error_response(f"Failed to launch provider data task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
+
 
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
@@ -399,6 +425,7 @@ class MediaUploadAPIView(APIView):
             logger.error(f"Ошибка Celery при запуске задачи: {e}")
             return error_response(f"Failed to launch processing task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
 
+
 class UserRegistrationAPIView(APIView):
     @swagger_auto_schema(
         responses={201: UserRegistrationSerializer(), 400: "Bad Request", 404: "Organization not found"})
@@ -425,7 +452,6 @@ class DataProviderCreateAPIView(APIView):
 
         validated_data = serializer.validated_data
         cars = validated_data.pop('cars', [])
-
 
         if cars:
             valid_cars = Car.objects.filter(
@@ -485,6 +511,7 @@ class OrgUserDetailAPIView(RetrieveAPIView):
     queryset = OrgUser.objects.all()
     lookup_field = 'pk'
 
+
 class CarListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
@@ -528,6 +555,7 @@ class CarConsumptionDetailAPIView(RetrieveAPIView):
     queryset = CarConsumption.objects.all()
     lookup_field = 'pk'
 
+
 class ReportQueryListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
@@ -541,6 +569,7 @@ class ReportQueryListAPIView(ListAPIView):
             provider_id__org_id=self.request.user.org
         ).select_related('provider_id').prefetch_related('media', 'provider_id__cars').order_by('id')
 
+
 class ReportQueryDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
@@ -548,8 +577,9 @@ class ReportQueryDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return ReportQuery.objects.filter(
-            provider_id__org_id=self.request.user.org  # Фильтрация через DataProvider
+            provider_id__org_id=self.request.user.org
         ).select_related('provider_id').prefetch_related('media', 'provider_id__cars')
+
 
 class MediaListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -564,11 +594,13 @@ class MediaListAPIView(ListAPIView):
             report_query_id__provider_id__org_id=self.request.user.org
         ).select_related('report_query_id__provider_id').order_by('id')
 
+
 class MediaDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = MediaOutputSerializer
     queryset = Media.objects.all()
     lookup_field = 'pk'
+
 
 class CarReportListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -583,6 +615,7 @@ class CarReportListAPIView(ListAPIView):
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id').order_by('datetime')
 
+
 class CarReportDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
@@ -592,6 +625,7 @@ class CarReportDetailAPIView(RetrieveAPIView):
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         )
+
 
 class DriverListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -617,6 +651,7 @@ class DriverDetailAPIView(RetrieveAPIView):
             driver_cars__car_id__data_providers__org_id=self.request.user.org
         )
 
+
 class DataProviderListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DataProviderOutputSerializer
@@ -630,6 +665,7 @@ class DataProviderListAPIView(ListAPIView):
             org_id=self.request.user.org
         ).order_by('id')
 
+
 class DataProviderDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DataProviderOutputSerializer
@@ -639,7 +675,6 @@ class DataProviderDetailAPIView(RetrieveAPIView):
         return DataProvider.objects.filter(
             org_id=self.request.user.org
         )
-
 
 
 class CarLeaksAPIView(ListAPIView):
@@ -687,6 +722,7 @@ class CarLeaksAPIView(ListAPIView):
             car_id__data_providers__org_id=self.request.user.org,
             status=True
         ).select_related('car_id').order_by('-datetime')
+
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

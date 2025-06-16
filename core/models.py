@@ -66,6 +66,7 @@ class Car(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     last_processed_date = models.DateTimeField(**NULLABLE)
 
+
     class Meta:
         verbose_name = "Car"
         verbose_name_plural = "Cars"
