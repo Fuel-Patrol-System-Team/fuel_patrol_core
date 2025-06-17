@@ -25,6 +25,7 @@ from influxdb_client.client.warnings import MissingPivotFunction
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
 # Load environment
 load_dotenv()
 warnings.simplefilter("ignore", MissingPivotFunction)
@@ -37,9 +38,8 @@ DEBUG = os.getenv('DEBUG', 'False') == 'True'
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split()
 ROOT_URLCONF = 'app.urls'
 WSGI_APPLICATION = 'app.wsgi.application'
-APPEND_SLASH = False
 AUTH_USER_MODEL = 'core.OrgUser'
-
+APPEND_SLASH=False
 # ======================
 # APPLICATION DEFINITION
 # ======================
@@ -237,8 +237,9 @@ CELERY_RESULT_EXPIRES = 60 * 60
 # INFLUXDB CONFIG
 # ======================
 INFLUXDB_CONFIG = {
-    'URL': os.getenv('INFLUXDB_URL', 'http://127.0.0.0.1:8086'),
-    'TOKEN': os.getenv('INFLUXDB_TOKEN', 'your-default-token-here'),
+    'URL': os.getenv('INFLUXDB_URL', 'http://127.0.0.1:8086'),
+    'TOKEN': os.getenv('INFLUXDB_TOKEN',
+                       'eBBaYUo1pKCxXqweKlcGON17ghZq6AMcjwcswZMdqKzki23J_Tl_0GkS5GK558VvxwOyh-qO9ioDpAVUNY593Q=='),
     'ORG': os.getenv('INFLUXDB_ORG', 'fuel_patrol'),
     'BUCKET': os.getenv('INFLUXDB_BUCKET', 'test_fuel'),
     'TIMEOUT': int(os.getenv('INFLUXDB_TIMEOUT', '10000')),
@@ -470,38 +471,6 @@ UNFOLD = {
                 ],
             },
         ],
-    },
-}
-
-INFLUXDB_CONFIG = {
-    'URL': os.getenv('INFLUXDB_URL', 'http://fuel-patrol-influxdb:8086'),
-    'TOKEN': os.getenv('INFLUXDB_TOKEN', 'your-default-token-here'),
-    'ORG': os.getenv('INFLUXDB_ORG', 'fuel_patrol'),
-    'BUCKET': os.getenv('INFLUXDB_BUCKET', 'test_fuel'),
-    'TIMEOUT': int(os.getenv('INFLUXDB_TIMEOUT', '10000')),
-    'WRITE_OPTIONS': {
-        'batch_size': int(os.getenv('INFLUXDB_BATCH_SIZE', '1000')),
-        'flush_interval': int(os.getenv('INFLUXDB_FLUSH_INTERVAL', '1000')),
-    }
-}
-
-# Logging
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'ERROR',
-            'class': 'logging.FileHandler',
-            'filename': 'debug.log',
-        },
-    },
-    'loggers': {
-        '': {
-            'handlers': ['file'],
-            'level': 'ERROR',
-            'propagate': True,
-        },
     },
 }
 

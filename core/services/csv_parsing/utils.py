@@ -70,7 +70,7 @@ class NormsPrimitive:
     winter_norm: int
     summer_norm: int
     due: str
-    car: str
+    auto: str
 
 def parse_merged_util(path: Path) -> tuple[tuple[CarPrimitive], tuple[NormsPrimitive]]:
     dataframe = pd.read_excel(path, usecols=['guid', 'name', 'description', 'winter_norm', 'summer_norm', 'due', 'engine_type' ])

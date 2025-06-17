@@ -65,7 +65,7 @@ class Car(models.Model):
     output = models.FloatField(default=1.0)
     created_at = models.DateTimeField(default=timezone.now)
     last_processed_date = models.DateTimeField(**NULLABLE)
-
+    is_tarrified = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Car"
@@ -177,7 +177,6 @@ class Driver(models.Model):
 
     def __str__(self):
         return self.fullname
-
 
 @receiver(post_delete, sender=Media)
 def delete_media_file(sender, instance, **kwargs):

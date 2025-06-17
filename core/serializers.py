@@ -11,7 +11,8 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
 class CarOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Car
-        fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output', 'created_at']
+        fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output',
+                  'is_tarrified', 'created_at']
 
 
 class DriverOutputSerializer(serializers.ModelSerializer):
@@ -44,7 +45,7 @@ class DataProviderOutputSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = DataProvider
-        fields = ['id', 'name', 'metadata', 'cars','organization']
+        fields = ['id', 'name', 'metadata', 'cars', 'organization']
 
 
 class MediaOutputSerializer(serializers.ModelSerializer):

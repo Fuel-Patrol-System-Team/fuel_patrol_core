@@ -17,6 +17,7 @@ import pytz
 
 logger = logging.getLogger(__name__)
 
+
 class GlonassSoftProvider:
     def __init__(self, metadata: Dict[str, Any], report_query_id: str):
         self.metadata = metadata
@@ -103,7 +104,8 @@ class GlonassSoftProvider:
                 logger.error(f"Ошибка авторизации: {e}")
                 return False
 
-    def get_vehicles(self, name: Optional[str] = None, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None) -> Optional[List[Dict[str, Any]]]:
+    def get_vehicles(self, name: Optional[str] = None, start_date: Optional[datetime] = None,
+                     end_date: Optional[datetime] = None) -> Optional[List[Dict[str, Any]]]:
         if not self.auth_token:
             logger.error("Токен отсутствует.")
             return None
@@ -153,7 +155,8 @@ class GlonassSoftProvider:
                                         ).replace(tzinfo=pytz.UTC)
                                     except ValueError:
                                         # Обработка нестандартного формата с лишними цифрами
-                                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith("Z") else created_at_str
+                                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
+                                            "Z") else created_at_str
                                         created_at = datetime.strptime(
                                             created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
                                         ).replace(tzinfo=pytz.UTC)
@@ -172,7 +175,8 @@ class GlonassSoftProvider:
                                             created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
                                         ).replace(tzinfo=pytz.UTC)
                                     except ValueError:
-                                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith("Z") else created_at_str
+                                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
+                                            "Z") else created_at_str
                                         created_at = datetime.strptime(
                                             created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
                                         ).replace(tzinfo=pytz.UTC)
@@ -289,7 +293,8 @@ class GlonassSoftProvider:
                     car.save()
                     logger.info(f"Обновлена last_processed_date для vehicleId={vehicle_id} до {end_date}")
                 else:
-                    logger.info(f"last_processed_date для vehicleId={vehicle_id} не обновлена: {car.last_processed_date}")
+                    logger.info(
+                        f"last_processed_date для vehicleId={vehicle_id} не обновлена: {car.last_processed_date}")
             except Car.DoesNotExist:
                 logger.error(f"Автомобиль vehicleId={vehicle_id} не найден")
             self._log_resources("get_terminal_to_json")
@@ -394,9 +399,20 @@ class GlonassSoftProvider:
         self._log_resources("save_all_terminal_messages_to_csv")
 
     def _flatten_parameters(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        import re
         flat = message.copy()
         parameters = flat.pop("parameters", {})
         if isinstance(parameters, dict):
+            fuel_values = {}
+            fuel_pattern = re.compile(r'^(fuel|lss|flex-fuel)(\d)$')
+            for key, value in parameters.items():
+                match = fuel_pattern.match(key)
+                if match:
+                    fuel_type, index = match.groups()
+                    fuel_values[int(index)] = value
+            if fuel_values:
+                min_index = min(fuel_values.keys())
+                flat["calc_sensors_fuel_level"] = fuel_values[min_index]
             for key, value in parameters.items():
                 flat[f"parameters.{key}"] = value
         return flat
@@ -418,7 +434,7 @@ class GlonassSoftProvider:
             "deviceTime": "timestamp",
             "speed": "pos_s",
             "voltage": "calc_sensors_voltage",
-            "parameters.fuel1": "calc_sensors_fuel_level"
+            "calc_sensors_fuel_level": "calc_sensors_fuel_level"
         }
         headers = list(column_mapping.values())
         logger.info(f"Запись CSV с заголовками: {headers}")
@@ -438,7 +454,7 @@ class GlonassSoftProvider:
                 "deviceTime": flat_record.get("deviceTime"),
                 "speed": flat_record.get("speed"),
                 "voltage": flat_record.get("voltage"),
-                "parameters.fuel1": flat_record.get("parameters.fuel1")
+                "calc_sensors_fuel_level": flat_record.get("calc_sensors_fuel_level")
             }
             renamed_record = {column_mapping[k]: v for k, v in filtered_record.items() if k in column_mapping}
             renamed_data.append(renamed_record)
@@ -509,10 +525,13 @@ class GlonassSoftProvider:
                     except ValueError:
                         try:
                             # Обработка нестандартного формата с лишними цифрами в микросекундах
-                            created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith("Z") else created_at_str
-                            created_at = datetime.strptime(created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.UTC)
+                            created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
+                                "Z") else created_at_str
+                            created_at = datetime.strptime(created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+                                tzinfo=pytz.UTC)
                         except ValueError as e:
-                            logger.warning(f"Невозможно разобрать createdAt='{created_at_str}' для vehicleId={vehicle_id}: {e}. Использую текущую дату.")
+                            logger.warning(
+                                f"Невозможно разобрать createdAt='{created_at_str}' для vehicleId={vehicle_id}: {e}. Использую текущую дату.")
                             created_at = datetime.now(tz=pytz.UTC)
                 else:
                     logger.warning(f"createdAt отсутствует для vehicleId={vehicle_id}. Использую текущую дату.")
@@ -535,6 +554,7 @@ class GlonassSoftProvider:
             logger.error(f"Ошибка сохранения данных для vehicleId={vehicle_id}: {e}")
             raise
 
+
 def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_id: str) -> Optional[Any]:
     providers = {
         "glonasssoft": GlonassSoftProvider
@@ -544,6 +564,7 @@ def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_
         logger.error(f"Провайдер {provider_name} не поддерживается.")
         return None
     return provider_class(metadata, report_query_id)
+
 
 def save_response_to_file(data: Dict[str, Any], filename: str = "response.json") -> None:
     file_path = settings.BASE_DIR / filename

@@ -395,7 +395,7 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
             leak_count = result_df['is_leak'].sum() if 'is_leak' in result_df.columns else 0
             logger.info(f"Количество утечек в чанке: {leak_count}")
 
-            # write_to_influxdb(preprocessed_df, org_id, report_query_id)
+            write_to_influxdb(preprocessed_df, org_id, report_query_id)
 
             _log_resources("process_chunk")
             return result_df
@@ -485,12 +485,14 @@ def parse_cars_task(self, report_query_id):
                             defaults={
                                 'name': str(row['name']).strip(),
                                 'description': str(row['description']).strip() if pd.notna(row['description']) else "",
-                                'engine_type': str(row.get('sl_tip_dvigat', 0.0)).strip()
+                                'engine_type': str(row.get('sl_tip_dvigat', 0.0)).strip(),
+                                'is_tarrified': True
                             }
                         )
                         if not created:
                             car.name = str(row['name']).strip()
                             car.description = str(row['description']).strip() if pd.notna(row['description']) else ""
+                            car.is_tarrified = True
                             car.save()
 
                         provider.cars.add(car)
@@ -719,7 +721,8 @@ def save_leak_results(self, results, report_query_id):
                             defaults={
                                 'name': str(row.get('name', 'Unknown')).strip(),
                                 'description': " ",
-                                'engine_type': str(row.get('sl_tip_dvigat', 0.0)).strip()
+                                'engine_type': str(row.get('sl_tip_dvigat', 0.0)).strip(),
+                                'is_tarrified': True,
                             }
                         )
                         provider.cars.add(car)
@@ -902,12 +905,14 @@ def parse_merged_data(self, report_query_id):
                             defaults={
                                 'name': str(obj.name).strip(),
                                 'description': str(obj.description).strip() if pd.notna(obj.description) else "",
-                                'engine_type': str(obj.engine_type).strip() if pd.notna(obj.engine_type) else 0.0
+                                'engine_type': str(obj.engine_type).strip() if pd.notna(obj.engine_type) else 0.0,
+                                'is_tarrified': True
                             }
                         )
                         if not created:
                             car.name = str(obj.name).strip()
                             car.description = str(obj.description).strip() if pd.notna(obj.description) else ""
+                            car.is_tarrified = True
                             car.save()
 
                         logger.debug(f"Добавляем {car.id} к {provider.id}")
