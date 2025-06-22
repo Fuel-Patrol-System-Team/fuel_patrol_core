@@ -40,12 +40,9 @@ class CarConsumptionOutputSerializer(serializers.ModelSerializer):
 
 
 class DataProviderOutputSerializer(serializers.ModelSerializer):
-    cars = CarOutputSerializer(many=True, read_only=True)
-    organization = OrganizationOutputSerializer(many=True, read_only=True)
-
     class Meta:
         model = DataProvider
-        fields = ['id', 'name', 'metadata', 'cars', 'organization']
+        fields = ['id', 'name', 'metadata']
 
 
 class MediaOutputSerializer(serializers.ModelSerializer):
