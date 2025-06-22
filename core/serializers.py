@@ -55,34 +55,16 @@ class MediaOutputSerializer(serializers.ModelSerializer):
 
 
 class ReportQueryOutputSerializer(serializers.ModelSerializer):
-    organization = serializers.SerializerMethodField()
-    provider_id = DataProviderOutputSerializer(read_only=True)
-    media = MediaOutputSerializer(read_only=True)
-    cars = serializers.SerializerMethodField()
-    car_reports = serializers.SerializerMethodField()
-    car_consumptions = serializers.SerializerMethodField()
+    provider_name = serializers.SerializerMethodField()
 
     class Meta:
         model = ReportQuery
         fields = [
-            'id', 'status', 'organization', 'provider_id', 'media',
-            'cars', 'car_reports', 'car_consumptions'
+            'id', 'status', 'provider_name'
         ]
 
-    def get_organization(self, obj):
-        return OrganizationOutputSerializer(obj.provider_id.org_id).data
-
-    def get_cars(self, obj):
-        cars = Car.objects.filter(data_providers=obj.provider_id)
-        return CarOutputSerializer(cars, many=True).data
-
-    def get_car_reports(self, obj):
-        car_reports = CarReport.objects.filter(car_id__data_providers=obj.provider_id)
-        return CarReportOutputSerializer(car_reports, many=True).data
-
-    def get_car_consumptions(self, obj):
-        car_consumptions = CarConsumption.objects.filter(car_id__data_providers=obj.provider_id)
-        return CarConsumptionOutputSerializer(car_consumptions, many=True).data
+    def get_provider_name(self, obj):
+        return obj.provider_id.name
 
 
 class UserOutputSerializer(serializers.Serializer):

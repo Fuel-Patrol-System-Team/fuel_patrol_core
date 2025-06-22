@@ -1,15 +1,10 @@
-import os
-import subprocess
 from datetime import datetime
 
-import py
 import pytz
 from celery.exceptions import CeleryError
-from django.contrib import messages
-from django.contrib.admin.views.decorators import staff_member_required
 from django.db.models import Count, Sum
 from django.db.models.functions import TruncDay
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import render
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework.filters import SearchFilter
@@ -23,7 +18,6 @@ import uuid
 
 from app.tasks import parse_merged_data, process_raw_data_task, fetch_data_from_provider
 from drf_yasg.utils import swagger_auto_schema
-from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider
 from .pagination import StandardResultsSetPagination
 from .rest import (
@@ -45,11 +39,6 @@ from .responses import error_response, user_registered_response, attach_media_re
 from .permissions import IsOrgMember
 
 logger = logging.getLogger(__name__)
-
-INFLUXDB_URL = os.getenv('INFLUXDB_URL')
-INFLUXDB_TOKEN = os.getenv('INFLUXDB_TOKEN')
-INFLUXDB_ORG = os.getenv('INFLUXDB_ORG')
-INFLUXDB_BUCKET = os.getenv('INFLUXDB_BUCKET')
 
 
 class CarMetricsAPIView(APIView):
@@ -91,7 +80,8 @@ class CarMetricsAPIView(APIView):
             period_from=period_from,
             period_due=period_due,
             agg_window=agg_window,
-            agg_func=agg_func
+            agg_func=agg_func,
+            org_id=request.user.org.id
         )
 
         logger.info(f"Выполнен запрос к InfluxDB для автомобиля {car_id}")
@@ -396,7 +386,7 @@ class MediaUploadAPIView(APIView):
 
         provider, _ = DataProvider.objects.get_or_create(
             name='csv',
-            org_id_id=request.user.org.id, 
+            org_id_id=request.user.org.id,
             defaults={'metadata': {}}
         )
         report_query = ReportQuery.objects.create(
@@ -573,7 +563,7 @@ class ReportQueryListAPIView(ListAPIView):
     def get_queryset(self):
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
-        ).select_related('provider_id').prefetch_related('media').order_by('id')
+        ).select_related('provider_id')
 
 
 class ReportQueryDetailAPIView(RetrieveAPIView):
@@ -584,7 +574,7 @@ class ReportQueryDetailAPIView(RetrieveAPIView):
     def get_queryset(self):
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
-        ).select_related('provider_id').prefetch_related('media', 'provider_id__cars')
+        ).select_related('provider_id')
 
 
 class MediaListAPIView(ListAPIView):
