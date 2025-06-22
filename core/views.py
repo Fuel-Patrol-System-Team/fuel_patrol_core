@@ -396,6 +396,7 @@ class MediaUploadAPIView(APIView):
 
         provider, _ = DataProvider.objects.get_or_create(
             name='csv',
+            org_id_id=request.user.org.id, 
             defaults={'metadata': {}}
         )
         report_query = ReportQuery.objects.create(
@@ -470,7 +471,8 @@ class DataProviderCreateAPIView(APIView):
                 )
 
         data_provider = DataProvider.objects.create(**validated_data)
-
+        data_provider.org_id_id = request.user.org.id
+        data_provider.save()
         if cars:
             data_provider.cars.set(valid_cars)
             logger.info(f"Автомобили {valid_cars} привязаны к провайдеру {data_provider.id}")
@@ -526,7 +528,7 @@ class CarListAPIView(ListAPIView):
 
     def get_queryset(self):
         return Car.objects.filter(
-            data_providers__org_id=self.request.user.org
+            data_providers__org_id=self.request.user.org.id
         ).order_by('id')
 
 
@@ -571,7 +573,7 @@ class ReportQueryListAPIView(ListAPIView):
     def get_queryset(self):
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
-        ).select_related('provider_id').prefetch_related('media', 'provider_id__cars').order_by('id')
+        ).select_related('provider_id').prefetch_related('media').order_by('id')
 
 
 class ReportQueryDetailAPIView(RetrieveAPIView):

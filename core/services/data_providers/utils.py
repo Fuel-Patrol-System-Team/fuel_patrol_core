@@ -512,8 +512,9 @@ class GlonassSoftProvider:
                         "name": vehicle_data.get("name", ""),
                         "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                         "engine_type": engine_type,
-                        "input": vehicle_data.get("input", 0.0),
-                        "output": vehicle_data.get("output", 0.0),
+                        "input": vehicle_data.get("input", 1.0),
+                        "output": vehicle_data.get("output", 1.0),
+                        "is_tarrified": vehicle_data.get("input", 1.0) == vehicle_data.get("output", 1.0)
                     }
                 )
                 provider.cars.add(car)
@@ -538,7 +539,7 @@ class GlonassSoftProvider:
                     created_at = datetime.now(tz=pytz.UTC)
 
                 valid_period = (created_at + timedelta(days=365 * 10)).date()
-                consumption = vehicle_data.get("consumptionPer100Km", 0.0)
+                consumption = vehicle_data.get("consumptionPer100Km", 16.0)
 
                 CarConsumption.objects.update_or_create(
                     car_id=car,

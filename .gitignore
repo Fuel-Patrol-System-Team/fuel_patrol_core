@@ -6,5 +6,8 @@ venv
 /static
 *.env*
 /*.csv
+/core/raw_media/*.csv
 debug.log
 .vscode
+*.gz
+*.json

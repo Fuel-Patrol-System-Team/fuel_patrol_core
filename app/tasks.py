@@ -193,7 +193,7 @@ def process_raw_data_task(self, report_query_id: str):
                                           f"Автомобили не найдены для {report_query_id}")
                     return
 
-                car_data = pd.DataFrame(list(cars.values('id', 'name', 'engine_type', 'input', 'output')))
+                car_data = pd.DataFrame(list(cars.values('id', 'name', 'engine_type', 'input', 'output', 'is_tarrified')))
                 car_data['id'] = car_data['id'].astype(str).str.strip().str.lower()
                 car_data = car_data.rename(columns={'engine_type': 'sl_tip_dvigat'})
                 logger.info(f"Car data: {car_data.shape}, тип: {type(car_data)}, колонки: {car_data.columns.tolist()}")
@@ -906,7 +906,7 @@ def parse_merged_data(self, report_query_id):
                                 'name': str(obj.name).strip(),
                                 'description': str(obj.description).strip() if pd.notna(obj.description) else "",
                                 'engine_type': str(obj.engine_type).strip() if pd.notna(obj.engine_type) else 0.0,
-                                'is_tarrified': True
+                                'is_tarrified':  True
                             }
                         )
                         if not created:

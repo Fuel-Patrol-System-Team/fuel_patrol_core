@@ -79,7 +79,7 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 
 # принимает пару median и std для данной машины
-def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 9, SIGMA_LIMIT = 3, SPEED_ETALON = 60, FUEL_JIGGLE_FACTOR = 15, is_save_bad_data = False, is_filter = True, FILTER_PERC = .03):
+def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 20, SIGMA_LIMIT = 3, SPEED_ETALON = 60, FUEL_JIGGLE_FACTOR = 15, is_save_bad_data = False, is_filter = True, FILTER_PERC = .03):
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
         # проверки на сломанные датчики
@@ -116,7 +116,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
         season_result['norma_rasx_per_travel'] = season_result['norma_rasx'].mul(season_result['travel']).div(100)
 
-        season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(3))
+        season_result['norma_rasx_per_travel'] = season_result['norma_rasx_per_travel'].mul(season_result['pos_s'].div(SPEED_ETALON).pow(2))
 
         season_result['is_leak'] = np.select([season_result['spent_fuel'].gt(season_result['norma_rasx_per_travel']),season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1.17/6) & season_result['sl_tip_dvigat'].eq(0), 
                                             season_result['travel'].eq(0) & season_result['spent_fuel'].ge(1/6) & season_result['sl_tip_dvigat'].eq(1)], [True, True, True], default=False)
@@ -131,12 +131,13 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
                 season_result['spent_fuel'].sub(1/6).abs().apply(lambda x: max(x, 0))
             ], default=season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel']).apply(lambda x: max(0, x)))
 
-        season_result['is_leak'] = season_result['leak'].gt(LEAK_LIMIT)
+        season_result['is_leak'] = season_result['leak'].ge(LEAK_LIMIT) & season_result['leak'].lt(120)
         season_result['timestamp'] = pd.to_datetime(season_result['timestamp'], errors='ignore')
 
         season_result['delta_sp'] = season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel'])
         season_result['delta_sp_median'] = season_result.groupby([pd.Grouper(key='id')])['delta_sp'].transform('median')
         season_result['delta_sp_std'] = season_result.groupby([pd.Grouper(key='id')])['delta_sp'].transform('std')
+        season_result['delta_sp_std'] = season_result['delta_sp_std'].div(3)
         season_result['is_leak_delta_sp'] = season_result['delta_sp'].ge(season_result['delta_sp_median'].add(season_result['delta_sp_std'].mul(SIGMA_LIMIT))) & season_result['leak'].ge(LEAK_LIMIT)
         season_result['max_fuel_diff'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff().shift(-1)
         season_result['max_fuel_diff_back'] = season_result.groupby([pd.Grouper('id'), pd.Grouper(key='timestamp', freq='1d')])['max_fuel'].diff()
@@ -147,8 +148,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
         season_result['is_max_fuel_diff'] = season_result['max_fuel_diff'].lt(0) & season_result['max_fuel_diff_back'].lt(0)
 
 
-        season_result['is_leak'] = season_result['is_leak'] & season_result['is_leak_delta_sp']
-        
+        season_result['is_leak'] = season_result['is_leak'] & season_result['pos_s'].lt(2) & season_result['is_tarrified']
         # новый фильтр
         # season_result['untariffed'] = season_result['input'].eq(1) & season_result['output'].eq(1)
         # season_result['leak_to_volume'] = season_result['leak'].div(season_result['max_fuel_per_car'])
