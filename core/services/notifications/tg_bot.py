@@ -14,7 +14,8 @@ def get_telegram_bot(token):
 
 
 def send_telegram_message(chat_bot: str, chat_id: str, message: str):
-    if chat_bot == "" or chat_id == "":
+    if chat_bot == "" or chat_id == "" or chat_bot == None or chat_id == None:
+        logger.warning(f"{send_telegram_message.__name__} Пустой chat_bot или chat_id")
         return
     try:
         get_telegram_bot(chat_bot).send_message(chat_id, message)
