@@ -32,7 +32,7 @@ def preprocess_measured(df: pd.DataFrame, VOLTAGE_LIMIT = .16, REFUELING_LIMIT =
     df['calc_sensors_fuel_level'] = df['calc_sensors_fuel_level'].div(df["input"]).mul(df["output"])
     df['calc_sensors_fuel_level'] = df['calc_sensors_fuel_level'].div(df["input"]).mul(df["output"])
     return df
-
+# TODO: проверяй amtr_(x, y, z) есть ли они, если нет 0, 
 def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = .16, REFUELING_LIMIT = 4000, FUEL_JUMP_BARRIER = 100, AMTR_IGNORE_LIMIT = 3, RPM_DRIVING_VALUE = 20, is_debug = False) -> pd.DataFrame:
     # новые колонки
     if 'amtr_x' not in df:
@@ -41,8 +41,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         df['amtr_y'] = 0
     if 'amtr_z' not in df:
         df['amtr_z'] = 0 
-    if 'rpm' not in df:
-        df['rpm'] = 65535
     
     df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
 
@@ -134,9 +132,6 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 12, SIGMA_LIMIT = 3.5, MULT_STD_MEAN_DIFF = 2.25, FUEL_JUMPS_AMOUNT = 30, LEAK_FACTOR = 0.05, SMALL_SPEED_FACTOR = 2.25, UNTARIFF_LEVEL = 400, is_save_bad_data = False):
     # проверки на сломанные датчики
     # можно ускорить алгоритм, сохранив данные для машин, пока нет смысла
-    max_fuel_level_cars = df_values.groupby("auto")['max_fuel'].max().reset_index()
-    max_fuel_level_cars = max_fuel_level_cars.rename(columns={"max_fuel": "max_fuel_per_car"})
-    df_values = df_values.merge(max_fuel_level_cars, how='inner', on='auto')
     # прыжки туда сюда за 30 минут в FUEL_JIGGLE_FACTOR раз чем объем топлива, немного много пока хватит, лучше время не юзать
     df_values['is_bad_data_count'] = df_values['count'].le(5)
     df_values['is_bad_data_jitter'] = df_values['jumps'].gt(FUEL_JUMPS_AMOUNT)
@@ -150,10 +145,6 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
     # РАСЧЕТЫ
     df_values['spent_fuel'] = df_values['spent_fuel'].mask(df_values['spent_fuel'].ge(0), other=0)
     df_values['spent_fuel'] = df_values['spent_fuel'].abs()
-
-    # энергия
-    df_values['energy'] = df_values['energy'].mask(df_values['energy'].ge(0), other=0)
-    df_values['energy'] = df_values['energy'].abs()
 
     # тарирование
     df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
@@ -226,6 +217,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 def compute_leaks_chunk(auto_df: pd.DataFrame, data_df: pl.DataFrame, norma_df: pd.DataFrame, is_save_bad_data = False):
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')
+        # result_df, bad_data = fuel_leak_calculate_standart(merge(auto_df, preprocess(data_df)),norma_df, is_save_bad_data=True)
         result_df = fuel_leak_calculate_standart(merge(auto_df, preprocess(data_df)),norma_df, is_save_bad_data=is_save_bad_data)
     return result_df
 

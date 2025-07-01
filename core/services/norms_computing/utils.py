@@ -3,8 +3,11 @@ import pandas as pd
 import numpy as np
 
 from core.services.preprocessing.utils import preprocess
-
-def calculate_norms(raw_df):
+# TODO: по машине или по нескольким за какой-то большой промежуток времени
+# TODO: проверить если в таблице норм поля speed_etalon, max_fuel, default 60 2000
+# TODO: (1, 1) - нетарованная
+# TODO: второй датафрейм должен содержать по крайней мере колонки guid, input, output
+def calculate_norms(raw_df: pd.DataFrame, tariffied_df: pd.DataFrame):
 
     df_preprocess = preprocess(raw_df)
 
@@ -57,7 +60,7 @@ def calculate_norms(raw_df):
     norms['period'] = datetime.now() + timedelta(days=365)
     norms = norms.reset_index()
 
-    norms = norms[['auto', 'norma_rasx_summer', 'norma_rasx_winter', 'period', 'pos_s_mean', 'nrs2', 'nrw2']]
+    norms = norms[['auto', 'norma_rasx_summer', 'norma_rasx_winter', 'period', 'pos_s_mean', 'nrs2', 'nrw2', "max"]]
 
     norms_speed = df_preprocess.groupby(by="auto")['max_speed'].max().reset_index()
     norms_speed['max_speed'] = norms_speed['max_speed'].div(2)
@@ -67,11 +70,15 @@ def calculate_norms(raw_df):
 
     norms = norms.rename(columns={
         "auto": "sl_avto",
-        "max_speed": "speed_etalon"
+        "max_speed": "speed_etalon",
+        "max": "max_fuel"
     })
     norms['norma_rasx_summer'] = norms['norma_rasx_summer'].mul(norms['speed_etalon']).div(norms['pos_s_mean'])
     norms['norma_rasx_winter'] = norms['norma_rasx_summer']
     norms['norma_rasx_summer'] = norms['nrs2']
     norms['norma_rasx_winter'] = norms['nrw2']
-
-
+    norms = norms.merge(right=tariffied_df, left_on='sl_avto', right_on='guid')
+    norms['norma_rasx_winter'] = norms['nrs2'].mul(norms['input']).div(norms['output'])
+    norms['norma_rasx_winter'] = norms['nrw2'].mul(norms['input']).div(norms['output'])
+    norms['max_fuel'] = norms['max_fuel'].mul(norms['input'].div(norms['output']))
+    return norms
