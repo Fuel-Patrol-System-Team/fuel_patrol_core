@@ -83,12 +83,10 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
 
     anti_bug_aggregation = anti_bug_aggregation.rename(columns={"pos_a": "count"})
     anti_bug_aggregation['spent_fuel'].mask(df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
-    anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
     # return anti_bug_aggregation
     pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
         'pos_s': 'median',
         'spent_fuel': 'sum',
-        'max_fuel': 'max',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
         "count": "sum",
@@ -100,7 +98,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
     
     pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(REFUELING_LIMIT), 0, inplace=True)
     pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].lt(0.0) & pre_period_df['amtr'].ge(AMTR_IGNORE_LIMIT), 0, inplace=True)
-    pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df[''])
     pre_period_df['fuel_recover_rate_value'] = pre_period_df['fuel_recover'].mul(pre_period_df['fuel_recover_span'])
     pre_period_df['travel'] = pre_period_df['pos_s'].mul(pre_period_df['dtime_per_hour'])
 
@@ -108,7 +105,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
     period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
         'pos_s': 'mean',
         'spent_fuel': 'sum',
-        'max_fuel': 'max',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
         "travel": "sum",
@@ -148,7 +144,6 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
     # тарирование
     df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
-    df_values['max_fuel'] = df_values['max_fuel'].div(df_values['input']).mul(df_values['output'])
 
     # остальные скучные вычисления
     df_values['spent_per_100'] = df_values['spent_fuel'].mul(100).div(df_values['travel'])
@@ -185,8 +180,8 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
     season_result['is_leak'] = season_result['leak'].gt(season_result['leak_factor'])
     season_result['timestamp'] = pd.to_datetime(season_result['timestamp'], errors='ignore')
     #
-    season_result['leak_to_volume'] = season_result['leak'].div(season_result['max_fuel_per_car'])
-    season_result['spent_per_volume'] = season_result['leak'].div(season_result['max_fuel_per_car'])
+    season_result['leak_to_volume'] = season_result['leak'].div(season_result['max_fuel'])
+    season_result['spent_per_volume'] = season_result['leak'].div(season_result['max_fuel'])
     season_result['is_leak'] = season_result['untariffed'].eq(False) & season_result['leak'].gt(LEAK_LIMIT) | (season_result['untariffed'].eq(True) & season_result['leak'].gt(UNTARIFF_LEVEL) )
     
     # season_result['delta_sp'] = season_result['spent_fuel'].sub(season_result['norma_rasx_per_travel'])

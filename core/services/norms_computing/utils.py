@@ -136,7 +136,7 @@ def calculate_norms(raw_df: pd.DataFrame, tariffied_df: pd.DataFrame):
     norms['norma_rasx_summer'] = norms['norma_rasx_summer'].mul(norms['speed_etalon']).div(norms['pos_s_mean'])
     norms['norma_rasx_winter'] = norms['norma_rasx_summer']
     norms = norms.merge(right=tariffied_df, left_on='sl_avto', right_on='guid')
-    norms['norma_rasx_winter'] = norms['norma_rasx_summer'].mul(norms['input']).div(norms['output'])
-    norms['norma_rasx_winter'] = norms['norma_rasx_winter'].mul(norms['input']).div(norms['output'])
-    norms['max_fuel'] = norms['max_fuel'].mul(norms['input'].div(norms['output']))
+    norms['norma_rasx_winter'] = norms['norma_rasx_summer'].mul(norms['output']).div(norms['input'])
+    norms['norma_rasx_winter'] = norms['norma_rasx_winter'].mul(norms['output']).div(norms['input'])
+    norms['max_fuel'] = norms['max_fuel'].mul(norms['output'].div(norms['input']))
     return norms

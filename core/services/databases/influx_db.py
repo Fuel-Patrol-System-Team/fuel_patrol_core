@@ -55,8 +55,8 @@ def write_to_influxdb(preprocessed_df, org_id, report_query_id):
                     .tag("organization", str(org_id)) \
                     .tag("auto", str(row['auto'])) \
                     .field("pos_s", float(row['pos_s']) if pd.notna(row['pos_s']) else 0.0) \
-                    .field("calc_sensors_fuel_level", float(row['max_fuel']) if pd.notna(row['max_fuel']) else 0.0) \
-                    .field("spent_fuel", float(row['spent_fuel']) if pd.notna(row['spent_fuel']) else 0.0) \
+                    .field("calc_sensors_fuel_level", 0.0) \
+                    .field("spent_fuel", 0) \
                     .time(row['timestamp'])
                 points.append(point)
 

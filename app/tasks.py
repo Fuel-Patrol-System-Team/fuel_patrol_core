@@ -320,7 +320,7 @@ def process_raw_data_task(self, report_query_id: str):
                     return
 
                 norma_df = pd.DataFrame(list(consumptions.values(
-                    'car_id__id', 'winter_volume', 'summer_volume', 'valid_period'
+                    'car_id__id', 'winter_volume', 'summer_volume', 'valid_period', 'speed_etalon', "max_fuel"
                 )))
                 norma_df['car_id__id'] = norma_df['car_id__id'].astype(str).str.strip().str.lower()
                 norma_df = norma_df.rename(columns={
