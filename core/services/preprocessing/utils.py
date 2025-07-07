@@ -42,8 +42,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         df['amtr_y'] = 0
     if 'amtr_z' not in df:
         df['amtr_z'] = 0 
-    if 'rpm' not in df:
-        df['rpm'] = 65535
     
     df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
 
@@ -61,7 +59,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
     
     df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
     df['pos_a'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['pos_s'].transform(lambda x: x.diff())
-    df['spent_fuel_abs'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff().abs())
     df['fuel_recover'] = np.where(df['spent_fuel'].ge(0), df['spent_fuel'], 0)
     df['fuel_recover_span'] = np.where(df['fuel_recover'].gt(0) & df['pos_s'].eq(0), 1, -1)
     # pos_a для дополнительных рассчетов по поводу заправки
@@ -82,7 +79,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         'fuel_recover_span': "sum",
         "jumps": "sum",
         "amtr": "sum",
-        "rpm": "mean"
     }).reset_index()
 
     anti_bug_aggregation = anti_bug_aggregation.rename(columns={"pos_a": "count"})
@@ -99,8 +95,7 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
         "fuel_recover": "sum",
         "fuel_recover_span": "sum",
         "jumps": "sum",
-        "amtr": "sum'",
-        "rpm": "mean"
+        "amtr": "sum",
     }).reset_index()
     
     pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(REFUELING_LIMIT), 0, inplace=True)
