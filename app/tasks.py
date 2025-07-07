@@ -164,6 +164,7 @@ def calculate_norms_task(self, report_query_id: str):
 
             tariffied_cars = Car.objects.filter(is_tarrified=True).values('id', 'input', 'output')
             tariffied_df = pd.DataFrame(list(tariffied_cars)).rename(columns={'id': 'guid'})
+            tariffied_df['guid'] = tariffied_df['guid'].astype(str)
             logger.info(f"Сформирован tariffied_df, строк: {len(tariffied_df)}")
 
             if tariffied_df.empty:
