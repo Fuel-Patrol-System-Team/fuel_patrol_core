@@ -17,8 +17,11 @@ from core.models import ReportQuery, Media, Organization, Car, CarReport, CarCon
 from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, parse_cars, parse_merged_util, parse_norms
 from core.services.data_providers.utils import save_response_to_file, provider_factory
 from core.services.databases.influx_db import write_to_influxdb
+from core.services.norms_computing.utils import calculate_norms
 from core.services.notifications.tg_bot import send_telegram_message
 from core.services.preprocessing.utils import fuel_leak_calculate_standart, preprocess, merge
+from pathlib import Path
+
 import glob
 import os
 import psutil
@@ -93,14 +96,20 @@ def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any],
                 report_query.save()
                 return
 
-            save_response_to_file(vehicles_data, f"response_{report_query_id}.json")
+            if not vehicles_data:
+                logger.warning(
+                    f"Нет обработанных данных для {report_query_id}. Пропускаем запуск calculate_norms_task.")
+                report_query.status = "completed"
+                report_query.save()
+                return
+
             report_query.status = "completed"
             report_query.save()
 
             try:
                 ReportQuery.objects.get(id=report_query_id)
-                logger.info(f"Запуск process_raw_data_task для {report_query_id}")
-                process_raw_data_task.delay(report_query_id)
+                logger.info(f"Запуск calculate_norms_task для {report_query_id}")
+                calculate_norms_task.delay(report_query_id)
             except ReportQuery.DoesNotExist:
                 logger.error(f"ReportQuery {report_query_id} не найден.")
                 return
@@ -121,6 +130,101 @@ def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any],
             raise
 
     return _timeit("fetch_data_from_provider", _fetch)
+
+
+@shared_task(
+    bind=True,
+    soft_time_limit=600,
+    priority=5,
+    rate_limit="1/s"
+)
+def calculate_norms_task(self, report_query_id: str):
+    def _calculate():
+        report_query = None
+        try:
+            logger.info(f"Запуск calculate_norms_task для {report_query_id}")
+            report_query = ReportQuery.objects.get(id=report_query_id)
+
+            media = Media.objects.filter(report_query_id=report_query, type="raw").first()
+            if not media or not media.file:
+                logger.error(f"Файл Media не найден для report_query_id={report_query_id}")
+                report_query.status = "error"
+                report_query.save()
+                return
+
+            csv_path = Path(settings.MEDIA_ROOT) / str(media.file)
+            if not csv_path.exists():
+                logger.error(f"CSV-файл {csv_path} не существует")
+                report_query.status = "error"
+                report_query.save()
+                return
+
+            raw_df = pd.read_csv(csv_path)
+            logger.info(f"Загружен raw_df из {csv_path}, строк: {len(raw_df)}")
+
+            tariffied_cars = Car.objects.filter(is_tarrified=True).values('id', 'input', 'output')
+            tariffied_df = pd.DataFrame(list(tariffied_cars)).rename(columns={'id': 'guid'})
+            logger.info(f"Сформирован tariffied_df, строк: {len(tariffied_df)}")
+
+            if tariffied_df.empty:
+                logger.warning(f"Нет тарированных машин для report_query_id={report_query_id}")
+                report_query.status = "completed"
+                report_query.save()
+                return
+
+            norms = calculate_norms(raw_df, tariffied_df)
+            logger.info(f"Вычислены нормы, строк: {len(norms)}")
+
+            for _, row in norms.iterrows():
+                try:
+                    car = Car.objects.get(id=row['sl_avto'])
+                    CarConsumption.objects.update_or_create(
+                        car_id=car,
+                        defaults={
+                            'summer_volume': row['norma_rasx_summer'],
+                            'winter_volume': row['norma_rasx_winter'],
+                            'speed_etalon': row['speed_etalon'],
+                            'max_fuel': row['max_fuel'],
+                            'valid_period': row['period']
+                        }
+                    )
+                    logger.info(f"Сохранены нормы для car_id={row['sl_avto']}")
+                except Car.DoesNotExist:
+                    logger.error(f"Автомобиль с id={row['sl_avto']} не найден")
+                    continue
+                except Exception as e:
+                    logger.error(f"Ошибка сохранения норм для car_id={row['sl_avto']}: {e}")
+                    continue
+
+            try:
+                ReportQuery.objects.get(id=report_query_id)
+                logger.info(f"Запуск process_raw_data_task для {report_query_id}")
+                process_raw_data_task.delay(report_query_id)
+            except ReportQuery.DoesNotExist:
+                logger.error(f"ReportQuery {report_query_id} не найден")
+                report_query.status = "error"
+                report_query.save()
+                return
+
+            report_query.status = "completed"
+            report_query.save()
+            logger.info(f"Задача calculate_norms_task завершена для {report_query_id}")
+            _log_resources("calculate_norms_task")
+
+        except ReportQuery.DoesNotExist:
+            logger.error(f"Заявка {report_query_id} не найдена")
+            if report_query:
+                report_query.status = "error"
+                report_query.save()
+            raise
+        except Exception as e:
+            logger.error(f"Ошибка в calculate_norms_task: {e}")
+            if report_query:
+                report_query.status = "error"
+                report_query.save()
+            raise
+
+    return _timeit("calculate_norms_task", _calculate)
 
 
 @shared_task(
@@ -193,7 +297,8 @@ def process_raw_data_task(self, report_query_id: str):
                                           f"Автомобили не найдены для {report_query_id}")
                     return
 
-                car_data = pd.DataFrame(list(cars.values('id', 'name', 'engine_type', 'input', 'output', 'is_tarrified')))
+                car_data = pd.DataFrame(
+                    list(cars.values('id', 'name', 'engine_type', 'input', 'output', 'is_tarrified')))
                 car_data['id'] = car_data['id'].astype(str).str.strip().str.lower()
                 car_data = car_data.rename(columns={'engine_type': 'sl_tip_dvigat'})
                 logger.info(f"Car data: {car_data.shape}, тип: {type(car_data)}, колонки: {car_data.columns.tolist()}")
@@ -906,7 +1011,7 @@ def parse_merged_data(self, report_query_id):
                                 'name': str(obj.name).strip(),
                                 'description': str(obj.description).strip() if pd.notna(obj.description) else "",
                                 'engine_type': str(obj.engine_type).strip() if pd.notna(obj.engine_type) else 0.0,
-                                'is_tarrified':  True
+                                'is_tarrified': True
                             }
                         )
                         if not created:

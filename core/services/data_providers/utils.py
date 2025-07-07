@@ -6,7 +6,7 @@ import orjson
 import time
 from datetime import datetime, timedelta
 from django.db import transaction
-from core.models import Car, CarConsumption, Media, ReportQuery, DataProvider
+from core.models import Car, CarConsumption, Media, ReportQuery, DataProvider, CarBadData
 import csv
 import os
 import glob
@@ -14,9 +14,9 @@ from pathlib import Path
 import psutil
 from itertools import islice
 import pytz
+import pandas as pd
 
 logger = logging.getLogger(__name__)
-
 
 class GlonassSoftProvider:
     def __init__(self, metadata: Dict[str, Any], report_query_id: str):
@@ -37,6 +37,7 @@ class GlonassSoftProvider:
         self.tmp_dir = tmp_dir
         self.csv_initialized = False
         self.default_period_days = 90
+        self.min_data_period_days = 14
 
     def _enforce_rate_limit(self) -> None:
         logger.info("Задержка ровно 1.00 сек для соблюдения лимита API.")
@@ -54,6 +55,18 @@ class GlonassSoftProvider:
         period_days = min(self.default_period_days, days)
         logger.info(f"Выбран период {period_days} дней.")
         return max(period_days, 1)
+
+    def _create_bad_data(self, car: Car, reason: str) -> None:
+        """Создаёт запись в CarBadData для указанной машины с причиной."""
+        try:
+            CarBadData.objects.create(
+                car_id=car,
+                reason=reason,
+                datetime=datetime.now(tz=pytz.UTC)
+            )
+            logger.info(f"Создана запись CarBadData для car_id={car.id}: {reason}")
+        except Exception as e:
+            logger.error(f"Ошибка создания CarBadData для car_id={car.id}: {e}")
 
     def _cleanup_tmp_files(self) -> None:
         pattern = str(self.tmp_dir / "terminal_messages_*.json")
@@ -141,56 +154,100 @@ class GlonassSoftProvider:
                             logger.warning(f"Пропущена машина без vehicleId")
                             continue
                         vehicle_details = self.get_vehicle_details(vehicle_id)
-                        if vehicle_details:
-                            try:
-                                self.save_to_db(vehicle_details)
-                                processed_vehicles.append(vehicle_details)
-                                try:
-                                    car = Car.objects.get(id_in_provider_system=vehicle_id)
-                                    car_start_date = start_date or car.last_processed_date
-                                    created_at_str = vehicle_details.get("createdAt")
-                                    try:
-                                        created_at = datetime.strptime(
-                                            created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
-                                        ).replace(tzinfo=pytz.UTC)
-                                    except ValueError:
-                                        # Обработка нестандартного формата с лишними цифрами
-                                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
-                                            "Z") else created_at_str
-                                        created_at = datetime.strptime(
-                                            created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
-                                        ).replace(tzinfo=pytz.UTC)
-                                    if not car_start_date:
-                                        car_start_date = created_at
-                                    car_end_date = end_date or datetime.now(tz=pytz.UTC)
-                                    if car_start_date.tzinfo is None:
-                                        car_start_date = car_start_date.replace(tzinfo=pytz.UTC)
-                                    if car_end_date.tzinfo is None:
-                                        car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
-                                except Car.DoesNotExist:
-                                    logger.warning(f"Автомобиль vehicleId={vehicle_id} не найден, использую createdAt")
-                                    created_at_str = vehicle_details.get("createdAt")
-                                    try:
-                                        created_at = datetime.strptime(
-                                            created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
-                                        ).replace(tzinfo=pytz.UTC)
-                                    except ValueError:
-                                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
-                                            "Z") else created_at_str
-                                        created_at = datetime.strptime(
-                                            created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
-                                        ).replace(tzinfo=pytz.UTC)
-                                    car_start_date = created_at
-                                    car_end_date = end_date or datetime.now(tz=pytz.UTC)
-                                    if car_end_date.tzinfo is None:
-                                        car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
-                                self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
-                            except Exception as e:
-                                logger.error(f"Ошибка обработки vehicleId={vehicle_id}: {e}")
+                        if not vehicle_details:
+                            logger.warning(f"Не удалось получить данные для vehicleId={vehicle_id}")
+                            continue
+
+                        input_value = vehicle_details.get("input")
+                        output_value = vehicle_details.get("output")
+                        try:
+                            car = Car.objects.get(id_in_provider_system=vehicle_id)
+                            if (input_value is None or input_value == 1.0) and (output_value is None or output_value == 1.0):
+                                self._create_bad_data(car, "Нетарированное ТС")
+                                logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
                                 continue
+                        except Car.DoesNotExist:
+                            if (input_value is None or input_value == 1.0) and (output_value is None or output_value == 1.0):
+                                car = Car.objects.create(
+                                    id=vehicle_details.get("vehicleGuid"),
+                                    id_in_provider_system=vehicle_id,
+                                    name=vehicle_details.get("name", ""),
+                                    description=f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
+                                    engine_type=0.0,
+                                    input=input_value,
+                                    output=output_value,
+                                    is_tarrified=False
+                                )
+                                logger.info(f"Создана временная запись Car для vehicleId={vehicle_id}")
+                                self._create_bad_data(car, "Нетарированное ТС")
+                                logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
+                                continue
+
+                        car_start_date = start_date
+                        created_at_str = vehicle_details.get("createdAt")
+                        try:
+                            created_at = datetime.strptime(
+                                created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
+                            ).replace(tzinfo=pytz.UTC)
+                        except ValueError:
+                            created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
+                                "Z") else created_at_str
+                            created_at = datetime.strptime(
+                                created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
+                            ).replace(tzinfo=pytz.UTC)
+                        if not car_start_date:
+                            car_start_date = created_at
+                        car_end_date = end_date or datetime.now(tz=pytz.UTC)
+                        if car_start_date.tzinfo is None:
+                            car_start_date = car_start_date.replace(tzinfo=pytz.UTC)
+                        if car_end_date.tzinfo is None:
+                            car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
+                        data_period = (car_end_date - car_start_date).days
+                        if data_period < self.min_data_period_days:
+                            try:
+                                car = Car.objects.get(id_in_provider_system=vehicle_id)
+                            except Car.DoesNotExist:
+                                car = Car.objects.create(
+                                    id=vehicle_details.get("vehicleGuid"),
+                                    id_in_provider_system=vehicle_id,
+                                    name=vehicle_details.get("name", ""),
+                                    description=f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
+                                    engine_type=0.0,
+                                    input=input_value,
+                                    output=output_value,
+                                    is_tarrified=False
+                                )
+                                logger.info(f"Создана временная запись Car для vehicleId={vehicle_id}")
+                            self._create_bad_data(
+                                car, "Мало данных, минимальный объём анализируемой информации 2 недели"
+                            )
+                            logger.info(
+                                f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}")
+                            continue
+
+                        try:
+                            self.save_to_db(vehicle_details)
+                            car = Car.objects.get(id_in_provider_system=vehicle_id)
+                            car_start_date = start_date or car.last_processed_date or created_at
+                            car_end_date = end_date or datetime.now(tz=pytz.UTC)
+                            if car_start_date.tzinfo is None:
+                                car_start_date = car_start_date.replace(tzinfo=pytz.UTC)
+                            if car_end_date.tzinfo is None:
+                                car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
+                            self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
+                            processed_vehicles.append(vehicle_details)
+                        except Car.DoesNotExist:
+                            logger.warning(f"Автомобиль vehicleId={vehicle_id} не найден после сохранения")
+                            continue
+                        except Exception as e:
+                            logger.error(f"Ошибка обработки vehicleId={vehicle_id}: {e}")
+                            continue
                     self._log_resources(f"get_vehicles_batch_{i}")
 
-                self._create_media_record()
+                if processed_vehicles and os.path.exists(self.csv_file_path) and os.path.getsize(self.csv_file_path) > 0:
+                    self._create_media_record()
+                else:
+                    logger.warning("Медиа-файл не создан: нет обработанных данных или CSV пустой")
                 self._cleanup_tmp_files()
                 return processed_vehicles if processed_vehicles else None
             except requests.HTTPError as e:
@@ -236,8 +293,8 @@ class GlonassSoftProvider:
                         output_value = record.get("output")
                         break
 
-                data["input"] = input_value if input_value is not None else 1.0
-                data["output"] = output_value if output_value is not None else 1.0
+                data["input"] = input_value
+                data["output"] = output_value
                 self._log_resources("get_vehicle_details")
                 return data
             except requests.HTTPError as e:
@@ -410,6 +467,12 @@ class GlonassSoftProvider:
                 if match:
                     fuel_type, index = match.groups()
                     fuel_values[int(index)] = value
+                if key == "amtr_x":
+                    flat["amtr_x"] = value
+                elif key == "amtr_y":
+                    flat["amtr_y"] = value
+                elif key == "amtr_z":
+                    flat["amtr_z"] = value
             if fuel_values:
                 min_index = min(fuel_values.keys())
                 flat["calc_sensors_fuel_level"] = fuel_values[min_index]
@@ -434,7 +497,10 @@ class GlonassSoftProvider:
             "deviceTime": "timestamp",
             "speed": "pos_s",
             "voltage": "calc_sensors_voltage",
-            "calc_sensors_fuel_level": "calc_sensors_fuel_level"
+            "calc_sensors_fuel_level": "calc_sensors_fuel_level",
+            "amtr_x": "amtr_x",
+            "amtr_y": "amtr_y",
+            "amtr_z": "amtr_z"
         }
         headers = list(column_mapping.values())
         logger.info(f"Запись CSV с заголовками: {headers}")
@@ -454,7 +520,10 @@ class GlonassSoftProvider:
                 "deviceTime": flat_record.get("deviceTime"),
                 "speed": flat_record.get("speed"),
                 "voltage": flat_record.get("voltage"),
-                "calc_sensors_fuel_level": flat_record.get("calc_sensors_fuel_level")
+                "calc_sensors_fuel_level": flat_record.get("calc_sensors_fuel_level"),
+                "amtr_x": flat_record.get("amtr_x"),
+                "amtr_y": flat_record.get("amtr_y"),
+                "amtr_z": flat_record.get("amtr_z")
             }
             renamed_record = {column_mapping[k]: v for k, v in filtered_record.items() if k in column_mapping}
             renamed_data.append(renamed_record)
@@ -468,6 +537,10 @@ class GlonassSoftProvider:
     def _create_media_record(self) -> None:
         try:
             report_query = ReportQuery.objects.get(id=self.report_query_id)
+            if not os.path.exists(self.csv_file_path) or os.path.getsize(self.csv_file_path) == 0:
+                logger.warning(f"CSV-файл {self.csv_file_path} не существует или пустой, пропускаем создание Media")
+                return
+
             existing_media = Media.objects.filter(report_query_id=report_query).first()
             if existing_media:
                 if existing_media.file and os.path.exists(existing_media.file.path):
@@ -512,49 +585,18 @@ class GlonassSoftProvider:
                         "name": vehicle_data.get("name", ""),
                         "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                         "engine_type": engine_type,
-                        "input": vehicle_data.get("input", 1.0),
-                        "output": vehicle_data.get("output", 1.0),
-                        "is_tarrified": vehicle_data.get("input", 1.0) == vehicle_data.get("output", 1.0)
+                        "input": vehicle_data.get("input"),
+                        "output": vehicle_data.get("output"),
+                        "is_tarrified": not ((vehicle_data.get("input") is None or vehicle_data.get("input") == 1.0) and
+                                            (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0))
                     }
                 )
                 provider.cars.add(car)
-
-                created_at_str = vehicle_data.get("createdAt")
-                if created_at_str:
-                    try:
-                        created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.UTC)
-                    except ValueError:
-                        try:
-                            # Обработка нестандартного формата с лишними цифрами в микросекундах
-                            created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
-                                "Z") else created_at_str
-                            created_at = datetime.strptime(created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ").replace(
-                                tzinfo=pytz.UTC)
-                        except ValueError as e:
-                            logger.warning(
-                                f"Невозможно разобрать createdAt='{created_at_str}' для vehicleId={vehicle_id}: {e}. Использую текущую дату.")
-                            created_at = datetime.now(tz=pytz.UTC)
-                else:
-                    logger.warning(f"createdAt отсутствует для vehicleId={vehicle_id}. Использую текущую дату.")
-                    created_at = datetime.now(tz=pytz.UTC)
-
-                valid_period = (created_at + timedelta(days=365 * 10)).date()
-                consumption = vehicle_data.get("consumptionPer100Km", 16.0)
-
-                CarConsumption.objects.update_or_create(
-                    car_id=car,
-                    defaults={
-                        "winter_volume": consumption,
-                        "summer_volume": consumption,
-                        "valid_period": valid_period
-                    }
-                )
-                logger.info(f"Сохранены данные для vehicleId={vehicle_id}, created_at={created_at}")
+                logger.info(f"Сохранены данные для vehicleId={vehicle_id}")
                 self._log_resources("save_to_db")
         except Exception as e:
             logger.error(f"Ошибка сохранения данных для vehicleId={vehicle_id}: {e}")
             raise
-
 
 def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_id: str) -> Optional[Any]:
     providers = {
@@ -565,7 +607,6 @@ def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_
         logger.error(f"Провайдер {provider_name} не поддерживается.")
         return None
     return provider_class(metadata, report_query_id)
-
 
 def save_response_to_file(data: Dict[str, Any], filename: str = "response.json") -> None:
     file_path = settings.BASE_DIR / filename

@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car, DataProvider
+from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car, DataProvider, \
+    CarBadData
 
 
 class OrganizationOutputSerializer(serializers.ModelSerializer):
@@ -36,7 +37,7 @@ class CarConsumptionOutputSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CarConsumption
-        fields = ['id', 'car_id', 'winter_volume', 'summer_volume', 'valid_period']
+        fields = ['id', 'car_id', 'winter_volume', 'summer_volume', 'valid_period', 'speed_etalon', 'max_fuel']
 
 
 class DataProviderOutputSerializer(serializers.ModelSerializer):
@@ -77,6 +78,14 @@ class OrgUserOutputSerializer(serializers.ModelSerializer):
         model = OrgUser
         fields = ['id', 'username', 'org', 'email', 'first_name', 'last_name', 'is_active', 'is_staff', 'is_superuser',
                   'last_login', 'date_joined']
+
+
+class CarBadDataOutputSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car_id.name', read_only=True)
+
+    class Meta:
+        model = CarBadData
+        fields = ['id', 'car_name', 'reason', 'datetime']
 
 
 class AttachMediaSerializer(serializers.ModelSerializer):

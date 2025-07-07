@@ -7,7 +7,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     MediaListAPIView, MediaDetailAPIView, CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
     DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView, DataProviderListAPIView, DataProviderDetailAPIView, \
-    ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView
+    ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, CarBadDataListByCarAPIView
 
 urlpatterns = [
 
@@ -48,4 +48,5 @@ urlpatterns = [
     path('dataprovider/<uuid:pk>', DataProviderDetailAPIView.as_view(), name='dataprovider-detail'),
     path('dataprovider/create', DataProviderCreateAPIView.as_view(), name='data-provider-create'),
     path('provider-data-request', ProviderDataRequestAPIView.as_view(), name='provider-data-request'),
+    path('cars/<uuid:car_id>/bad-data', CarBadDataListByCarAPIView.as_view(), name='car-bad-data-list'),
 ]

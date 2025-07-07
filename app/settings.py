@@ -25,7 +25,6 @@ from influxdb_client.client.warnings import MissingPivotFunction
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
 # Load environment
 load_dotenv()
 warnings.simplefilter("ignore", MissingPivotFunction)
@@ -39,7 +38,7 @@ ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '').split()
 ROOT_URLCONF = 'app.urls'
 WSGI_APPLICATION = 'app.wsgi.application'
 AUTH_USER_MODEL = 'core.OrgUser'
-APPEND_SLASH=False
+APPEND_SLASH = False
 # ======================
 # APPLICATION DEFINITION
 # ======================
@@ -309,6 +308,7 @@ UNFOLD = {
                 "core.carconsumption",
                 "core.driver",
                 "core.drivercar",
+                "core.carbaddata"
             ),
             "items": [
                 {
@@ -326,6 +326,10 @@ UNFOLD = {
                 {
                     "title": "Водители",
                     "link": reverse_lazy("admin:core_driver_changelist"),
+                },
+                {
+                    "title": "Отчёты об ошибках",
+                    "link": reverse_lazy("admin:core_carbaddata_changelist"),
                 },
             ],
         },
@@ -420,6 +424,11 @@ UNFOLD = {
                         "title": "Расход топлива",
                         "icon": "local_gas_station",
                         "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                    },
+                    {
+                        "title": "Отчёты об ошибках",
+                        "icon": "error",
+                        "link": reverse_lazy("admin:core_carbaddata_changelist")
                     },
                     {
                         "title": "Водители",

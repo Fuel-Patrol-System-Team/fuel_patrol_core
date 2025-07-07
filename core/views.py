@@ -18,7 +18,8 @@ import uuid
 
 from app.tasks import parse_merged_data, process_raw_data_task, fetch_data_from_provider
 from drf_yasg.utils import swagger_auto_schema
-from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider
+from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
+    CarBadData
 from .pagination import StandardResultsSetPagination
 from .rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -30,7 +31,7 @@ from .serializers import (
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer,
-    DataProviderOutputSerializer, CarLeaksFilterSerializer, DataProviderSerializer
+    DataProviderOutputSerializer, CarLeaksFilterSerializer, DataProviderSerializer, CarBadDataOutputSerializer
 )
 from .services.databases.influx_db import query_influxdb
 
@@ -273,6 +274,7 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
+## TODO: Параметр типа use_bad_data (Bool) - на вход и передавать его в compute_leaks_chunk
 class ProviderDataRequestAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -717,6 +719,22 @@ class CarLeaksAPIView(ListAPIView):
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org,
             status=True
+        ).select_related('car_id').order_by('-datetime')
+
+
+class CarBadDataListByCarAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = CarBadDataOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['datetime']
+    search_fields = ['reason']
+
+    def get_queryset(self):
+        car_id = self.kwargs['car_id']
+        return CarBadData.objects.filter(
+            car_id=car_id,
+            car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').order_by('-datetime')
 
 

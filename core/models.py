@@ -61,8 +61,8 @@ class Car(models.Model):
     name = models.CharField(max_length=255)
     description = models.TextField()
     engine_type = models.FloatField(default=0.0)
-    input = models.FloatField(default=1.0)
-    output = models.FloatField(default=1.0)
+    input = models.FloatField(**NULLABLE)
+    output = models.FloatField(**NULLABLE)
     created_at = models.DateTimeField(default=timezone.now)
     last_processed_date = models.DateTimeField(**NULLABLE)
     is_tarrified = models.BooleanField(default=False)
@@ -81,6 +81,8 @@ class CarConsumption(models.Model):
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='consumptions')
     winter_volume = models.FloatField(**NULLABLE)
     summer_volume = models.FloatField(**NULLABLE)
+    speed_etalon = models.FloatField(default=60.0)
+    max_fuel = models.FloatField(default=2000.0)
     valid_period = models.DateField(**NULLABLE)
 
     class Meta:
@@ -163,12 +165,27 @@ class CarReport(models.Model):
         return f"{self.car_id.name} - {self.datetime}"
 
 
+class CarBadData(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='bad_data')
+    reason = models.TextField()
+    datetime = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        verbose_name = "Car Bad Data"
+        verbose_name_plural = "Car Bad Data`s"
+        ordering = ['-id']
+
+    def __str__(self):
+        return f"{self.car_id.name} - {self.datetime} - {self.reason}"
+
+
 class Driver(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     fullname = models.CharField(max_length=255)
     address = models.CharField(max_length=255)
     phone = models.CharField(max_length=255)
-    car_id = models.ManyToManyField(Car,blank=True, related_name='drivers')
+    car_id = models.ManyToManyField(Car, blank=True, related_name='drivers')
 
     class Meta:
         verbose_name = "Driver"
@@ -177,6 +194,7 @@ class Driver(models.Model):
 
     def __str__(self):
         return self.fullname
+
 
 @receiver(post_delete, sender=Media)
 def delete_media_file(sender, instance, **kwargs):
