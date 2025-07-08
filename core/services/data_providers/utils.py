@@ -1,12 +1,12 @@
 import requests
 import logging
-from typing import Dict, Any, Optional, List, Iterable
+from typing import Dict, Any, Optional, List
 from django.conf import settings
 import orjson
 import time
 from datetime import datetime, timedelta
 from django.db import transaction
-from core.models import Car, CarConsumption, Media, ReportQuery, DataProvider, CarBadData
+from core.models import Car, Media, ReportQuery, CarBadData
 import csv
 import os
 import glob
@@ -14,9 +14,9 @@ from pathlib import Path
 import psutil
 from itertools import islice
 import pytz
-import pandas as pd
 
 logger = logging.getLogger(__name__)
+
 
 class GlonassSoftProvider:
     def __init__(self, metadata: Dict[str, Any], report_query_id: str):
@@ -37,7 +37,7 @@ class GlonassSoftProvider:
         self.tmp_dir = tmp_dir
         self.csv_initialized = False
         self.default_period_days = 90
-        self.min_data_period_days = 14
+        self.min_data_period_days = 30
 
     def _enforce_rate_limit(self) -> None:
         logger.info("Задержка ровно 1.00 сек для соблюдения лимита API.")
@@ -162,12 +162,12 @@ class GlonassSoftProvider:
                         output_value = vehicle_details.get("output")
                         try:
                             car = Car.objects.get(id_in_provider_system=vehicle_id)
-                            if (input_value is None or input_value == 1.0) and (output_value is None or output_value == 1.0):
+                            if (input_value is None or output_value is None) or (input_value == output_value):
                                 self._create_bad_data(car, "Нетарированное ТС")
                                 logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
                                 continue
                         except Car.DoesNotExist:
-                            if (input_value is None or input_value == 1.0) and (output_value is None or output_value == 1.0):
+                            if (input_value is None or output_value is None) or (input_value == output_value):
                                 car = Car.objects.create(
                                     id=vehicle_details.get("vehicleGuid"),
                                     id_in_provider_system=vehicle_id,
@@ -219,7 +219,7 @@ class GlonassSoftProvider:
                                 )
                                 logger.info(f"Создана временная запись Car для vehicleId={vehicle_id}")
                             self._create_bad_data(
-                                car, "Мало данных, минимальный объём анализируемой информации 2 недели"
+                                car, "Мало данных, минимальный объём анализируемой информации 30 дней"
                             )
                             logger.info(
                                 f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}")
@@ -244,7 +244,8 @@ class GlonassSoftProvider:
                             continue
                     self._log_resources(f"get_vehicles_batch_{i}")
 
-                if processed_vehicles and os.path.exists(self.csv_file_path) and os.path.getsize(self.csv_file_path) > 0:
+                if processed_vehicles and os.path.exists(self.csv_file_path) and os.path.getsize(
+                        self.csv_file_path) > 0:
                     self._create_media_record()
                 else:
                     logger.warning("Медиа-файл не создан: нет обработанных данных или CSV пустой")
@@ -507,7 +508,7 @@ class GlonassSoftProvider:
 
         if not self.csv_initialized:
             with open(self.csv_file_path, "w", encoding="utf-8", newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
+                writer = csv.DictWriter(f, fieldnames=headers)
                 writer.writeheader()
             self.csv_initialized = True
             logger.info(f"CSV инициализирован: {self.csv_file_path}")
@@ -588,7 +589,7 @@ class GlonassSoftProvider:
                         "input": vehicle_data.get("input"),
                         "output": vehicle_data.get("output"),
                         "is_tarrified": not ((vehicle_data.get("input") is None or vehicle_data.get("input") == 1.0) and
-                                            (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0))
+                                             (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0))
                     }
                 )
                 provider.cars.add(car)
@@ -597,6 +598,7 @@ class GlonassSoftProvider:
         except Exception as e:
             logger.error(f"Ошибка сохранения данных для vehicleId={vehicle_id}: {e}")
             raise
+
 
 def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_id: str) -> Optional[Any]:
     providers = {
@@ -607,6 +609,7 @@ def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_
         logger.error(f"Провайдер {provider_name} не поддерживается.")
         return None
     return provider_class(metadata, report_query_id)
+
 
 def save_response_to_file(data: Dict[str, Any], filename: str = "response.json") -> None:
     file_path = settings.BASE_DIR / filename

@@ -1,6 +1,7 @@
 from drf_yasg import openapi
 
 from core.serializers import CarMetricSerializer, CarReportOutputSerializer, DataProviderSerializer
+
 PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
@@ -20,6 +21,12 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
             format=openapi.FORMAT_DATETIME,
             description="Конечная дата для запроса данных (ISO формат, необязательно)",
             example="2025-06-13T23:59:59Z"
+        ),
+        "is_save_bad_data": openapi.Schema(
+            type=openapi.TYPE_BOOLEAN,
+            description="Сохранять ли некорректные данные в CarBadData (по умолчанию False)",
+            example=False,
+            default=False
         )
     },
     required=["provider_name"]
@@ -28,9 +35,12 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
 CAR_LEAKS_SCHEMA = {
     'operation_description': "Получение всех сливов по указанному автомобилю организации с опциональной фильтрацией по датам.",
     'manual_parameters': [
-        openapi.Parameter('car_id', openapi.IN_QUERY, description="ID автомобиля", type=openapi.TYPE_STRING, required=True),
-        openapi.Parameter('periodFrom', openapi.IN_QUERY, description="Начальная дата (YYYY-MM-DD)", type=openapi.TYPE_STRING, required=False),
-        openapi.Parameter('periodDue', openapi.IN_QUERY, description="Конечная дата (YYYY-MM-DD)", type=openapi.TYPE_STRING, required=False),
+        openapi.Parameter('car_id', openapi.IN_QUERY, description="ID автомобиля", type=openapi.TYPE_STRING,
+                          required=True),
+        openapi.Parameter('periodFrom', openapi.IN_QUERY, description="Начальная дата (YYYY-MM-DD)",
+                          type=openapi.TYPE_STRING, required=False),
+        openapi.Parameter('periodDue', openapi.IN_QUERY, description="Конечная дата (YYYY-MM-DD)",
+                          type=openapi.TYPE_STRING, required=False),
     ],
     'responses': {
         200: CarReportOutputSerializer(many=True),
@@ -46,7 +56,8 @@ DATA_PROVIDER_CREATE_SCHEMA = {
         required=['name'],
         properties={
             'name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя провайдера'),
-            'metadata': openapi.Schema(type=openapi.TYPE_OBJECT, description='Метаданные провайдера (опционально)', nullable=True),
+            'metadata': openapi.Schema(type=openapi.TYPE_OBJECT, description='Метаданные провайдера (опционально)',
+                                       nullable=True),
             'cars': openapi.Schema(
                 type=openapi.TYPE_ARRAY,
                 items=openapi.Schema(type=openapi.TYPE_STRING, format='uuid'),

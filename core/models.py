@@ -114,6 +114,7 @@ class ReportQuery(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
     provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
+    is_save_bad_data = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "Report Query"

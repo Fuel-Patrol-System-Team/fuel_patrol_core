@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import warnings
 from dataclasses import dataclass
-## TODO: (YShipik) - блоки кода из тасков перенеси сюда, почему то когда вызываю в функциях - у меня вечная ошика, я напрямую писал в тасках
 def parse_cars(path: Path) -> pd.DataFrame:
     with warnings.catch_warnings():
         warnings.simplefilter(action='ignore')

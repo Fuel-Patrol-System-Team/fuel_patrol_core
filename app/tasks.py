@@ -13,7 +13,7 @@ from django.core.exceptions import ObjectDoesNotExist
 from app.celery import app as celery_app
 from app.constants import BATCH_SIZE
 from app.settings import BASE_DIR
-from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption, DataProvider
+from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption, DataProvider, CarBadData
 from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, parse_cars, parse_merged_util, parse_norms
 from core.services.data_providers.utils import save_response_to_file, provider_factory
 from core.services.databases.influx_db import write_to_influxdb
@@ -461,7 +461,7 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
                 logger.error(f"Ожидался pandas.DataFrame для norma_data_df, получен {type(norma_data_df)}")
                 raise TypeError(f"Ожидался pandas.DataFrame для norma_data_df, получен {type(norma_data_df)}")
 
-            chunk_df['auto'] = chunk_df['auto'].astype(str).str.strip().str.lower()
+            chunk_df['auto'] = chunk_df['auto'].apply(lambda x: str(x).replace("UUID:'", "").replace("'", ""))
             logger.info(f"Чанк: {chunk_df.shape}, тип: {type(chunk_df)}, колонки: {chunk_df.columns.tolist()}")
             logger.info(f"Уникальные auto: {chunk_df['auto'].unique()[:5]}")
 
@@ -472,17 +472,19 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
                 logger.error(f"preprocess вернул {type(preprocessed_df)} вместо pandas.DataFrame")
                 raise TypeError(f"preprocess вернул {type(preprocessed_df)} вместо pandas.DataFrame")
 
-            car_data_df['id'] = car_data_df['id'].astype(str).str.strip().str.lower()
+            car_data_df['id'] = car_data_df['id'].apply(lambda x: str(x).replace("UUID:'", "").replace("'", ""))
             logger.info(
                 f"Car data: {car_data_df.shape}, тип: {type(car_data_df)}, колонки: {car_data_df.columns.tolist()}")
             logger.info(f"Уникальные id: {car_data_df['id'].unique()[:5]}")
 
-            norma_data_df['sl_avto'] = norma_data_df['sl_avto'].astype(str).str.strip().str.lower()
+            norma_data_df['sl_avto'] = norma_data_df['sl_avto'].apply(
+                lambda x: str(x).replace("UUID:'", "").replace("'", ""))
             logger.info(
                 f"Norma data: {norma_data_df.shape}, тип: {type(norma_data_df)}, колонки: {norma_data_df.columns.tolist()}")
             logger.info(f"Уникальные sl_avto: {norma_data_df['sl_avto'].unique()[:5]}")
 
-            preprocessed_df['auto'] = preprocessed_df['auto'].astype(str).str.strip().str.lower()
+            preprocessed_df['auto'] = preprocessed_df['auto'].apply(
+                lambda x: str(x).replace("UUID:'", "").replace("'", ""))
 
             merged_df = merge(car_data_df, preprocessed_df)
             logger.info(f"Объединено: {merged_df.shape}, тип: {type(merged_df)}, колонки: {merged_df.columns.tolist()}")
@@ -492,7 +494,15 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
             if merged_df.empty:
                 logger.warning(f"merged_df пустой для {report_query_id}. Проверьте ключи id и auto.")
 
-            result_df = fuel_leak_calculate_standart(merged_df, norma_data_df)
+            try:
+                report_query = ReportQuery.objects.get(id=report_query_id)
+                is_save_bad_data = report_query.is_save_bad_data
+                logger.info(f"is_save_bad_data из ReportQuery: {is_save_bad_data}")
+            except ReportQuery.DoesNotExist:
+                logger.error(f"ReportQuery {report_query_id} не найден")
+                is_save_bad_data = False
+            result_df, bad_data_df = fuel_leak_calculate_standart(merged_df, norma_data_df,
+                                                                  is_save_bad_data=is_save_bad_data)
             logger.info(
                 f"Результат утечек: {result_df.shape}, тип: {type(result_df)}, колонки: {result_df.columns.tolist()}")
             if not isinstance(result_df, pd.DataFrame):
@@ -500,6 +510,27 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
                 raise TypeError(f"fuel_leak_calculate_standart вернул {type(result_df)} вместо pandas.DataFrame")
             leak_count = result_df['is_leak'].sum() if 'is_leak' in result_df.columns else 0
             logger.info(f"Количество утечек в чанке: {leak_count}")
+
+            if is_save_bad_data and bad_data_df is not None and not bad_data_df.empty:
+                logger.info(f"Сохранение bad_data для {report_query_id}, строк: {len(bad_data_df)}")
+                cars = {str(car.id).replace("UUID:'", "").replace("'", ""): car for car in Car.objects.all().only('id')}
+                with transaction.atomic():
+                    for _, row in bad_data_df.iterrows():
+                        try:
+                            car_id = str(row['auto']).strip().lower()
+                            car = cars.get(car_id)
+                            if not car:
+                                logger.warning(f"Автомобиль с id={car_id} не найден для bad_data")
+                                continue
+                            CarBadData.objects.create(
+                                car_id=car,
+                                reason=str(row['reason']).strip(),
+                                datetime=pd.to_datetime(row.get('timestamp', datetime.now()), errors='coerce')
+                            )
+                            logger.debug(f"Сохранена запись CarBadData для car_id={car_id}")
+                        except Exception as e:
+                            logger.error(f"Ошибка сохранения CarBadData для car_id={car_id}: {e}")
+                            continue
 
             write_to_influxdb(preprocessed_df, org_id, report_query_id)
 

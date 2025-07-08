@@ -291,6 +291,7 @@ class ProviderDataRequestAPIView(APIView):
         provider_name = request.data.get('provider_name')
         start_date = request.data.get('start_date')
         end_date = request.data.get('end_date')
+        is_save_bad_data = request.data.get('is_save_bad_data', False)  # Дефолт False
 
         if not provider_name:
             logger.error("Имя провайдера не указано")
@@ -326,7 +327,8 @@ class ProviderDataRequestAPIView(APIView):
 
         report_query = ReportQuery.objects.create(
             provider_id=provider,
-            status="created"
+            status="created",
+            is_save_bad_data=is_save_bad_data
         )
 
         try:

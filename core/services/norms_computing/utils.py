@@ -69,8 +69,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
 
 
 # TODO(YShipik): У НАС ПО ДЕФОЛТУ ТЕПЕРЬ ИНПУТ АУТПУТ NONE БУДЕТ
-# TODO: проверить если в таблице норм поля speed_etalon, max_fuel, default 60 2000 (из функции calculate_norms) (REALIZED)
-# TODO: второй датафрейм должен содержать по крайней мере колонки guid, input, output (как второй параметр функции передать) (REALZIED)
 def calculate_norms(raw_df: pd.DataFrame, tariffied_df: pd.DataFrame):
     df_preprocess = preprocess(raw_df)
 

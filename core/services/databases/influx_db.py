@@ -32,13 +32,11 @@ def write_to_influxdb(preprocessed_df, org_id, report_query_id):
         report_query_id: ID запроса отчёта.
     """
     try:
-        # Проверяем, что URL — это строка
         url = settings.INFLUXDB_CONFIG['URL']
         if not isinstance(url, str):
             raise ValueError(f"InfluxDB URL must be a string, got {type(url)}: {url}")
         logger.debug(f"InfluxDB URL: {url}")
 
-        # Создаём клиент с использованием контекстного менеджера
         with InfluxDBClient(url=url,
                             token=settings.INFLUXDB_CONFIG['TOKEN'],
                             org=settings.INFLUXDB_CONFIG['ORG'],
