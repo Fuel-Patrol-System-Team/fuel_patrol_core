@@ -125,7 +125,7 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
     return result_df
 
 # принимает пару median и std для данной машины
-def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 12, SIGMA_LIMIT = 3.5, MULT_STD_MEAN_DIFF = 2.25, FUEL_JUMPS_AMOUNT = 30, LEAK_FACTOR = 0.05, SMALL_SPEED_FACTOR = 2.25, UNTARIFF_LEVEL = 400, is_save_bad_data = False):
+def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 12, SIGMA_LIMIT = 3.5, MULT_STD_MEAN_DIFF = 2.25, FUEL_JUMPS_AMOUNT = 30, LEAK_FACTOR = 0.05, SMALL_SPEED_FACTOR = 2.25, UNTARIFF_LEVEL = 400, is_save_bad_data = False) -> tuple[pd.DataFrame, pd.DataFrame | None]:
     # проверки на сломанные датчики
     # можно ускорить алгоритм, сохранив данные для машин, пока нет смысла
     # прыжки туда сюда за 30 минут в FUEL_JIGGLE_FACTOR раз чем объем топлива, немного много пока хватит, лучше время не юзать
@@ -205,7 +205,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
     if is_save_bad_data:
         return (season_result, bad_data)
     
-    return season_result
+    return (season_result, None)
 
 
 ## TODO: тут результат, если save_bat_data = True, то res_df, bad_data = result_df
