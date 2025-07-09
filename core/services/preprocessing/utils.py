@@ -40,17 +40,17 @@ def preprocess_measured(df: pd.DataFrame, VOLTAGE_LIMIT=.16, REFUELING_LIMIT=400
     return df
 
 
-def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME=3, PERIOD_2_MIN=30, VOLTAGE_LIMIT=.16,
-               REFUELING_LIMIT=4000, FUEL_JUMP_BARRIER=100, AMTR_IGNORE_LIMIT=3,
-               is_debug=False) -> pd.DataFrame:
+def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, PERIOD_2_MIN = 30, VOLTAGE_LIMIT = .16, REFUELING_LIMIT = 4000, FUEL_JUMP_BARRIER = 100, AMTR_IGNORE_LIMIT = 3, RPM_DRIVING_VALUE = 20, is_debug = False) -> pd.DataFrame:
     # новые колонки
     if 'amtr_x' not in df:
         df['amtr_x'] = 0
     if 'amtr_y' not in df:
         df['amtr_y'] = 0
     if 'amtr_z' not in df:
-        df['amtr_z'] = 0
-
+        df['amtr_z'] = 0 
+    if 'rpm' not in df:
+        df['rpm'] = 65535
+    
     df['timestamp'] = pd.to_datetime(df['timestamp'], errors='ignore')
 
     df = df[df['calc_sensors_fuel_level'].between(0, 4096)]
@@ -61,14 +61,14 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME=3, PE
 
     df['dtime_per_hour'] = df['dtime'].dt.total_seconds() / 3600
 
-    df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])[
-        'calc_sensors_voltage'].transform(max)
-
+    df['voltage_max'] = df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq='1h')])['calc_sensors_voltage'].transform(max)
+    
     df = df[df['voltage_max'].sub(df['calc_sensors_voltage']).div(df["voltage_max"]).lt(VOLTAGE_LIMIT)]
-
-    df['spent_fuel'] = df.groupby(['auto', df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(
-        lambda x: x.diff())
-    df['pos_a'] = df.groupby(['auto', df['timestamp'].dt.floor('2h')])['pos_s'].transform(lambda x: x.diff())
+    
+    df['spent_fuel'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff())
+    df['pos_a'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['pos_s'].transform(lambda x: x.diff())
+    df['spent_fuel_abs'] = df.groupby(['auto',df['timestamp'].dt.floor('2h')])['calc_sensors_fuel_level'].transform(lambda x: x.diff().abs())
+    
     df['fuel_recover'] = np.where(df['spent_fuel'].ge(0), df['spent_fuel'], 0)
     df['fuel_recover_span'] = np.where(df['fuel_recover'].gt(0) & df['pos_s'].eq(0), 1, -1)
     # pos_a для дополнительных рассчетов по поводу заправки
@@ -76,6 +76,7 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME=3, PE
     df['spent_fuel'].replace(np.nan, 0, inplace=True)
     df['jumps'] = np.where(df['spent_fuel'].abs().gt(FUEL_JUMP_BARRIER), 1, 0)
     df['amtr'] = df['amtr_x'].abs().add(df['amtr_y'].abs()).add(df['amtr_z'].abs())
+    df['fd'] = np.where(df['spent_fuel'].lt(0), 1, 0)
     anti_bug_aggregation = df.groupby(
         ['auto', df['timestamp'].dt.floor(f'{ANTI_BUG_TIME_SECONDS}s')]
     ).agg({
@@ -84,21 +85,23 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME=3, PE
         'spent_fuel': 'sum',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
-        'pos_a': 'count',  # to count stuff
+        'pos_a': 'count', # to count stuff
         'fuel_recover': 'sum',
         'fuel_recover_span': "sum",
         "jumps": "sum",
         "amtr": "sum",
+        "rpm": "mean",
+        "fd": "sum"
     }).reset_index()
 
     anti_bug_aggregation = anti_bug_aggregation.rename(columns={"pos_a": "count"})
-    anti_bug_aggregation['spent_fuel'].mask(
-        df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
+    anti_bug_aggregation['spent_fuel'].mask(df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
+    anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
     # return anti_bug_aggregation
-    pre_period_df = anti_bug_aggregation.groupby(
-        [pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
+    pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
         'pos_s': 'median',
         'spent_fuel': 'sum',
+        'max_fuel': 'max',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
         "count": "sum",
@@ -106,28 +109,29 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME=3, PE
         "fuel_recover_span": "sum",
         "jumps": "sum",
         "amtr": "sum",
+        "rpm": "mean",
+        "fd": "sum"
     }).reset_index()
-
-    pre_period_df['spent_fuel'].mask(
-        pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(
-            REFUELING_LIMIT), 0, inplace=True)
-    pre_period_df['spent_fuel'].mask(
-        pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].lt(0.0) & pre_period_df['amtr'].ge(
-            AMTR_IGNORE_LIMIT), 0, inplace=True)
+    
+    pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].gt(0.0) & pre_period_df['spent_fuel'].lt(REFUELING_LIMIT), 0, inplace=True)
+    pre_period_df['spent_fuel'].mask(pre_period_df['pos_s'].eq(0) & pre_period_df['spent_fuel'].lt(0.0) & pre_period_df['amtr'].ge(AMTR_IGNORE_LIMIT), 0, inplace=True)
     pre_period_df['fuel_recover_rate_value'] = pre_period_df['fuel_recover'].mul(pre_period_df['fuel_recover_span'])
     pre_period_df['travel'] = pre_period_df['pos_s'].mul(pre_period_df['dtime_per_hour'])
 
-    period_1_df = pre_period_df.groupby(
-        [pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg({
+    
+    period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
         'pos_s': 'mean',
         'spent_fuel': 'sum',
+        'max_fuel': 'max',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
         "travel": "sum",
         "count": "sum",
+        "amtr": "sum",
         "jumps": "sum",
-    }).reset_index()
-
+        "fd": "sum"
+    } ).reset_index()
+    
     period_1_df['spent_per_100'] = period_1_df['spent_fuel'].div(period_1_df['travel']).mul(100)
     if is_debug:
         return (df, pre_period_df, period_1_df)
@@ -142,7 +146,7 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 
 #TODO:save_bad_data
-def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 12, SIGMA_LIMIT = 3.5, MULT_STD_MEAN_DIFF = 2.25, FUEL_JUMPS_AMOUNT = 30, LEAK_FACTOR = 0.05, SMALL_SPEED_FACTOR = 2.25, UNREASONABLE_FUEL_LEVEL = 1000 , UNTARIFF_LEVEL = 400, is_save_bad_data = False):
+def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, DECREASE_INCREASE_RATIO = 0.75, LEAK_LIMIT = 12, SIGMA_LIMIT = 3.5, MULT_STD_MEAN_DIFF = 2.25, FUEL_JUMPS_AMOUNT = 30, LEAK_FACTOR = 0.05, SMALL_SPEED_FACTOR = 2.25, UNREASONABLE_FUEL_LEVEL = 1000 , UNTARIFF_LEVEL = 400, is_save_bad_data = False):
     df_values['is_bad_data_count'] = df_values['count'].le(5)
     df_values['is_bad_data_jitter'] = df_values['jumps'].gt(FUEL_JUMPS_AMOUNT)
     
@@ -153,7 +157,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
     df_values['is_bad_data'] = df_values['is_bad_data_count'].eq(True) | df_values['is_bad_data_jitter'].eq(True) | df_values['is_bad_data_unreasonable_fuel'].eq(True)
     
-    # df_values['ratio'] = df_values['fd'].div(df_values['count'])
+    df_values['ratio'] = df_values['fd'].div(df_values['count'])
     bad_data = None
     if is_save_bad_data == True:
         bad_data = df_values[df_values['is_bad_data'].eq(True)]
@@ -233,6 +237,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
     season_result['low_speed'] = season_result['pos_s'].le(season_result['speed_etalon'].div(SMALL_SPEED_FACTOR))
     season_result['is_leak'] = season_result['low_speed'].eq(True) & season_result['is_leak'].eq(True)
+    season_result['is_leak'] = season_result['is_leak'] & season_result['ratio'].gt(DECREASE_INCREASE_RATIO)
     if is_save_bad_data:
         return (season_result, bad_data)
 
