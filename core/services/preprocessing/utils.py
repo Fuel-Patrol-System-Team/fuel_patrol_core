@@ -234,7 +234,7 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
 
     season_result['low_speed'] = season_result['pos_s'].le(season_result['speed_etalon'].div(SMALL_SPEED_FACTOR))
     season_result['is_leak'] = season_result['low_speed'].eq(True) & season_result['is_leak'].eq(True)
-    season_result['expected_purity'] = season_result['spent_fuel'].sub(FUEL_PURITY_VALUE).div(season_result['spent_fuel']).mul(DECREASE_INCREASE_RATIO)
+    season_result['expected_purity'] = season_result['ratio'].gt((FUEL_PURITY_VALUE / season_result['spent_fuel']).clip(0, 1))
     season_result['is_leak'] = season_result['is_leak'] & season_result['ratio'].ge(season_result['expected_purity'])
     if is_save_bad_data:
         return (season_result, bad_data)
