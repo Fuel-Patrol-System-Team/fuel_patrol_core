@@ -96,12 +96,10 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
 
     anti_bug_aggregation = anti_bug_aggregation.rename(columns={"pos_a": "count"})
     anti_bug_aggregation['spent_fuel'].mask(df['pos_a'].eq(0) & df['spent_fuel'].gt(0.0) & df['spent_fuel'].lt(REFUELING_LIMIT), np.nan, inplace=True)
-    anti_bug_aggregation['max_fuel'] = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')])['calc_sensors_fuel_level'].transform('max')
     # return anti_bug_aggregation
     pre_period_df = anti_bug_aggregation.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PRE_PERIOD_TIME}min')]).agg({
         'pos_s': 'median',
         'spent_fuel': 'sum',
-        'max_fuel': 'max',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
         "count": "sum",
@@ -122,7 +120,6 @@ def preprocess(df: pd.DataFrame, ANTI_BUG_TIME_SECONDS=10, PRE_PERIOD_TIME = 3, 
     period_1_df = pre_period_df.groupby([pd.Grouper(key='auto'), pd.Grouper(key='timestamp', freq=f'{PERIOD_2_MIN}min')]).agg( {
         'pos_s': 'mean',
         'spent_fuel': 'sum',
-        'max_fuel': 'max',
         'dtime': 'sum',
         'dtime_per_hour': 'sum',
         "travel": "sum",
