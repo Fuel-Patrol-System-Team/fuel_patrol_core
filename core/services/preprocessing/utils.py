@@ -151,13 +151,13 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
     # прыжки туда сюда за 30 минут в FUEL_JIGGLE_FACTOR раз чем объем топлива, немного много пока хватит, лучше время не юзать
     df_values['is_bad_data_count'] = df_values['count'].le(5)
     df_values['is_bad_data_jitter'] = df_values['jumps'].gt(FUEL_JUMPS_AMOUNT)
-    df_values['is_bad_data'] = df_values['is_bad_data_count'] | df_values['is_bad_data_jitter']
+    df_values['is_bad_data'] = df_values['is_bad_data_count'].eq(True) | df_values['is_bad_data_jitter'].eq(True)
     df_values['reason'] = np.where(df_values['is_bad_data_count'].eq(True), "Слишком малое число записей", "")
     df_values['reason'] = np.where(df_values['is_bad_data_jitter'].eq(True), "Скачки уровня топлива", "")
-    df_values = df_values[df_values['is_bad_data'].eq(False)]
     bad_data = None
     if is_save_bad_data == True:
         bad_data = df_values[df_values['is_bad_data'].eq(True)]
+    df_values = df_values[df_values['is_bad_data'].eq(False)]
     # РАСЧЕТЫ
     df_values['spent_fuel'] = df_values['spent_fuel'].mask(df_values['spent_fuel'].ge(0), other=0)
     df_values['spent_fuel'] = df_values['spent_fuel'].abs()
