@@ -142,25 +142,26 @@ def merge(car_data: pd.DataFrame, preprocessed_df: pd.DataFrame):
 
 
 #TODO:save_bad_data
-def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT=12, SIGMA_LIMIT=3.5,
-                                 MULT_STD_MEAN_DIFF=2.25, FUEL_JUMPS_AMOUNT=15, LEAK_FACTOR=0.05,
-                                 SMALL_SPEED_FACTOR=2.25, UNTARIFF_LEVEL=400, is_save_bad_data=False) -> tuple[
-    pd.DataFrame, pd.DataFrame | None]:
-    # проверки на сломанные датчики
-    # можно ускорить алгоритм, сохранив данные для машин, пока нет смысла
-    # прыжки туда сюда за 30 минут в FUEL_JIGGLE_FACTOR раз чем объем топлива, немного много пока хватит, лучше время не юзать
+def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.DataFrame, LEAK_LIMIT = 12, SIGMA_LIMIT = 3.5, MULT_STD_MEAN_DIFF = 2.25, FUEL_JUMPS_AMOUNT = 30, LEAK_FACTOR = 0.05, SMALL_SPEED_FACTOR = 2.25, UNREASONABLE_FUEL_LEVEL = 1000 , UNTARIFF_LEVEL = 400, is_save_bad_data = False):
     df_values['is_bad_data_count'] = df_values['count'].le(5)
     df_values['is_bad_data_jitter'] = df_values['jumps'].gt(FUEL_JUMPS_AMOUNT)
-    df_values['is_bad_data'] = df_values['is_bad_data_count'].eq(True) | df_values['is_bad_data_jitter'].eq(True)
-    df_values['reason'] = np.where(df_values['is_bad_data_count'].eq(True), "Слишком малое число записей", "")
-    df_values['reason'] = np.where(df_values['is_bad_data_jitter'].eq(True), "Скачки уровня топлива", "")
+    
+    df_values['spent_fuel'] = df_values['spent_fuel'].mask(df_values['spent_fuel'].ge(0), other=0)
+    df_values['spent_fuel'] = df_values['spent_fuel'].abs()
+
+    df_values['is_bad_data_unreasonable_fuel'] = df_values['spent_fuel'].gt(UNREASONABLE_FUEL_LEVEL)
+
+    df_values['is_bad_data'] = df_values['is_bad_data_count'].eq(True) | df_values['is_bad_data_jitter'].eq(True) | df_values['is_bad_data_unreasonable_fuel'].eq(True)
+    
+    # df_values['ratio'] = df_values['fd'].div(df_values['count'])
     bad_data = None
     if is_save_bad_data == True:
         bad_data = df_values[df_values['is_bad_data'].eq(True)]
+        bad_data['reason'] = np.where(bad_data['is_bad_data_count'].eq(True), "Слишком малое число записей", "")
+        bad_data['reason'] = np.where(bad_data['is_bad_data_jitter'].eq(True), "Скачки уровня топлива", bad_data['reason'])
+        bad_data['reason'] = np.where(bad_data['is_bad_data_unreasonable_fuel'].eq(True), "Невозможный уровень расхода топлива", bad_data['reason'])
     df_values = df_values[df_values['is_bad_data'].eq(False)]
     # РАСЧЕТЫ
-    df_values['spent_fuel'] = df_values['spent_fuel'].mask(df_values['spent_fuel'].ge(0), other=0)
-    df_values['spent_fuel'] = df_values['spent_fuel'].abs()
 
     # тарирование
     df_values['spent_fuel'] = df_values['spent_fuel'].div(df_values['input']).mul(df_values['output'])
@@ -236,7 +237,6 @@ def fuel_leak_calculate_standart(df_values: pd.DataFrame, norma_rasx_df: pd.Data
         return (season_result, bad_data)
 
     return (season_result, None)
-
 
 
 
