@@ -2,11 +2,11 @@ from django_celery_beat.admin import TaskSelectWidget, PeriodicTaskForm
 
 from unfold.widgets import UnfoldAdminSelectWidget, UnfoldAdminTextInputWidget
 
-from import_export.formats.base_formats import CSV, JSON
+from import_export.formats.base_formats import CSV, JSON, XLSX, XLS
 from import_export.forms import ImportForm, ExportForm
 from unfold.widgets import UnfoldAdminSelectWidget, UnfoldAdminFileFieldWidget
 
-CUSTOM_FORMATS = [CSV, JSON]
+CUSTOM_FORMATS = [CSV, JSON, XLSX, XLS]
 
 
 class UnfoldImportForm(ImportForm):

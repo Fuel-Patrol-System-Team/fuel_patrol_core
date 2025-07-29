@@ -1,6 +1,7 @@
 from drf_yasg import openapi
 
-from core.serializers import CarMetricSerializer, CarReportOutputSerializer, DataProviderSerializer
+from core.serializers import CarMetricSerializer, CarReportOutputSerializer, DataProviderSerializer, \
+    CarActiveStatusSerializer
 
 PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -33,22 +34,55 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
 )
 
 CAR_LEAKS_SCHEMA = {
-    'operation_description': "Получение всех сливов по указанному автомобилю организации с опциональной фильтрацией по датам.",
+    'operation_description': (
+        "Получение всех сливов по указанному автомобилю организации с опциональной "
+        "фильтрацией по датам и объёму слива."
+    ),
     'manual_parameters': [
-        openapi.Parameter('car_id', openapi.IN_QUERY, description="ID автомобиля", type=openapi.TYPE_STRING,
-                          required=True),
-        openapi.Parameter('periodFrom', openapi.IN_QUERY, description="Начальная дата (YYYY-MM-DD)",
-                          type=openapi.TYPE_STRING, required=False),
-        openapi.Parameter('periodDue', openapi.IN_QUERY, description="Конечная дата (YYYY-MM-DD)",
-                          type=openapi.TYPE_STRING, required=False),
+        openapi.Parameter(
+            name='car_id',
+            in_=openapi.IN_QUERY,
+            description="ID автомобиля (UUID)",
+            type=openapi.TYPE_STRING,
+            required=True
+        ),
+        openapi.Parameter(
+            name='periodFrom',
+            in_=openapi.IN_QUERY,
+            description="Начальная дата и время в формате ISO 8601 (например, 2025-01-01T00:00:00)",
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATETIME,
+            required=False
+        ),
+        openapi.Parameter(
+            name='periodDue',
+            in_=openapi.IN_QUERY,
+            description="Конечная дата и время в формате ISO 8601 (например, 2025-12-31T23:59:59)",
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATETIME,
+            required=False
+        ),
+        openapi.Parameter(
+            name='volume_from',
+            in_=openapi.IN_QUERY,
+            description="Минимальный объём слива",
+            type=openapi.TYPE_INTEGER,
+            required=False
+        ),
+        openapi.Parameter(
+            name='volume_to',
+            in_=openapi.IN_QUERY,
+            description="Максимальный объём слива",
+            type=openapi.TYPE_INTEGER,
+            required=False
+        ),
     ],
     'responses': {
         200: CarReportOutputSerializer(many=True),
-        400: "Bad Request",
+        400: "Bad Request: Неверные параметры запроса",
         404: "Car not found or not associated with organization"
     }
 }
-
 DATA_PROVIDER_CREATE_SCHEMA = {
     'operation_description': 'Создаёт нового провайдера данных.',
     'request_body': openapi.Schema(
@@ -263,5 +297,37 @@ CAR_METRICS_SCHEMA = {
         400: 'Неверный формат параметров',
         404: 'Автомобиль или данные не найдены',
         500: 'Внутренняя ошибка сервера'
+    }
+}
+
+CAR_ACTIVE_STATUS_SCHEMA = {
+    "tags": ["cars"],
+    "operation_description": "Обновляет статус активности автомобиля по его ID.",
+    "manual_parameters": [
+        openapi.Parameter(
+            name='car_id',
+            in_=openapi.IN_QUERY,
+            description="ID автомобиля (UUID)",
+            type=openapi.TYPE_STRING,
+            required=True
+        ),
+    ],
+    "request_body": CarActiveStatusSerializer,
+    "responses": {
+        200: openapi.Response(
+            description="Успешный ответ",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'message': openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="Сообщение об успешном обновлении",
+                        example="Статус активности автомобиля успешно обновлён"
+                    )
+                }
+            )
+        ),
+        400: openapi.Response(description="Неверные параметры запроса"),
+        404: openapi.Response(description="Автомобиль не найден или не принадлежит организации"),
     }
 }

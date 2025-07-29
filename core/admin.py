@@ -149,11 +149,11 @@ class OrgUserAdmin(ImportExportMixin, ModelAdmin):
 class CarAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
         'id', 'name', 'description', 'engine_type', 'input', 'output',
-        'is_tarrified', 'data_providers_display', 'created_at'
+        'is_tarrified', 'is_active', 'data_providers_display', 'created_at'
     )
     list_filter = ('engine_type', 'created_at', 'is_tarrified')
     search_fields = ('name', 'description')
-    ordering = ('name',)
+    ordering = ('name','is_active','is_tarrified')
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
     inlines = [CarReportInline, CarConsumptionInline, DriverCarInline]

@@ -66,6 +66,7 @@ class Car(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     last_processed_date = models.DateTimeField(**NULLABLE)
     is_tarrified = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "Car"

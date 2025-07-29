@@ -24,14 +24,15 @@ from .pagination import StandardResultsSetPagination
 from .rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
-    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA
+    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA
 )
 from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, CarLeaksSerializer,
-    DataProviderOutputSerializer, CarLeaksFilterSerializer, DataProviderSerializer, CarBadDataOutputSerializer
+    DataProviderOutputSerializer, CarLeaksFilterSerializer, DataProviderSerializer, CarBadDataOutputSerializer,
+    CarActiveStatusSerializer
 )
 from .services.databases.influx_db import query_influxdb
 
@@ -256,6 +257,28 @@ class CarLeaksVolumeAPIView(APIView):
         return success_response(result, status.HTTP_200_OK)
 
 
+class CarActiveStatusAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**CAR_ACTIVE_STATUS_SCHEMA)
+    def post(self, request):
+        car_id = request.query_params.get('car_id')
+        if not car_id:
+            logger.error("Не указан параметр car_id")
+            return error_response({"car_id": "Параметр car_id обязателен"}, status.HTTP_400_BAD_REQUEST)
+
+        serializer = CarActiveStatusSerializer(data=request.data, context={'request': request, 'car_id': car_id})
+        if not serializer.is_valid():
+            logger.error(f"Ошибка валидации данных: {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+
+        serializer.save()
+        return success_response(
+            {"car_id": car_id},
+            status.HTTP_200_OK
+        )
+
+
 class UserInfoAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -274,7 +297,6 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
-## TODO: Параметр типа use_bad_data (Bool) - на вход и передавать его в compute_leaks_chunk
 class ProviderDataRequestAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -517,7 +539,7 @@ class CarListAPIView(ListAPIView):
     serializer_class = CarOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['name']
+    filterset_fields = ['name', 'is_active', 'is_tarrified']
     search_fields = ['name', 'description']
 
     def get_queryset(self):
@@ -682,7 +704,7 @@ class CarLeaksAPIView(ListAPIView):
     serializer_class = CarReportOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['datetime', 'status']
+    filterset_fields = ['datetime', 'status', 'volume']
     search_fields = ['car_id__name']
 
     @swagger_auto_schema(**CAR_LEAKS_SCHEMA)
@@ -696,6 +718,8 @@ class CarLeaksAPIView(ListAPIView):
         car_id = data['car_id']
         period_from = data.get('periodFrom')
         period_due = data.get('periodDue')
+        volume_from = data.get('volume_from')
+        volume_to = data.get('volume_to')
 
         car_exists = Car.objects.filter(
             id=car_id,
@@ -713,6 +737,10 @@ class CarLeaksAPIView(ListAPIView):
             queryset = queryset.filter(datetime__gte=period_from)
         if period_due:
             queryset = queryset.filter(datetime__lte=period_due)
+        if volume_from is not None:
+            queryset = queryset.filter(volume__gte=volume_from)
+        if volume_to is not None:
+            queryset = queryset.filter(volume__lte=volume_to)
 
         logger.info(f"Возвращены сливы для автомобиля {car_id}")
         return self.list(request, *args, **kwargs)

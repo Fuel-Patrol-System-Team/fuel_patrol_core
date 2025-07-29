@@ -13,7 +13,7 @@ class CarOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Car
         fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output',
-                  'is_tarrified', 'created_at']
+                  'is_tarrified', 'is_active', 'created_at']
 
 
 class DriverOutputSerializer(serializers.ModelSerializer):
@@ -150,8 +150,39 @@ class CarLeaksSerializer(serializers.Serializer):
 
 class CarLeaksFilterSerializer(serializers.Serializer):
     car_id = serializers.UUIDField(required=True, help_text="ID автомобиля")
-    periodFrom = serializers.DateField(required=False, allow_null=True, help_text="Начальная дата фильтрации")
-    periodDue = serializers.DateField(required=False, allow_null=True, help_text="Конечная дата фильтрации")
+    periodFrom = serializers.DateTimeField(
+        required=False, allow_null=True, help_text="Начальная дата и время фильтрации"
+    )
+    periodDue = serializers.DateTimeField(
+        required=False, allow_null=True, help_text="Конечная дата и время фильтрации"
+    )
+    volume_from = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0, help_text="Минимальный объём слива"
+    )
+    volume_to = serializers.IntegerField(
+        required=False, allow_null=True, min_value=0, help_text="Максимальный объём слива"
+    )
+
+    def validate(self, data):
+        """
+        Проверка корректности диапазона дат и объёмов.
+        """
+        period_from = data.get("periodFrom")
+        period_due = data.get("periodDue")
+        volume_from = data.get("volume_from")
+        volume_to = data.get("volume_to")
+
+        if period_from and period_due and period_from > period_due:
+            raise serializers.ValidationError(
+                {"periodFrom": "Начальная дата не может быть позже конечной даты."}
+            )
+
+        if volume_from is not None and volume_to is not None and volume_from > volume_to:
+            raise serializers.ValidationError(
+                {"volume_from": "Минимальный объём не может быть больше максимального."}
+            )
+
+        return data
 
 
 class DataProviderSerializer(serializers.ModelSerializer):
@@ -165,3 +196,39 @@ class DataProviderSerializer(serializers.ModelSerializer):
     class Meta:
         model = DataProvider
         fields = ['name', 'metadata', 'cars']
+
+class CarActiveStatusSerializer(serializers.Serializer):
+    is_active = serializers.BooleanField(required=True, help_text="Статус активности автомобиля")
+
+    def validate(self, data):
+        """
+        Проверка существования автомобиля и его принадлежности организации.
+        """
+        car_id = self.context.get('car_id')
+        user = self.context['request'].user
+
+        if not car_id:
+            raise serializers.ValidationError({"car_id": "Параметр car_id обязателен"})
+
+        try:
+            car = Car.objects.get(
+                id=car_id,
+                data_providers__org_id=user.org
+            )
+        except Car.DoesNotExist:
+            raise serializers.ValidationError(
+                {"car_id": "Автомобиль не найден или не принадлежит вашей организации"}
+            )
+
+        data['car'] = car
+        return data
+
+    def save(self):
+        """
+        Обновление статуса is_active автомобиля.
+        """
+        car = self.validated_data['car']
+        is_active = self.validated_data['is_active']
+        car.is_active = is_active
+        car.save()
+        return car
