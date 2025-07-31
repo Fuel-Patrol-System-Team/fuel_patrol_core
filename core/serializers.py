@@ -10,10 +10,11 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
 
 
 class CarOutputSerializer(serializers.ModelSerializer):
+    bad_data_count = serializers.IntegerField(read_only=True)
     class Meta:
         model = Car
         fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output',
-                  'is_tarrified', 'is_active', 'created_at', 'car_data_count']
+                  'is_tarrified', 'is_active', 'created_at', 'bad_data_count']
 
 
 class DriverOutputSerializer(serializers.ModelSerializer):

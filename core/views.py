@@ -543,9 +543,10 @@ class CarListAPIView(ListAPIView):
     search_fields = ['name', 'description']
 
     def get_queryset(self):
-        return Car.objects.filter(
+        result = Car.objects.filter(
             data_providers__org_id=self.request.user.org.id
-        ).annotate(Count(bad_data_count=Count('bad_data'))).order_by('id')
+        ).annotate(bad_data_count=Count('bad_data')).order_by('id')
+        return result
 
 
 class CarDetailAPIView(RetrieveAPIView):
