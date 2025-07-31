@@ -13,7 +13,7 @@ class CarOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = Car
         fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output',
-                  'is_tarrified', 'is_active', 'created_at']
+                  'is_tarrified', 'is_active', 'created_at', 'car_data_count']
 
 
 class DriverOutputSerializer(serializers.ModelSerializer):
