@@ -1,5 +1,5 @@
 import subprocess
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.urls import reverse
 from django.utils.safestring import mark_safe
 from unfold.admin import ModelAdmin
@@ -153,11 +153,11 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
     )
     list_filter = ('engine_type', 'created_at', 'is_tarrified')
     search_fields = ('name', 'description')
-    ordering = ('name','is_active','is_tarrified')
+    ordering = ('name', 'is_active', 'is_tarrified')
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
     inlines = [CarReportInline, CarConsumptionInline, DriverCarInline]
-    actions = ['export_selected']
+    actions = ['export_selected', 'deactivate_selected', 'activate_selected']
 
     def data_providers_display(self, obj):
         providers = obj.data_providers.all()
@@ -171,6 +171,24 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
         return mark_safe(result)
 
     data_providers_display.short_description = "Поставщики данных"
+
+    @admin.action(description='Деактивировать выбранные машины')
+    def deactivate_selected(self, request, queryset):
+        updated = queryset.update(is_active=False)
+        self.message_user(
+            request,
+            f'Деактивировано {updated} машин(ы)',
+            messages.SUCCESS
+        )
+
+    @admin.action(description='Активировать выбранные машины')
+    def activate_selected(self, request, queryset):
+        updated = queryset.update(is_active=True)
+        self.message_user(
+            request,
+            f'Активировано {updated} машин(ы)',
+            messages.SUCCESS
+        )
 
 
 @admin.register(CarConsumption)

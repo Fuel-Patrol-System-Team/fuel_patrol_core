@@ -1,3 +1,5 @@
+import uuid
+
 import requests
 import logging
 from typing import Dict, Any, Optional, List
@@ -144,7 +146,6 @@ class GlonassSoftProvider:
                     logger.error(f"Ожидался список, получен: {type(data)}")
                     return None
 
-
                 report_query = ReportQuery.objects.get(id=self.report_query_id)
                 provider = report_query.provider_id
                 existing_cars = Car.objects.filter(data_providers=provider).select_related()
@@ -170,38 +171,36 @@ class GlonassSoftProvider:
                         input_value = vehicle_details.get("input")
                         output_value = vehicle_details.get("output")
 
-                        car = existing_cars_dict.get(vehicle_id)
-                        if car:
+                        # Используем get_or_create вместо прямого создания
+                        car, created = Car.objects.get_or_create(
+                            id_in_provider_system=vehicle_id,
+                            defaults={
+                                'id': vehicle_details.get("vehicleGuid", uuid.uuid4()),
+                                'name': vehicle_details.get("name", ""),
+                                'description': f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
+                                'engine_type': 0.0,
+                                'input': input_value,
+                                'output': output_value,
+                                'is_tarrified': False,
+                                'is_active': True
+                            }
+                        )
 
-                            if not car.is_active:
-                                logger.info(f"Пропущена машина vehicleId={vehicle_id}: не активна")
-                                continue
+                        # Если машина неактивна - пропускаем
+                        if not car.is_active:
+                            logger.info(f"Пропущена машина vehicleId={vehicle_id}: не активна")
+                            continue
 
-                            if start_date and car.last_processed_date and start_date <= car.last_processed_date:
-                                logger.info(
-                                    f"Пропущена машина vehicleId={vehicle_id}: start_date ({start_date}) <= last_processed_date ({car.last_processed_date})")
-                                continue
+                        # Проверяем даты только для существующих машин
+                        if not created and start_date and car.last_processed_date and start_date <= car.last_processed_date:
+                            logger.info(
+                                f"Пропущена машина vehicleId={vehicle_id}: start_date ({start_date}) <= last_processed_date ({car.last_processed_date})")
+                            continue
 
                         if (input_value is None or output_value is None) or (input_value == output_value):
-                            if car:
-                                self._create_bad_data(car, "Нетарированное ТС")
-                                logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
-                                continue
-                            else:
-                                car = Car.objects.create(
-                                    id=vehicle_details.get("vehicleGuid"),
-                                    id_in_provider_system=vehicle_id,
-                                    name=vehicle_details.get("name", ""),
-                                    description=f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
-                                    engine_type=0.0,
-                                    input=input_value,
-                                    output=output_value,
-                                    is_tarrified=False
-                                )
-                                logger.info(f"Создана временная запись Car для vehicleId={vehicle_id}")
-                                self._create_bad_data(car, "Нетарированное ТС")
-                                logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
-                                continue
+                            self._create_bad_data(car, "Нетарированное ТС")
+                            logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
+                            continue
 
                         car_start_date = start_date
                         created_at_str = vehicle_details.get("createdAt")
@@ -218,7 +217,7 @@ class GlonassSoftProvider:
 
                         if not car_start_date:
                             car_start_date = created_at if is_initial_processing else (
-                                        car.last_processed_date or created_at)
+                                    car.last_processed_date or created_at)
                         car_end_date = end_date or datetime.now(tz=pytz.UTC)
 
                         if car_start_date.tzinfo is None:
@@ -226,21 +225,8 @@ class GlonassSoftProvider:
                         if car_end_date.tzinfo is None:
                             car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
 
-
                         data_period = (car_end_date - car_start_date).days
                         if data_period < self.min_data_period_days:
-                            if not car:
-                                car = Car.objects.create(
-                                    id=vehicle_details.get("vehicleGuid"),
-                                    id_in_provider_system=vehicle_id,
-                                    name=vehicle_details.get("name", ""),
-                                    description=f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
-                                    engine_type=0.0,
-                                    input=input_value,
-                                    output=output_value,
-                                    is_tarrified=False
-                                )
-                                logger.info(f"Создана временная запись Car для vehicleId={vehicle_id}")
                             self._create_bad_data(
                                 car,
                                 f"Мало данных, минимальный объём анализируемой информации {self.min_data_period_days} дней"
@@ -251,7 +237,6 @@ class GlonassSoftProvider:
 
                         try:
                             self.save_to_db(vehicle_details)
-                            car = Car.objects.get(id_in_provider_system=vehicle_id)
                             car_start_date = start_date or car.last_processed_date or created_at
                             car_end_date = end_date or datetime.now(tz=pytz.UTC)
                             if car_start_date.tzinfo is None:
@@ -260,9 +245,6 @@ class GlonassSoftProvider:
                                 car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
                             self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
                             processed_vehicles.append(vehicle_details)
-                        except Car.DoesNotExist:
-                            logger.warning(f"Автомобиль vehicleId={vehicle_id} не найден после сохранения")
-                            continue
                         except Exception as e:
                             logger.error(f"Ошибка обработки vehicleId={vehicle_id}: {e}")
                             continue
@@ -367,7 +349,7 @@ class GlonassSoftProvider:
                     logger.info(f"Уменьшен период до {self.default_period_days} дней из-за ошибки 429.")
                 else:
                     self.default_period_days = 90
-            self._save_all_terminal_messages_to_csv(vehicle_id)
+            # self._save_all_terminal_messages_to_csv(vehicle_id)
             try:
                 car = Car.objects.get(id_in_provider_system=vehicle_id)
                 if not car.last_processed_date or end_date > car.last_processed_date:
@@ -450,35 +432,35 @@ class GlonassSoftProvider:
                 logger.error(f"Ошибка получения данных vehicleId={vehicle_id}: {e}")
                 return False
 
-    def _save_all_terminal_messages_to_csv(self, vehicle_id: int) -> None:
-        messages = self.all_terminal_messages.get(vehicle_id, [])
-        if not messages:
-            logger.info(f"Нет данных terminalMessages для vehicleId={vehicle_id}")
-            return
-
-        timestamp = datetime.now(tz=pytz.UTC).strftime("%Y%m%d_%H%M%S")
-        csv_file_path = Path(
-            settings.MEDIA_ROOT) / "full_terminal_messages" / f"full_terminal_messages_{vehicle_id}.csv"
-        os.makedirs(csv_file_path.parent, exist_ok=True)
-
-        headers = set()
-        for msg in messages:
-            flat_msg = self._flatten_parameters(msg)
-            headers.update(flat_msg.keys())
-        headers = sorted(headers)
-
-        with open(csv_file_path, "w", encoding="utf-8", newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
-            writer.writeheader()
-            for msg in messages:
-                flat_msg = self._flatten_parameters(msg)
-                row = {key: flat_msg.get(key, '') for key in headers}
-                writer.writerow(row)
-        file_size = os.path.getsize(csv_file_path) / 1024 ** 2
-        logger.info(
-            f"Все terminalMessages сохранены в {csv_file_path} ({file_size:.2f} MB) для vehicleId={vehicle_id}")
-        self.all_terminal_messages[vehicle_id] = []
-        self._log_resources("save_all_terminal_messages_to_csv")
+    # def _save_all_terminal_messages_to_csv(self, vehicle_id: int) -> None:
+    #     messages = self.all_terminal_messages.get(vehicle_id, [])
+    #     if not messages:
+    #         logger.info(f"Нет данных terminalMessages для vehicleId={vehicle_id}")
+    #         return
+    #
+    #     timestamp = datetime.now(tz=pytz.UTC).strftime("%Y%m%d_%H%M%S")
+    #     csv_file_path = Path(
+    #         settings.MEDIA_ROOT) / "full_terminal_messages" / f"full_terminal_messages_{vehicle_id}.csv"
+    #     os.makedirs(csv_file_path.parent, exist_ok=True)
+    #
+    #     headers = set()
+    #     for msg in messages:
+    #         flat_msg = self._flatten_parameters(msg)
+    #         headers.update(flat_msg.keys())
+    #     headers = sorted(headers)
+    #
+    #     with open(csv_file_path, "w", encoding="utf-8", newline='') as f:
+    #         writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
+    #         writer.writeheader()
+    #         for msg in messages:
+    #             flat_msg = self._flatten_parameters(msg)
+    #             row = {key: flat_msg.get(key, '') for key in headers}
+    #             writer.writerow(row)
+    #     file_size = os.path.getsize(csv_file_path) / 1024 ** 2
+    #     logger.info(
+    #         f"Все terminalMessages сохранены в {csv_file_path} ({file_size:.2f} MB) для vehicleId={vehicle_id}")
+    #     self.all_terminal_messages[vehicle_id] = []
+    #     self._log_resources("save_all_terminal_messages_to_csv")
 
     def _flatten_parameters(self, message: Dict[str, Any]) -> Dict[str, Any]:
         import re
@@ -528,7 +510,8 @@ class GlonassSoftProvider:
             "amtr_z": "amtr_z",
             "altitude": "altitude",
             "latitude": "latitude",
-            "longitude": "longitude"
+            "longitude": "longitude",
+            "satellites": "sattelites"
         }
         headers = list(column_mapping.values())
         logger.info(f"Запись CSV с заголовками: {headers}")
@@ -554,7 +537,9 @@ class GlonassSoftProvider:
                 "amtr_z": flat_record.get("amtr_z"),
                 "altitude": flat_record.get("altitude"),
                 "latitude": flat_record.get("latitude"),
-                "longitude": flat_record.get("longitude")
+                "longitude": flat_record.get("longitude"),
+                "satellites": flat_record.get("satellites")
+
             }
             renamed_record = {column_mapping[k]: v for k, v in filtered_record.items() if k in column_mapping}
             renamed_data.append(renamed_record)
@@ -619,7 +604,8 @@ class GlonassSoftProvider:
                         "input": vehicle_data.get("input"),
                         "output": vehicle_data.get("output"),
                         "is_tarrified": not ((vehicle_data.get("input") is None or vehicle_data.get("input") == 1.0) and
-                                             (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0))
+                                             (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0)),
+                        "is_active": True  # При обновлении всегда устанавливаем is_active=True
                     }
                 )
                 provider.cars.add(car)
