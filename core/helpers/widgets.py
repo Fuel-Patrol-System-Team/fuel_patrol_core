@@ -1,6 +1,6 @@
 from django_celery_beat.admin import TaskSelectWidget, PeriodicTaskForm
 
-from unfold.widgets import UnfoldAdminSelectWidget, UnfoldAdminTextInputWidget
+from unfold.widgets import UnfoldAdminTextInputWidget
 
 from import_export.formats.base_formats import CSV, JSON, XLSX, XLS
 from import_export.forms import ImportForm, ExportForm
@@ -14,7 +14,6 @@ class UnfoldImportForm(ImportForm):
         super().__init__(*args, **kwargs)
         self.fields["import_file"].widget = UnfoldAdminFileFieldWidget()
 
-        # Создаём кортежи (значение, метка)
         format_choices = [(str(i), f.__name__) for i, f in enumerate(CUSTOM_FORMATS)]
         self.fields["format"].widget = UnfoldAdminSelectWidget(choices=format_choices)
 

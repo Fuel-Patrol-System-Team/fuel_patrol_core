@@ -1,0 +1,17 @@
+[console_scripts]
+cache-clean = scripts.__main__:cache_clean
+celery-beat = scripts.__main__:celery_beat
+celery-purge = scripts.__main__:celery_purge
+celery-worker = scripts.__main__:celery_worker
+collectstatic = scripts.__main__:collectstatic
+export-requirements = scripts.__main__:export_requirements
+help = scripts.__main__:show_help
+inspectdb = scripts.__main__:inspectdb
+install-editable = scripts.__main__:install_editable
+makemigrations = scripts.__main__:makemigrations
+migrate = scripts.__main__:migrate
+requirements = scripts.__main__:requirements
+shell = scripts.__main__:shell
+start = scripts.__main__:start
+superuser = scripts.__main__:superuser
+sync = scripts.__main__:sync

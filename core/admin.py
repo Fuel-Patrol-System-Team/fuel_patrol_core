@@ -1,4 +1,3 @@
-import subprocess
 from django.contrib import admin, messages
 from django.urls import reverse
 from django.utils.safestring import mark_safe
@@ -16,7 +15,7 @@ from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
     Media, ReportQuery, DataProvider, CarBadData
 )
-from core.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
+from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
 admin.site.unregister(PeriodicTask)
 admin.site.unregister(IntervalSchedule)

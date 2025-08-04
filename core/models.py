@@ -1,6 +1,5 @@
 import os
 import uuid
-from idlelib.pyparse import trans
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
@@ -8,7 +7,6 @@ from django.db.models.signals import post_delete
 from django.dispatch import receiver
 from django.utils import timezone
 
-from core.services.media.utils import calculate_file_hash
 from core.services.notifications.tg_bot import logger
 
 NULLABLE = {
@@ -145,6 +143,7 @@ class Media(models.Model):
         return self.filename
 
     def save(self, *args, **kwargs):
+        from core.helpers.media_utils import calculate_file_hash
         if self.file:
             self.size = self.file.size
             self.file_hash = calculate_file_hash(self.file)

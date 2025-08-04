@@ -8,6 +8,7 @@ def get_upload_path(filename):
         folder = 'datasets'
     return os.path.join(folder, filename)
 
+
 def calculate_file_hash(file_obj):
     hash_sha256 = hashlib.sha256()
     for chunk in file_obj.chunks():
