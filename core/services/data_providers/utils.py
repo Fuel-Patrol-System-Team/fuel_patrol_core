@@ -295,7 +295,7 @@ class GlonassSoftProvider:
                 input_value, output_value = None, None
                 for sensor in data.get("sensors", []):
                     if "FuelLvl" in sensor.get("type", "") and sensor.get("gradeType") == "GradeTable":
-                        record = sensor.get("gradesTables", [{}])[0].get("grades", [{}])[-1]
+                        record = sensor.get("gradesTables", [{}])[-1].get("grades", [{}])[-1]
                         input_value = record.get("input")
                         output_value = record.get("output")
                         break
@@ -431,7 +431,7 @@ class GlonassSoftProvider:
             except Exception as e:
                 logger.error(f"Ошибка получения данных vehicleId={vehicle_id}: {e}")
                 return False
-
+    #
     # def _save_all_terminal_messages_to_csv(self, vehicle_id: int) -> None:
     #     messages = self.all_terminal_messages.get(vehicle_id, [])
     #     if not messages:
@@ -482,7 +482,7 @@ class GlonassSoftProvider:
                     flat["amtr_z"] = value
             if fuel_values:
                 min_index = min(fuel_values.keys())
-                flat["calc_sensors_fuel_level"] = fuel_values[min_index]
+                flat["calc_sensors_fuel_level"] = fuel_values.get(min_index)
             for key, value in parameters.items():
                 flat[f"parameters.{key}"] = value
         return flat
@@ -511,7 +511,7 @@ class GlonassSoftProvider:
             "altitude": "altitude",
             "latitude": "latitude",
             "longitude": "longitude",
-            "satellites": "sattelites"
+            "satellites": "satellites"
         }
         headers = list(column_mapping.values())
         logger.info(f"Запись CSV с заголовками: {headers}")
@@ -539,14 +539,20 @@ class GlonassSoftProvider:
                 "latitude": flat_record.get("latitude"),
                 "longitude": flat_record.get("longitude"),
                 "satellites": flat_record.get("satellites")
-
             }
-            renamed_record = {column_mapping[k]: v for k, v in filtered_record.items() if k in column_mapping}
+
+            if "calc_sensors_fuel_level" in filtered_record and flat_record.get("calc_sensors_fuel_level") is None:
+                filtered_record["calc_sensors_fuel_level"] = None
+
+            renamed_record = {column_mapping[k]: v for k, v in filtered_record.items()
+                              if k in column_mapping and v is not None}
             renamed_data.append(renamed_record)
 
         with open(self.csv_file_path, "a", encoding="utf-8", newline='') as f:
             writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
-            writer.writerows(renamed_data)
+            for row in renamed_data:
+                writer.writerow({k: ('' if v is None else v) for k, v in row.items()})
+
         logger.info(f"Добавлено {len(renamed_data)} записей для vehicleGuid={vehicle_guid}")
         self._log_resources("save_to_csv")
 

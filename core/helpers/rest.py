@@ -33,6 +33,90 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     required=["provider_name"]
 )
 
+
+UPDATE_TARRIFICATION_SCHEMA = {
+    'operation_description': (
+        "Обновляет данные тарировки автомобилей от провайдера. "
+        "Позволяет обновить данные тарировки (input/output) для всех машин организации "
+        "или только для уже тарированных машин (is_tarrified=True)."
+    ),
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            "provider_name": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Имя провайдера (например, 'glonasssoft')",
+                example="glonasssoft"
+            ),
+            "all_cars": openapi.Schema(
+                type=openapi.TYPE_BOOLEAN,
+                description=(
+                    "Флаг определяющий охват машин для обновления. "
+                    "True - все машины провайдера, False - только тарированные"
+                ),
+                example=True,
+                default=False
+            )
+        },
+        required=["provider_name"]
+    ),
+    'responses': {
+        200: openapi.Response(
+            description="Данные успешно обновлены",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        example="Обновлено 15 автомобилей"
+                    ),
+                    "count": openapi.Schema(
+                        type=openapi.TYPE_INTEGER,
+                        example=15
+                    )
+                }
+            )
+        ),
+        400: openapi.Response(
+            description="Неверные входные данные",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "error": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        example="Provider name is required"
+                    )
+                }
+            )
+        ),
+        404: openapi.Response(
+            description="Провайдер не найден",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "error": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        example="Provider glonasssoft not found"
+                    )
+                }
+            )
+        ),
+        500: openapi.Response(
+            description="Ошибка сервера",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "error": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        example="Internal server error"
+                    )
+                }
+            )
+        )
+    }
+}
+
+
 CAR_LEAKS_SCHEMA = {
     'operation_description': (
         "Получение всех сливов по указанному автомобилю организации с опциональной "
@@ -83,6 +167,7 @@ CAR_LEAKS_SCHEMA = {
         404: "Car not found or not associated with organization"
     }
 }
+
 DATA_PROVIDER_CREATE_SCHEMA = {
     'operation_description': 'Создаёт нового провайдера данных.',
     'request_body': openapi.Schema(

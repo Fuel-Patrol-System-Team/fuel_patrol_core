@@ -15,7 +15,7 @@ from app.constants import BATCH_SIZE
 from app.settings import BASE_DIR
 from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption, DataProvider, CarBadData
 from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, parse_cars, parse_merged_util, parse_norms
-from core.services.data_providers.utils import save_response_to_file, provider_factory
+from core.services.data_providers.utils import save_response_to_file, provider_factory, GlonassSoftProvider
 from core.services.databases.influx_db import write_to_influxdb
 from core.services.norms_computing.utils import calculate_norms
 from core.services.notifications.tg_bot import send_telegram_message
@@ -130,6 +130,114 @@ def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any],
             raise
 
     return _timeit("fetch_data_from_provider", _fetch)
+
+
+@shared_task(
+    bind=True,
+    soft_time_limit=300,
+    priority=5,
+    rate_limit="1/s",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={'max_retries': 3}
+)
+def update_tarrification_task(self, provider_id, all_cars):
+    def _update_car_tarrification_data(self, car, provider_instance):
+        """Обновление данных тарировки для одного автомобиля"""
+        try:
+            with transaction.atomic():
+                logger.debug(f"Запрос данных для автомобиля {car.id_in_provider_system}")
+                vehicle_details = provider_instance.get_vehicle_details(car.id_in_provider_system)
+
+                if not vehicle_details:
+                    logger.warning(f"Не удалось получить данные для автомобиля {car.id_in_provider_system}")
+                    return False
+
+                new_input = vehicle_details.get("input")
+                new_output = vehicle_details.get("output")
+                logger.debug(f"Получены данные тарировки: input={new_input}, output={new_output}")
+
+                needs_update = (
+                        car.input != new_input or
+                        car.output != new_output or
+                        car.is_tarrified != (
+                                new_input is not None and new_output is not None and new_input != new_output)
+                )
+
+                if needs_update:
+                    logger.info(f"Обновление данных для автомобиля {car.id}: "
+                                f"старые значения (input={car.input}, output={car.output}, is_tarrified={car.is_tarrified}) -> "
+                                f"новые значения (input={new_input}, output={new_output})")
+
+                    car.input = new_input
+                    car.output = new_output
+                    car.is_tarrified = (new_input is not None and
+                                        new_output is not None and
+                                        new_input != new_output)
+                    car.save()
+                    return True
+
+                logger.debug(f"Данные автомобиля {car.id} не требуют обновления")
+                return False
+
+        except Exception as e:
+            logger.error(f"Ошибка при обновлении автомобиля {car.id}: {str(e)}", exc_info=True)
+            return False
+
+    """Асинхронная задача для обновления данных тарификации"""
+    logger.info(f"Запуск задачи обновления тарификации для провайдера {provider_id}, all_cars={all_cars}")
+
+    try:
+        # 1. Получаем провайдера
+        provider = DataProvider.objects.get(id=provider_id)
+        logger.info(f"Найден провайдер: {provider.name} (ID: {provider.id})")
+
+        # 2. Инициализируем клиент провайдера
+        provider_instance = GlonassSoftProvider(provider.metadata or {}, None)
+        logger.info("Экземпляр провайдера создан")
+
+        # 3. Аутентификация
+        if not provider_instance.authenticate():
+            error_msg = "Ошибка аутентификации у провайдера"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        logger.info("Успешная аутентификация у провайдера")
+
+        # 4. Получаем список автомобилей
+        cars = provider.cars.all()
+        if not all_cars:
+            cars = cars.filter(is_tarrified=True)
+        logger.info(f"Найдено {cars.count()} автомобилей для обработки")
+
+        # 5. Обработка автомобилей
+        updated_count = 0
+        for index, car in enumerate(cars, 1):
+            logger.debug(f"Обработка автомобиля {index}/{cars.count()}: {car.name} (ID: {car.id})")
+
+            try:
+                if self._update_car_tarrification_data(car, provider_instance):
+                    updated_count += 1
+                    logger.debug(f"Данные автомобиля {car.id} успешно обновлены")
+            except Exception as e:
+                logger.error(f"Ошибка при обработке автомобиля {car.id}: {str(e)}", exc_info=True)
+                continue
+
+        # 6. Финализация
+        logger.info(f"Задача завершена. Успешно обновлено {updated_count}/{cars.count()} автомобилей")
+        return {
+            'total_cars': cars.count(),
+            'updated_cars': updated_count,
+            'provider_id': provider_id
+        }
+
+    except DataProvider.DoesNotExist as e:
+        error_msg = f"Провайдер с ID {provider_id} не найден"
+        logger.error(error_msg)
+        raise self.retry(exc=e, countdown=60, max_retries=3)
+    except Exception as e:
+        error_msg = f"Критическая ошибка в задаче обновления тарификации: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        raise self.retry(exc=e, countdown=60, max_retries=3)
 
 
 @shared_task(

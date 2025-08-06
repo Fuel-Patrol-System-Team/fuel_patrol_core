@@ -8,7 +8,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
     DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView, DataProviderListAPIView, DataProviderDetailAPIView, \
     ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, CarBadDataListByCarAPIView, \
-    CarActiveStatusAPIView
+    CarActiveStatusAPIView, UpdateTarrificationDataAPIView
 
 urlpatterns = [
 
@@ -37,6 +37,7 @@ urlpatterns = [
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
+    path('cars/input-output', UpdateTarrificationDataAPIView.as_view(), name='car-input-output'),
     path('report-queries', ReportQueryListAPIView.as_view(), name='report-query-list'),
     path('report-queries/<uuid:pk>', ReportQueryDetailAPIView.as_view(), name='report-query-detail'),
     path('media', MediaListAPIView.as_view(), name='media-list'),

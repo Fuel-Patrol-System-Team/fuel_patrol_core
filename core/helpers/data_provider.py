@@ -1,9 +1,11 @@
 import pytz
 from datetime import datetime
 from celery.exceptions import CeleryError
+from django.db import transaction
+
 from core.helpers import *
 from core.models import ReportQuery, DataProvider, Car
-from app.tasks import fetch_data_from_provider
+from app.tasks import fetch_data_from_provider, update_tarrification_task
 
 
 def validate_provider_request(provider_name, start_date, end_date, organization):
@@ -89,3 +91,43 @@ def create_data_provider(validated_data, org_id, cars):
         data_provider.cars.set(cars)
         logger.info(f"Автомобили {cars} привязаны к провайдеру {data_provider.id}")
     return data_provider
+
+
+def validate_tarrification_request(provider_name, organization):
+    """Валидация запроса на обновление тарификации"""
+    if not provider_name:
+        logger.error("Имя провайдера не указано")
+        return False, error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
+
+    if not organization:
+        logger.error("Организация не найдена для пользователя")
+        return False, error_response("User must be associated with an organization", status.HTTP_400_BAD_REQUEST)
+
+    try:
+        provider = DataProvider.objects.get(name=provider_name, org_id=organization)
+    except DataProvider.DoesNotExist:
+        logger.error(f"Провайдер {provider_name} не найден")
+        return False, error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
+
+    return True, (provider, provider.metadata or {})
+
+
+def launch_tarrification_update_task(provider_id, all_cars):
+    """Запуск асинхронной задачи обновления тарификации"""
+    try:
+        update_tarrification_task.delay(provider_id, all_cars)
+        return True, None
+    except CeleryError as e:
+        logger.error(f"Ошибка Celery при запуске задачи: {e}")
+        return False, error_response(
+            "Не удалось запустить задачу обновления",
+            status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+    except Exception as e:
+        logger.error(f"Неожиданная ошибка при запуске задачи: {e}")
+        return False, error_response(
+            "Внутренняя ошибка сервера",
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+

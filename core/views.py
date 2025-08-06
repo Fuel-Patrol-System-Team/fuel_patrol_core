@@ -15,7 +15,7 @@ from core.helpers.cars import get_car_or_error, fetch_car_metrics, filter_leaks_
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
 from .helpers.data_provider import create_provider_data_request, validate_provider_request, validate_provider_cars, \
-    create_data_provider
+    create_data_provider, validate_tarrification_request, launch_tarrification_update_task
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData
@@ -23,7 +23,7 @@ from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
-    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA
+    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, UPDATE_TARRIFICATION_SCHEMA
 )
 from .serializers import (
     UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
@@ -202,6 +202,31 @@ class ProviderDataRequestAPIView(APIView):
         if error:
             return error
         return success_response({"report_query_id": report_query_id}, status.HTTP_201_CREATED)
+
+
+class UpdateTarrificationDataAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**UPDATE_TARRIFICATION_SCHEMA)
+    def post(self, request):
+        provider_name = request.data.get('provider_name')
+        all_cars = request.data.get('all_cars', False)
+
+        # Валидация запроса
+        is_valid, result = validate_tarrification_request(provider_name, request.user.org)
+        if not is_valid:
+            return result
+
+        provider, _ = result
+
+        success, response = launch_tarrification_update_task(provider.id, all_cars)
+        if not success:
+            return response
+
+        return success_response(
+            {"message": "Задача обновления тарификации успешно запущена"},
+            status.HTTP_202_ACCEPTED
+        )
 
 
 class MediaUploadAPIView(APIView):
