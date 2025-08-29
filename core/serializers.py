@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car, DataProvider, \
-    CarBadData
+    CarBadData, SensorsMapping
 
 
 class OrganizationOutputSerializer(serializers.ModelSerializer):
@@ -87,6 +87,11 @@ class CarBadDataOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = CarBadData
         fields = ['id', 'car_name', 'reason', 'datetime']
+
+class SensorsMappingOutputSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SensorsMapping
+        fields = ['id', 'label', 'value', 'car_id']
 
 
 class AttachMediaSerializer(serializers.ModelSerializer):

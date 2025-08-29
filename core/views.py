@@ -18,7 +18,7 @@ from .helpers.data_provider import create_provider_data_request, validate_provid
     create_data_provider
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData
+    CarBadData, SensorsMapping
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -26,7 +26,7 @@ from core.helpers.rest import (
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA
 )
 from .serializers import (
-    UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
+    SensorsMappingOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
@@ -516,6 +516,17 @@ class CarBadDataListByCarAPIView(ListAPIView):
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').order_by('-datetime')
 
+class SensorsMappingListByCardAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = SensorsMappingOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [SearchFilter]
+    search_fields = ['label']
+
+    def get_queryset(self):
+        return SensorsMapping.objects.filter(
+            car_id__data_providers__org_id = self.request.user.org.id
+        )
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

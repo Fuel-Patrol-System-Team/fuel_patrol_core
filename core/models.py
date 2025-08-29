@@ -202,3 +202,16 @@ def delete_media_file(sender, instance, **kwargs):
     if instance.file and os.path.isfile(instance.file.path):
         logger.info(f"Deleting file: {instance.file.path}")
         os.remove(instance.file.path)
+
+class SensorsMapping(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=True)
+    label = models.CharField(max_length=64)
+    value = models.CharField(max_length=64)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="sensors")
+
+    class Meta:
+        verbose_name = "SensorsMapping"
+        verbose_name_plural = "SensorsMappings"
+    
+    def __str__(self):
+        return self.label + " " + self.value

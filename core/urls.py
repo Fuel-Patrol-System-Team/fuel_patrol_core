@@ -5,7 +5,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ReportQueryListAPIView, ReportQueryDetailAPIView, \
     MediaListAPIView, MediaDetailAPIView, CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
-    DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
+    DriverDetailAPIView, SensorsMappingListByCardAPIView, UserRegistrationAPIView, UserInfoAPIView, CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
     DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView, DataProviderListAPIView, DataProviderDetailAPIView, \
     ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, CarBadDataListByCarAPIView, \
     CarActiveStatusAPIView
@@ -50,5 +50,6 @@ urlpatterns = [
     path('dataprovider/create', DataProviderCreateAPIView.as_view(), name='data-provider-create'),
     path('provider-data-request', ProviderDataRequestAPIView.as_view(), name='provider-data-request'),
     path('cars/<uuid:car_id>/bad-data', CarBadDataListByCarAPIView.as_view(), name='car-bad-data-list'),
-    path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status')
+    path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status'),
+    path('sensors', SensorsMappingListByCardAPIView.as_view(), name='sensors')
 ]
