@@ -82,6 +82,7 @@ class GlonassSoftProvider:
         self._log_resources("cleanup_tmp_files")
 
 
+    ## TODO: чекнуть
     SENSOR_NAME_MAPPING = {
         "FuelLvl": "calc_sensors_fuel_level",
         "EngineRPM": "rpm",
@@ -89,6 +90,7 @@ class GlonassSoftProvider:
 
 
 
+    ## TODO: чекнуть
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
     def authenticate(self) -> bool:
         self._enforce_rate_limit()
@@ -412,6 +414,7 @@ class GlonassSoftProvider:
     #     self.all_terminal_messages[vehicle_id] = []
     #     self._log_resources("save_all_terminal_messages_to_csv")
 
+    # TODO: чек
     def _flatten(self, data: dict, prefix = ""):
         result = {}
         for t in data.items():
@@ -423,6 +426,7 @@ class GlonassSoftProvider:
                     result[key] = value
         return result
 
+    # TODO: чек
     def flatten(self, data: list[dict]):
         return list(map(lambda x: self._flatten(x, ""), data))
 
