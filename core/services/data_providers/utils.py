@@ -139,114 +139,122 @@ class GlonassSoftProvider:
         is_initial_processing = not existing_cars.exists()
 
         processed_vehicles = []
+        sensors_to_create = []
+
         for i in range(0, len(data), self.batch_size):
             batch = data[i:i + self.batch_size]
             logger.info(f"Батч {i + 1}-{i + len(batch)} из {len(data)}")
-            for vehicle in batch:
-                vehicle_id = vehicle.get("vehicleId")
-                if not vehicle_id:
-                    logger.warning(f"Пропущена машина без vehicleId")
-                    continue
 
-                vehicle_details = self.get_vehicle_details(vehicle_id)
-                if not vehicle_details:
-                    logger.warning(f"Не удалось получить данные для vehicleId={vehicle_id}")
-                    continue
+            with transaction.atomic():
+                for vehicle in batch:
+                    vehicle_id = vehicle.get("vehicleId")
+                    if not vehicle_id:
+                        logger.warning(f"Пропущена машина без vehicleId")
+                        continue
 
-                input_value = vehicle_details.get("input")
-                output_value = vehicle_details.get("output")
+                    vehicle_details = self.get_vehicle_details(vehicle_id)
+                    if not vehicle_details:
+                        logger.warning(f"Не удалось получить данные для vehicleId={vehicle_id}")
+                        continue
 
-                # Используем get_or_create вместо прямого создания
-                car, created = Car.objects.get_or_create(
-                    id_in_provider_system=vehicle_id,
-                    defaults={
-                        'id': vehicle_details.get("vehicleGuid", uuid.uuid4()),
-                        'name': vehicle_details.get("name", ""),
-                        'description': f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
-                        'engine_type': 0.0,
-                        'input': input_value,
-                        'output': output_value,
-                        'is_tarrified': False,
-                        'is_active': True
-                    }
-                )
-                # TODO: завернуть это + создание машины в транзакцию
-                for (sensor_label, sensor_value) in vehicle_details.get("sensorsMapping", {}).items():
-                    sensor, _ = SensorsMapping.objects.get_or_create(
-                        car_id=car.id,
-                        label=sensor_label,
+                    input_value = vehicle_details.get("input")
+                    output_value = vehicle_details.get("output")
+
+                    car, created = Car.objects.get_or_create(
+                        id_in_provider_system=vehicle_id,
                         defaults={
-                            'car_id': car,
-                            'label': sensor_label,
-                            'value': sensor_value
+                            'id': vehicle_details.get("vehicleGuid", uuid.uuid4()),
+                            'name': vehicle_details.get("name", ""),
+                            'description': f"{vehicle_details.get('parentName', '')}, {vehicle_details.get('modelName', '')}, {vehicle_details.get('unitName', '')}",
+                            'engine_type': 0.0,
+                            'input': input_value,
+                            'output': output_value,
+                            'is_tarrified': False,
+                            'is_active': True
                         }
                     )
-                    sensor.save()
-                # Если машина неактивна - пропускаем
-                if not car.is_active:
-                    logger.info(f"Пропущена машина vehicleId={vehicle_id}: не активна")
-                    continue
-                # Проверяем даты только для существующих машин
-                if not created and start_date and car.last_processed_date and start_date <= car.last_processed_date:
-                    logger.info(
-                        f"Пропущена машина vehicleId={vehicle_id}: start_date ({start_date}) <= last_processed_date ({car.last_processed_date})")
-                    continue
 
-                if vehicle_details.get("sensorsMapping", {}).get("calc_sensors_fuel_level") is None:
-                    logger.info(
-                        f"Пропущена машина vehicleId={vehicle_id}: нет датчика топлива")
-                if (input_value is None or output_value is None) or (input_value == output_value) or output_value == 0.0:
-                    self._create_bad_data(car, "Нетарированное ТС")
-                    logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
-                    continue
+                    for sensor_label, sensor_value in vehicle_details.get("sensorsMapping", {}).items():
+                        sensors_to_create.append(SensorsMapping(
+                            car_id=car,
+                            label=sensor_label,
+                            value=sensor_value
+                        ))
 
-                car_start_date = start_date
-                created_at_str = vehicle_details.get("createdAt")
-                try:
-                    created_at = datetime.strptime(
-                        created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
-                    ).replace(tzinfo=pytz.UTC)
-                except ValueError:
-                    created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
-                        "Z") else created_at_str
-                    created_at = datetime.strptime(
-                        created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
-                    ).replace(tzinfo=pytz.UTC)
+                    if not car.is_active:
+                        logger.info(f"Пропущена машина vehicleId={vehicle_id}: не активна")
+                        continue
 
-                if not car_start_date:
-                    car_start_date = created_at if is_initial_processing else (
-                            car.last_processed_date or created_at)
-                car_end_date = end_date or datetime.now(tz=pytz.UTC)
+                    if not created and start_date and car.last_processed_date and start_date <= car.last_processed_date:
+                        logger.info(
+                            f"Пропущена машина vehicleId={vehicle_id}: start_date ({start_date}) <= last_processed_date ({car.last_processed_date})")
+                        continue
 
-                if car_start_date.tzinfo is None:
-                    car_start_date = car_start_date.replace(tzinfo=pytz.UTC)
-                if car_end_date.tzinfo is None:
-                    car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
+                    if vehicle_details.get("sensorsMapping", {}).get("calc_sensors_fuel_level") is None:
+                        logger.info(
+                            f"Пропущена машина vehicleId={vehicle_id}: нет датчика топлива")
+                    if (input_value is None or output_value is None) or (
+                            input_value == output_value) or output_value == 0.0:
+                        self._create_bad_data(car, "Нетарированное ТС")
+                        logger.info(f"Пропущена машина vehicleId={vehicle_id}: Нетарированное ТС")
+                        continue
 
-                data_period = (car_end_date - car_start_date).days
-                if data_period < self.min_data_period_days:
-                    self._create_bad_data(
-                        car,
-                        f"Мало данных, минимальный объём анализируемой информации {self.min_data_period_days} дней"
-                    )
-                    logger.info(
-                        f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}")
-                    continue
+                    car_start_date = start_date
+                    created_at_str = vehicle_details.get("createdAt")
+                    try:
+                        created_at = datetime.strptime(
+                            created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
+                        ).replace(tzinfo=pytz.UTC)
+                    except ValueError:
+                        created_at_str = created_at_str[:-2] + "Z" if created_at_str.endswith(
+                            "Z") else created_at_str
+                        created_at = datetime.strptime(
+                            created_at_str[:26] + "Z", "%Y-%m-%dT%H:%M:%S.%fZ"
+                        ).replace(tzinfo=pytz.UTC)
 
-                try:
-                    self.save_to_db(vehicle_details)
-                    car_start_date = start_date or car.last_processed_date or created_at
+                    if not car_start_date:
+                        car_start_date = created_at if is_initial_processing else (
+                                car.last_processed_date or created_at)
                     car_end_date = end_date or datetime.now(tz=pytz.UTC)
+
                     if car_start_date.tzinfo is None:
                         car_start_date = car_start_date.replace(tzinfo=pytz.UTC)
                     if car_end_date.tzinfo is None:
                         car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
-                    self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
-                    processed_vehicles.append(vehicle_details)
-                except Exception as e:
-                    logger.error(f"Ошибка обработки vehicleId={vehicle_id}: {e}")
-                    continue
-            self._log_resources(f"get_vehicles_batch_{i}")
+
+                    data_period = (car_end_date - car_start_date).days
+                    if data_period < self.min_data_period_days:
+                        self._create_bad_data(
+                            car,
+                            f"Мало данных, минимальный объём анализируемой информации {self.min_data_period_days} дней"
+                        )
+                        logger.info(
+                            f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}")
+                        continue
+
+                    try:
+                        self.save_to_db(vehicle_details)
+                        car_start_date = start_date or car.last_processed_date or created_at
+                        car_end_date = end_date or datetime.now(tz=pytz.UTC)
+                        if car_start_date.tzinfo is None:
+                            car_start_date = car_start_date.replace(tzinfo=pytz.UTC)
+                        if car_end_date.tzinfo is None:
+                            car_end_date = car_end_date.replace(tzinfo=pytz.UTC)
+                        self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
+                        processed_vehicles.append(vehicle_details)
+                    except Exception as e:
+                        logger.error(f"Ошибка обработки vehicleId={vehicle_id}: {e}")
+                        continue
+
+                if sensors_to_create:
+                    SensorsMapping.objects.bulk_create(
+                        sensors_to_create,
+                        ignore_conflicts=True,
+                        batch_size=100
+                    )
+                    sensors_to_create = []
+
+                self._log_resources(f"get_vehicles_batch_{i}")
 
         if processed_vehicles and os.path.exists(self.csv_file_path) and os.path.getsize(
                 self.csv_file_path) > 0:
@@ -269,26 +277,36 @@ class GlonassSoftProvider:
 
         input_value, output_value = None, None
         sensors_mapping = {}
+
+        sensor_name_mapping = self.SENSOR_NAME_MAPPING
+
         for sensor in data.get("sensors", []):
-            if sensor['kind'] == "Simple":
-                if self.SENSOR_NAME_MAPPING.get(sensor['type'], "") != "":
+            sensor_type = sensor.get('type', '')
+            sensor_kind = sensor.get('kind', '')
+
+            if sensor_kind == "Simple":
+                if sensor_name_mapping.get(sensor_type):
                     target_paramater_name = sensor['parameterName'].split(";")[0]
                     if target_paramater_name == "can_fuel_level":
-                        target_paramater_name = "can" + str(sensor['inputNumber'])
-                    sensors_mapping[self.SENSOR_NAME_MAPPING[sensor['type']]] = "parameters." + target_paramater_name
-            if sensor['kind'] == "Composite":
-                if sensor.get("children") is None:
+                        target_paramater_name = f"can{sensor['inputNumber']}"
+                    sensors_mapping[sensor_name_mapping[sensor_type]] = f"parameters.{target_paramater_name}"
+
+            elif sensor_kind == "Composite":
+                if not sensor.get("children"):
                     continue
                 if len(sensor['children']) == 0:
-                    if sensor['inputType'] != "Analog":
-                        continue
-                    sensors_mapping["calc_sensors_fuel_level"] = "analog" + sensor['inputNumber']
-                # TODO: нужно обрабатывать детей (там внутри такие же датчики) но неясно как их лучше обработать
-            if "FuelLvl" in sensor.get("type", "") and sensor.get("gradeType") == "GradeTable":
-                record = sensor.get("gradesTables", [{}])[0].get("grades", [{}])[-1]
-                input_value = record.get("input")
-                output_value = record.get("output")
-                break
+                    if sensor['inputType'] == "Analog":
+                        sensors_mapping["calc_sensors_fuel_level"] = f"analog{sensor['inputNumber']}"
+
+            if "FuelLvl" in sensor_type and sensor.get("gradeType") == "GradeTable":
+                grades_tables = sensor.get("gradesTables", [{}])
+                if grades_tables:
+                    grades = grades_tables[0].get("grades", [{}])
+                    if grades:
+                        record = grades[-1]
+                        input_value = record.get("input")
+                        output_value = record.get("output")
+                        break
 
         data["input"] = input_value
         data["output"] = output_value
@@ -557,9 +575,10 @@ class GlonassSoftProvider:
                         "output": vehicle_data.get("output"),
                         "is_tarrified": not ((vehicle_data.get("input") is None or vehicle_data.get("input") == 1.0) and
                                              (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0)),
-                        "is_active": True  # При обновлении всегда устанавливаем is_active=True
+                        "is_active": True
                     }
                 )
+
                 provider.cars.add(car)
                 logger.info(f"Сохранены данные для vehicleId={vehicle_id}")
                 self._log_resources("save_to_db")
