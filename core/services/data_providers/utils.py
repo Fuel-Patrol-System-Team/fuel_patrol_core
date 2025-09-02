@@ -81,14 +81,11 @@ class GlonassSoftProvider:
                 logger.error(f"Ошибка удаления {file_path}: {e}")
         self._log_resources("cleanup_tmp_files")
 
-
     ## TODO: чекнуть
     SENSOR_NAME_MAPPING = {
         "FuelLvl": "calc_sensors_fuel_level",
         "EngineRPM": "rpm",
     }
-
-
 
     ## TODO: чекнуть
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
@@ -314,7 +311,6 @@ class GlonassSoftProvider:
         self._log_resources("get_vehicle_details")
         return data
 
-
     def get_terminal_to_json(self, vehicle_id: int, start_date: datetime, end_date: datetime) -> None:
         try:
             car = Car.objects.get(id_in_provider_system=vehicle_id)
@@ -342,9 +338,9 @@ class GlonassSoftProvider:
                     logger.info(f"Уменьшен период до {self.default_period_days} дней из-за ошибки 429.")
                 else:
                     self.default_period_days = 90
-            # self._save_all_terminal_messages_to_csv(vehicle_id)
+            self._save_all_terminal_messages_to_csv(vehicle_id)
             try:
-                
+
                 if not car.last_processed_date or end_date > car.last_processed_date:
                     car.last_processed_date = end_date
                     car.save()
@@ -401,39 +397,42 @@ class GlonassSoftProvider:
             self._log_resources(f"fetch_messages_{vehicle_id}")
         return True
 
+    def _save_all_terminal_messages_to_csv(self, vehicle_id: int) -> None:
+        messages = self.all_terminal_messages.get(vehicle_id, [])
+        if not messages:
+            logger.info(f"Нет данных terminalMessages для vehicleId={vehicle_id}")
+            return
 
-    # def _save_all_terminal_messages_to_csv(self, vehicle_id: int) -> None:
-    #     messages = self.all_terminal_messages.get(vehicle_id, [])
-    #     if not messages:
-    #         logger.info(f"Нет данных terminalMessages для vehicleId={vehicle_id}")
-    #         return
-    #
-    #     timestamp = datetime.now(tz=pytz.UTC).strftime("%Y%m%d_%H%M%S")
-    #     csv_file_path = Path(
-    #         settings.MEDIA_ROOT) / "full_terminal_messages" / f"full_terminal_messages_{vehicle_id}.csv"
-    #     os.makedirs(csv_file_path.parent, exist_ok=True)
-    #
-    #     headers = set()
-    #     for msg in messages:
-    #         flat_msg = self._flatten_parameters(msg)
-    #         headers.update(flat_msg.keys())
-    #     headers = sorted(headers)
-    #
-    #     with open(csv_file_path, "w", encoding="utf-8", newline='') as f:
-    #         writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
-    #         writer.writeheader()
-    #         for msg in messages:
-    #             flat_msg = self._flatten_parameters(msg)
-    #             row = {key: flat_msg.get(key, '') for key in headers}
-    #             writer.writerow(row)
-    #     file_size = os.path.getsize(csv_file_path) / 1024 ** 2
-    #     logger.info(
-    #         f"Все terminalMessages сохранены в {csv_file_path} ({file_size:.2f} MB) для vehicleId={vehicle_id}")
-    #     self.all_terminal_messages[vehicle_id] = []
-    #     self._log_resources("save_all_terminal_messages_to_csv")
+        timestamp = datetime.now(tz=pytz.UTC).strftime("%Y%m%d_%H%M%S")
+        csv_file_path = Path(
+            settings.MEDIA_ROOT) / "full_terminal_messages" / f"full_terminal_messages_{vehicle_id}_{timestamp}.csv"
+        os.makedirs(csv_file_path.parent, exist_ok=True)
+
+        flattened_messages = []
+        for msg in messages:
+            flat_msg = self._flatten(msg, "")
+            flattened_messages.append(flat_msg)
+
+        headers = set()
+        for flat_msg in flattened_messages:
+            headers.update(flat_msg.keys())
+        headers = sorted(headers)
+
+        with open(csv_file_path, "w", encoding="utf-8", newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
+            writer.writeheader()
+            for flat_msg in flattened_messages:
+                row = {key: flat_msg.get(key, '') for key in headers}
+                writer.writerow(row)
+
+        file_size = os.path.getsize(csv_file_path) / 1024 ** 2
+        logger.info(
+            f"Все terminalMessages сохранены в {csv_file_path} ({file_size:.2f} MB) для vehicleId={vehicle_id}")
+        self.all_terminal_messages[vehicle_id] = []
+        self._log_resources("save_all_terminal_messages_to_csv")
 
     # TODO: чек
-    def _flatten(self, data: dict, prefix = ""):
+    def _flatten(self, data: dict, prefix=""):
         result = {}
         for t in data.items():
             if not isinstance(t[1], dict):
@@ -457,7 +456,7 @@ class GlonassSoftProvider:
         sensors = car.sensors.all()
 
         try:
-            
+
             vehicle_guid = car.id
         except Car.DoesNotExist:
             logger.error(f"Автомобиль vehicleId={vehicle_id} не найден")
@@ -478,7 +477,7 @@ class GlonassSoftProvider:
             "satellites": "sattelites",
             "rpm": "rpm"
         }
-        sensors_for_column_mapping = { record['label']: record['value']  for record in sensors.values() }
+        sensors_for_column_mapping = {record['label']: record['value'] for record in sensors.values()}
         fuel_column = sensors_for_column_mapping.get("calc_sensors_fuel_level")
         rpm_column = sensors_for_column_mapping.get("rpm")
 
