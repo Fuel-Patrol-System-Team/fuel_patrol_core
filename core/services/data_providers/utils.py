@@ -1,4 +1,5 @@
 import uuid
+from enum import Enum
 
 import requests
 import logging
@@ -8,6 +9,7 @@ import orjson
 import time
 from datetime import datetime, timedelta
 from django.db import transaction
+
 from core.helpers.decorators import retry_on_status
 from core.models import Car, Media, ReportQuery, CarBadData, SensorsMapping
 import csv
@@ -586,16 +588,38 @@ class GlonassSoftProvider:
             raise
 
 
-def provider_factory(provider_name: str, metadata: Dict[str, Any], report_query_id: str) -> Optional[Any]:
-    providers = {
-        "glonasssoft": GlonassSoftProvider
-    }
-    provider_class = providers.get(provider_name.lower())
-    if not provider_class:
-        logger.error(f"Провайдер {provider_name} не поддерживается.")
-        return None
-    return provider_class(metadata, report_query_id)
+class ProviderType(Enum):
+    GLONASSSOFT = GlonassSoftProvider
 
+    @classmethod
+    def get_class(cls, member):
+        return cls[member].value
+
+
+def provider_factory(report_query_id: str, metadata: Dict[str, Any]) -> Optional[Any]:
+    """
+    Создаёт экземпляр класса провайдера, используя ключ из метаданных и Enum.
+    """
+    try:
+        provider_type_str = metadata.get("provider_type")
+        if not provider_type_str:
+            logger.error(f"В метаданных ReportQuery ID={report_query_id} отсутствует ключ 'provider_type'.")
+            return None
+
+        provider_class = ProviderType.get_class(provider_type_str.upper())
+
+        if not provider_class:
+            logger.error(f"Неизвестный тип провайдера: '{provider_type_str}'.")
+            return None
+
+        return provider_class(metadata, report_query_id)
+
+    except KeyError:
+        logger.error(f"Неизвестный тип провайдера: '{provider_type_str}'. Проверьте `ProviderType` Enum.")
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка при создании экземпляра провайдера для ReportQuery ID={report_query_id}: {e}")
+        return None
 
 def save_response_to_file(data: Dict[str, Any], filename: str = "response.json") -> None:
     file_path = settings.BASE_DIR / filename

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 celery_app.conf.task_concurrency = 4
-BATCH_SIZE = 500_000  # Увеличено для больших файлов
+BATCH_SIZE = 500_000
 
 
 def _log_resources(method: str) -> None:
@@ -67,18 +67,17 @@ def _cleanup_temp_files(base_dir, report_id, timestamp):
     priority=5,
     rate_limit="1/s"
 )
-def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any], report_query_id: str,
+def fetch_data_from_provider(self, report_query_id: str,
                              start_date: Optional[datetime] = None, end_date: Optional[datetime] = None):
     def _fetch():
         report_query = None
         try:
             logger.info(
-                f"Получение данных от {provider_name} для {report_query_id}, start_date={start_date}, end_date={end_date}")
+                f"Получение данных для {report_query_id}, start_date={start_date}, end_date={end_date}")
             report_query = ReportQuery.objects.get(id=report_query_id)
 
-            provider = provider_factory(provider_name, metadata, report_query_id)
+            provider = provider_factory(report_query_id, report_query.provider_id.metadata)
             if not provider:
-                logger.error(f"Не удалось создать провайдера {provider_name}.")
                 report_query.status = "error"
                 report_query.save()
                 return
@@ -107,7 +106,6 @@ def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any],
             report_query.save()
 
             try:
-                ReportQuery.objects.get(id=report_query_id)
                 logger.info(f"Запуск calculate_norms_task для {report_query_id}")
                 calculate_norms_task.delay(report_query_id)
             except ReportQuery.DoesNotExist:
@@ -130,7 +128,6 @@ def fetch_data_from_provider(self, provider_name: str, metadata: Dict[str, Any],
             raise
 
     return _timeit("fetch_data_from_provider", _fetch)
-
 
 @shared_task(
     bind=True,

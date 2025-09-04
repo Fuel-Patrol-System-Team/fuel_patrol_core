@@ -41,17 +41,14 @@ def validate_provider_request(provider_name, start_date, end_date, organization)
     return True, (provider, metadata, start_date, end_date)
 
 
-def create_provider_data_request(provider, metadata, report_query_id, start_date, end_date, is_save_bad_data):
+def create_provider_data_request(provider, start_date, end_date, is_save_bad_data):
     report_query = ReportQuery.objects.create(
         provider_id=provider,
         status="created",
         is_save_bad_data=is_save_bad_data
     )
-
     try:
         fetch_data_from_provider.delay(
-            provider_name=provider.name,
-            metadata=metadata,
             report_query_id=report_query.id,
             start_date=start_date,
             end_date=end_date

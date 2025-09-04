@@ -13,7 +13,7 @@ from django_celery_beat.admin import (
 )
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
-    Media, ReportQuery, DataProvider, CarBadData
+    Media, ReportQuery, DataProvider, CarBadData, SensorsMapping
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -43,6 +43,15 @@ class CarReportInline(admin.TabularInline):
     verbose_name = "Отчет об автомобиле"
     verbose_name_plural = "Отчеты об автомобилях"
     can_delete = False
+
+
+class SensorsMappingInline(admin.TabularInline):
+    model = SensorsMapping
+    extra = 0
+    fields = ('label', 'value')
+    verbose_name = "Сопоставление датчика"
+    verbose_name_plural = "Сопоставления датчиков"
+    can_delete = True
 
 
 class CarConsumptionInline(admin.TabularInline):
@@ -375,6 +384,22 @@ class DataProviderAdmin(ImportExportMixin, ModelAdmin):
         return mark_safe(result)
 
     cars_display.short_description = "Автомобили"
+
+
+@admin.register(SensorsMapping)
+class SensorsMappingAdmin(ModelAdmin):
+    list_display = ('id', 'car_display', 'label', 'value')
+    list_filter = ('car_id',)
+    search_fields = ('car_id__name', 'label', 'value')
+    ordering = ('car_id__name',)
+
+    def car_display(self, obj):
+        if obj.car_id:
+            url = reverse("admin:core_car_change", args=[obj.car_id.id])
+            return mark_safe(f'<a href="{url}">{obj.car_id.name}</a>')
+        return "Не указан"
+
+    car_display.short_description = "Автомобиль"
 
 
 @admin.register(PeriodicTask)

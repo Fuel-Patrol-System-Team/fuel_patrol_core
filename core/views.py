@@ -173,6 +173,8 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
+# Замените этот код в файле с вашей вьюхой
+
 class ProviderDataRequestAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -196,13 +198,15 @@ class ProviderDataRequestAPIView(APIView):
             return result
 
         provider, metadata, start_date, end_date = result
+
+
         report_query_id, error = create_provider_data_request(
-            provider, metadata, None, start_date, end_date, is_save_bad_data
+            provider,  start_date, end_date, is_save_bad_data
         )
         if error:
             return error
-        return success_response({"report_query_id": report_query_id}, status.HTTP_201_CREATED)
 
+        return success_response({"report_query_id": report_query_id}, status.HTTP_201_CREATED)
 
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]

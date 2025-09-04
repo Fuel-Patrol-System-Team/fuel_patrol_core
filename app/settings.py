@@ -207,6 +207,7 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_LIFETIME': timedelta(hours=12),
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
+
 # ======================
 # KEYDB CONFIG
 # ======================
@@ -308,7 +309,8 @@ UNFOLD = {
                 "core.carconsumption",
                 "core.driver",
                 "core.drivercar",
-                "core.carbaddata"
+                "core.carbaddata",
+                "core.sensorsmapping"
             ),
             "items": [
                 {
@@ -330,6 +332,10 @@ UNFOLD = {
                 {
                     "title": "Отчёты об ошибках",
                     "link": reverse_lazy("admin:core_carbaddata_changelist"),
+                },
+                {   # <-- Добавляем новый элемент для SensorsMapping
+                    "title": "Сопоставление датчиков",
+                    "link": reverse_lazy("admin:core_sensorsmapping_changelist"),
                 },
             ],
         },
@@ -434,6 +440,11 @@ UNFOLD = {
                         "title": "Водители",
                         "icon": "drive_eta",
                         "link": reverse_lazy("admin:core_driver_changelist"),
+                    },
+                    {   # <-- Добавляем новый элемент для SensorsMapping
+                        "title": "Сопоставление датчиков",
+                        "icon": "sensors",
+                        "link": reverse_lazy("admin:core_sensorsmapping_changelist"),
                     },
                 ],
             },
