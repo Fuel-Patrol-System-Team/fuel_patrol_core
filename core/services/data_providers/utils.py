@@ -304,7 +304,7 @@ class GlonassSoftProvider:
                 sensor_type = sensor.get('type')
                 parameter_name = sensor.get('parameterName')
                 input_number = sensor.get('inputNumber')
-
+                input_type = sensor.get("inputType")
                 if sensor_type == "FuelLvl":
                     if sensor.get("gradeType") == "GradeTable":
                         grades_tables = sensor.get("gradesTables", [{}])
@@ -331,9 +331,34 @@ class GlonassSoftProvider:
                             sensors_mapping["rpm"] = f"parameters.can{input_number}"
                         else:
                             sensors_mapping["rpm"] = f"parameters.{key_part}"
-                    elif input_number:
-                        sensors_mapping["rpm"] = f"parameters.input{input_number}"
-
+                elif sensor_type == "MileageSensor":
+                    if parameter_name:
+                        key_part = parameter_name.split(";")[0]
+                        if key_part.startswith("can_") and input_number:
+                            sensors_mapping['mileage'] = f"parameters.can{input_number}"
+                        else:
+                            sensors_mapping['mileage'] = f'parameters.{key_part}'
+                elif sensor_type == "Temperature":
+                    if parameter_name:
+                        key_part = parameter_name.split(";")[0]
+                        if key_part.startswith("can_") and input_number:
+                            sensors_mapping['engine_temp'] = f"parameters.can{input_number}"
+                        else:
+                            sensors_mapping['engine_temp'] = f"parameters.{key_part}"
+                elif sensor_type == "EngineTemperature":
+                    if parameter_name:
+                        key_part = parameter_name.split(";")[0]
+                        if key_part.startswith("can_") and input_number:
+                            sensors_mapping['engine_temp'] = f"parameters.can{input_number}"
+                        else:
+                            sensors_mapping['engine_temp'] = f"parameters.{key_part}"
+                elif sensor_type == "Ignition":
+                    if parameter_name:
+                        key_part = "iobits"
+                        if input_type == "FMS":
+                            key_part = "ign"
+                        sensor['ign'] = f"parameters.{key_part}"
+                        
             data["input"] = input_value
             data["output"] = output_value
             data["sensorsMapping"] = sensors_mapping
@@ -490,12 +515,16 @@ class GlonassSoftProvider:
 
         fuel_key_path = sensors_mapping.get("calc_sensors_fuel_level", "").split(".")
         rpm_key_path = sensors_mapping.get("rpm", "").split(".")
+        ign_key_path = sensors_mapping.get("ign", "")
+        engine_temp_key_path = sensors_mapping.get("engine_temp", "")
+        mileage_key_path = sensors_mapping.get("mileage", "")
+
 
         logger.info(f"Маппинг для vehicleId={vehicle_id}: fuel_key_path={fuel_key_path}, rpm_key_path={rpm_key_path}")
 
         headers = [
             "auto", "timestamp", "pos_s", "calc_sensors_fuel_level",
-            "calc_sensors_voltage", "rpm", "amtr"
+            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign"
         ]
 
         if not self.csv_initialized:
@@ -532,6 +561,9 @@ class GlonassSoftProvider:
 
                     fuel_level = get_nested_value(record, fuel_key_path)
                     rpm = get_nested_value(record, rpm_key_path)
+                    ign = get_nested_value(record, ign_key_path)
+                    engine_temp = get_nested_value(record, engine_temp_key_path)
+                    mileage = get_nested_value(record, mileage_key_path)
 
                     logger.debug(f"Найдено: fuel_level={fuel_level}, rpm={rpm}")
 
@@ -547,7 +579,10 @@ class GlonassSoftProvider:
                         "calc_sensors_fuel_level": fuel_level,
                         "calc_sensors_voltage": record.get("voltage"),
                         "rpm": rpm,
-                        "amtr": amtr
+                        "amtr": amtr,
+                        "ign": ign,
+                        "engine_temp": engine_temp,
+                        "mileage": mileage
                     })
 
                 writer.writerows(rows_to_write)
