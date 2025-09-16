@@ -524,7 +524,7 @@ class GlonassSoftProvider:
 
         headers = [
             "auto", "timestamp", "pos_s", "calc_sensors_fuel_level",
-            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign"
+            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude"
         ]
 
         if not self.csv_initialized:
@@ -576,13 +576,16 @@ class GlonassSoftProvider:
                         "auto": vehicle_guid,
                         "timestamp": record.get("deviceTime"),
                         "pos_s": record.get("speed"),
+                        "latitude": record.get("latitude"),
+                        "longitude": record.get("longitude"),
                         "calc_sensors_fuel_level": fuel_level,
                         "calc_sensors_voltage": record.get("voltage"),
                         "rpm": rpm,
                         "amtr": amtr,
                         "ign": ign,
                         "engine_temp": engine_temp,
-                        "mileage": mileage
+                        "mileage": mileage,
+                        "satellites": record.get("satellites")
                     })
 
                 writer.writerows(rows_to_write)
