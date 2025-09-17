@@ -1,4 +1,4 @@
-__pycache__
+/**/__pycache__
 venv
 .idea
 /app/datasets
@@ -11,3 +11,4 @@ debug.log
 .vscode
 *.gz
 *.json
+*.pyc

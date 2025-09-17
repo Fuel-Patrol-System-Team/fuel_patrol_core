@@ -524,7 +524,7 @@ class GlonassSoftProvider:
 
         headers = [
             "auto", "timestamp", "pos_s", "calc_sensors_fuel_level",
-            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude"
+            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude", "satellites"
         ]
 
         if not self.csv_initialized:
