@@ -357,7 +357,7 @@ class GlonassSoftProvider:
                         key_part = "iobits"
                         if input_type == "FMS":
                             key_part = "ign"
-                        sensor['ign'] = f"parameters.{key_part}"
+                        sensors_mapping['ign'] = f"parameters.{key_part}"
                         
             data["input"] = input_value
             data["output"] = output_value
@@ -515,9 +515,9 @@ class GlonassSoftProvider:
 
         fuel_key_path = sensors_mapping.get("calc_sensors_fuel_level", "").split(".")
         rpm_key_path = sensors_mapping.get("rpm", "").split(".")
-        ign_key_path = sensors_mapping.get("ign", "")
-        engine_temp_key_path = sensors_mapping.get("engine_temp", "")
-        mileage_key_path = sensors_mapping.get("mileage", "")
+        ign_key_path = sensors_mapping.get("ign", "").split(".")
+        engine_temp_key_path = sensors_mapping.get("engine_temp", "").split(".")
+        mileage_key_path = sensors_mapping.get("mileage", "").split(".")
 
 
         logger.info(f"Маппинг для vehicleId={vehicle_id}: fuel_key_path={fuel_key_path}, rpm_key_path={rpm_key_path}")
@@ -562,6 +562,10 @@ class GlonassSoftProvider:
                     fuel_level = get_nested_value(record, fuel_key_path)
                     rpm = get_nested_value(record, rpm_key_path)
                     ign = get_nested_value(record, ign_key_path)
+                    try:
+                        ign = int(ign)
+                    except:
+                        ign = 0
                     engine_temp = get_nested_value(record, engine_temp_key_path)
                     mileage = get_nested_value(record, mileage_key_path)
 
