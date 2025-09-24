@@ -1,8 +1,14 @@
+import time
+from datetime import datetime
+
+import polars as pl
+import pytz
 from django.db.models import Count
 from django.shortcuts import render
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework.filters import SearchFilter
+from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.parsers import MultiPartParser
@@ -17,16 +23,18 @@ from core.helpers.cars import get_car_or_error, fetch_car_metrics, filter_leaks_
 from .helpers.data_provider import create_provider_data_request, validate_provider_request, validate_provider_cars, \
     create_data_provider
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
+from .helpers.mileage_test import mileage_test
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, SensorsMapping
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
-    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA
+    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA
 )
 from .serializers import (
-    SensorsMappingOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer, CarOutputSerializer,
+    SensorsMappingOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
+    CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
@@ -36,6 +44,7 @@ from .serializers import (
 from core.helpers.responses import error_response, user_registered_response, attach_media_response, user_response, \
     success_response
 from core.helpers.permissions import IsOrgMember
+from .services.data_providers.utils import provider_factory
 
 logger = logging.getLogger(__name__)
 
@@ -173,8 +182,6 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
-# Замените этот код в файле с вашей вьюхой
-
 class ProviderDataRequestAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -199,14 +206,95 @@ class ProviderDataRequestAPIView(APIView):
 
         provider, metadata, start_date, end_date = result
 
-
         report_query_id, error = create_provider_data_request(
-            provider,  start_date, end_date, is_save_bad_data
+            provider, start_date, end_date, is_save_bad_data
         )
         if error:
             return error
 
         return success_response({"report_query_id": report_query_id}, status.HTTP_201_CREATED)
+
+
+class MileageTestAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_description="Расчет mileage для автомобиля за период (синхронно).",
+        request_body=MILEAGE_REQUEST_SCHEMA,
+        responses={
+            200: "Результат в JSON",
+            400: "Неверные данные",
+            404: "Автомобиль или провайдер не найден",
+            500: "Ошибка обработки"
+        }
+    )
+    def post(self, request):
+        car_id = request.data.get('car_id')
+        start_date_str = request.data.get('start_date')
+        end_date_str = request.data.get('end_date')
+
+        try:
+            car = Car.objects.prefetch_related('data_providers').get(id=car_id)
+            provider_obj = car.data_providers.first()
+
+            if not provider_obj:
+                return Response({"error": "Нет провайдера данных для этого автомобиля."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            start_date = datetime.fromisoformat(start_date_str).replace(tzinfo=pytz.UTC)
+            end_date = datetime.fromisoformat(end_date_str).replace(tzinfo=pytz.UTC)
+
+            if start_date >= end_date:
+                return Response({"error": "start_date должна быть раньше end_date."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                provider = provider_factory(str(int(time.time())), provider_obj.metadata)
+                if not provider:
+                    return Response({"error": "Не удалось создать провайдера"},
+                                    status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                if not provider.authenticate():
+                    return Response({"error": "Не удалось авторизоваться"}, status=status.HTTP_401_UNAUTHORIZED)
+
+                vehicle_id = car.id_in_provider_system
+
+                parsed_data = provider.get_single_vehicle_data_in_memory(vehicle_id, start_date, end_date)
+
+                if parsed_data is None:
+                    return Response({"error": "Не удалось получить данные для указанного периода."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                if not parsed_data:
+                    return Response({"result": []}, status=status.HTTP_200_OK)
+
+                if parsed_data:
+                    df = pl.DataFrame(parsed_data)
+                    result_df = mileage_test(df.with_columns([
+                        pl.lit(str(car.id)).alias("auto"),
+                        pl.col("timestamp").cast(pl.Datetime),
+                        pl.col("mileage").cast(pl.Float64),
+                    ]).sort("timestamp").select(["auto", "timestamp", "mileage"]))
+
+                    result = result_df.to_dicts() if not result_df.is_empty() else []
+                else:
+                    result = []
+
+                return Response({"result": 'Мы закончили'}, status=status.HTTP_200_OK)
+                # return Response({"result": result}, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                logger.error(f"Ошибка в MileageTestAPIView для car_id={car_id}: {e}", exc_info=True)
+                return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        except Car.DoesNotExist:
+            return Response({"error": "Автомобиль не найден."}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            return Response({"error": f"Неверный формат даты: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Общая ошибка в MileageTestAPIView: {e}")
+            return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class MediaUploadAPIView(APIView):
     parser_classes = [MultiPartParser]
@@ -520,6 +608,7 @@ class CarBadDataListByCarAPIView(ListAPIView):
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').order_by('-datetime')
 
+
 class SensorsMappingListByCardAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = SensorsMappingOutputSerializer
@@ -529,8 +618,9 @@ class SensorsMappingListByCardAPIView(ListAPIView):
 
     def get_queryset(self):
         return SensorsMapping.objects.filter(
-            car_id__data_providers__org_id = self.request.user.org.id
+            car_id__data_providers__org_id=self.request.user.org.id
         )
+
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

@@ -121,6 +121,16 @@ MEDIA_UPLOAD_SCHEMA = {
     }
 }
 
+MILEAGE_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        'car_id': openapi.Schema(type=openapi.TYPE_STRING, description='UUID автомобиля'),
+        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME, description='Дата начала в ISO формате'),
+        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME, description='Дата конца в ISO формате'),
+    },
+    required=['car_id', 'start_date', 'end_date']
+)
+
 LEAKS_COUNT_SCHEMA = {
     "tags": ["leaks"],
     "operation_description": "Получает количество сливов по автомобилям",

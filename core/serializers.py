@@ -238,3 +238,4 @@ class CarActiveStatusSerializer(serializers.Serializer):
         car.is_active = is_active
         car.save()
         return car
+

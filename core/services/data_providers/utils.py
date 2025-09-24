@@ -2,6 +2,9 @@ import uuid
 import os
 import glob
 import csv
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+
 import psutil
 import pytz
 import logging
@@ -9,7 +12,7 @@ import orjson
 import time
 import math
 from enum import Enum
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from datetime import datetime, timedelta
 from pathlib import Path
 from itertools import islice
@@ -250,8 +253,6 @@ class GlonassSoftProvider:
                     logger.error(f"Критическая ошибка обработки vehicleId={vehicle_id}: {e}", exc_info=True)
                     continue
 
-
-
         if processed_vehicles and os.path.exists(self.csv_file_path) and os.path.getsize(self.csv_file_path) > 0:
             self._create_media_record(self.csv_file_path, "raw")
 
@@ -358,7 +359,7 @@ class GlonassSoftProvider:
                         if input_type == "FMS":
                             key_part = "ign"
                         sensors_mapping['ign'] = f"parameters.{key_part}"
-                        
+
             data["input"] = input_value
             data["output"] = output_value
             data["sensorsMapping"] = sensors_mapping
@@ -519,12 +520,12 @@ class GlonassSoftProvider:
         engine_temp_key_path = sensors_mapping.get("engine_temp", "").split(".")
         mileage_key_path = sensors_mapping.get("mileage", "").split(".")
 
-
         logger.info(f"Маппинг для vehicleId={vehicle_id}: fuel_key_path={fuel_key_path}, rpm_key_path={rpm_key_path}")
 
         headers = [
             "auto", "timestamp", "pos_s", "calc_sensors_fuel_level",
-            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude", "satellites"
+            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude",
+            "satellites"
         ]
 
         if not self.csv_initialized:
@@ -593,7 +594,7 @@ class GlonassSoftProvider:
                     })
 
                 writer.writerows(rows_to_write)
-                logger.info(f"Добавлено {len(rows_to_write)} записей для vehicleGuid={vehicle_guid}")
+                logger.info(f"Добавлено {len(rows_to_write)} записей для vehicle_guid={vehicle_guid}")
                 self._log_resources("_save_all_terminal_messages_to_csv chunk")
 
         file_size = os.path.getsize(self.csv_file_path) / 1024 ** 2
@@ -671,7 +672,7 @@ class GlonassSoftProvider:
 
         provider.cars.add(car)
 
-        # Сохраняем SensorsMapping сразу для каждой машины
+
         for label, value in vehicle_data.get("sensorsMapping", {}).items():
             SensorsMapping.objects.update_or_create(
                 car_id=car,
@@ -681,6 +682,158 @@ class GlonassSoftProvider:
 
         logger.info(f"Сохранены данные для vehicleId={vehicle_id}.")
 
+    def get_single_vehicle_data_in_memory(self, vehicle_id: int, start_date: datetime, end_date: datetime) -> Optional[
+        List[Dict[str, Any]]]:
+        """
+        Получает данные для одного автомобиля за период, парсит timestamp и mileage "на лету" и возвращает результат в памяти.
+        """
+        if not self.auth_token:
+            logger.error("Токен отсутствует. Выполните аутентификацию.")
+            return None
+
+        mileage_key_path = self._get_mileage_key_path(vehicle_id)
+        if mileage_key_path is None:
+            return []
+
+        parsed_data = []
+        current_start = start_date
+
+        periods = self._calculate_periods(start_date, end_date)
+
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+            futures = []
+            for period_start, period_end in periods:
+                future = executor.submit(
+                    self._fetch_and_parse_mileage_messages_for_period,
+                    vehicle_id, period_start, period_end, mileage_key_path
+                )
+                futures.append(future)
+
+            for future in futures:
+                result = future.result()
+                if result is not None:
+                    parsed_data.extend(result)
+
+        logger.info(f"Всего спарсено {len(parsed_data)} записей timestamp + mileage для vehicleId={vehicle_id}")
+        return parsed_data
+
+    @lru_cache(maxsize=100)
+    def _get_mileage_key_path(self, vehicle_id: int) -> Optional[List[str]]:
+        """Кешируем получение пути к mileage."""
+        try:
+            car = Car.objects.only('id').get(id_in_provider_system=vehicle_id)
+            sensor = car.sensors.only('label', 'value').filter(label="mileage").first()
+            if not sensor or not sensor.value:
+                logger.warning(f"Нет маппинга для mileage для vehicleId={vehicle_id}.")
+                return None
+
+            key_path = sensor.value.split(".")
+            return key_path if key_path and key_path != [''] else None
+
+        except Car.DoesNotExist:
+            logger.error(f"Автомобиль vehicleId={vehicle_id} не найден.")
+            return None
+
+    def _calculate_periods(self, start_date: datetime, end_date: datetime) -> List[Tuple[datetime, datetime]]:
+        """Предварительно рассчитываем все периоды для параллельной обработки."""
+        periods = []
+        current_start = start_date
+
+        while current_start < end_date:
+            period_days = self._get_adaptive_period(current_start, end_date)
+            current_end = min(current_start + timedelta(days=period_days), end_date)
+            periods.append((current_start, current_end))
+            current_start = current_end + timedelta(seconds=1)
+
+        return periods
+
+    @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
+    def _fetch_and_parse_mileage_messages_for_period(
+            self,
+            vehicle_id: int,
+            start_date: datetime,
+            end_date: datetime,
+            mileage_key_path: List[str]
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Упрощенная версия без передачи parsed_data по ссылке."""
+        self._enforce_rate_limit()
+
+        url = f"{self.base_url}/terminalMessages"
+        payload = {
+            "vehicleId": vehicle_id,
+            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+            "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3]
+        }
+        headers = {"X-Auth": self.auth_token}
+
+        try:
+            start_time = time.time()
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+
+            data = orjson.loads(response.content)
+            messages = data.get("messages", [])
+
+            if not isinstance(messages, list):
+                logger.error(f"'Messages' не список: {type(messages)}")
+                return []
+
+            logger.info(f"Получено {len(messages)} сообщений за {time.time() - start_time:.2f} сек")
+
+
+            parsed_data = self._parse_messages_batch(messages, mileage_key_path)
+            return parsed_data
+
+        except requests.exceptions.HTTPError as e:
+            logger.error(f"HTTP-ошибка {e.response.status_code} для периода {start_date} - {end_date}")
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса для vehicleId={vehicle_id}: {e}")
+            return None
+
+    def _parse_messages_batch(self, messages: List[Dict], mileage_key_path: List[str]) -> List[Dict[str, Any]]:
+        """Батчевый парсинг сообщений."""
+        parsed_data = []
+
+        for record in messages:
+            timestamp_str = record.get("deviceTime")
+            if not timestamp_str:
+                continue
+
+            mileage = self._extract_mileage(record, mileage_key_path)
+            if mileage is None:
+                continue
+
+            timestamp = self._parse_timestamp(timestamp_str)
+            if timestamp:
+                parsed_data.append({
+                    "timestamp": timestamp,
+                    "mileage": float(mileage)
+                })
+
+        return parsed_data
+
+    def _extract_mileage(self, record: Dict, mileage_key_path: List[str]) -> Optional[float]:
+        """Быстрое извлечение mileage по пути."""
+        try:
+            current = record
+            for key in mileage_key_path:
+                current = current.get(key) if isinstance(current, dict) else None
+                if current is None:
+                    return None
+            return float(current) if current is not None else None
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
+        """Быстрый парсинг timestamp."""
+        try:
+            if '.' in timestamp_str:
+                return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.UTC)
+            else:
+                return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+        except ValueError:
+            return None
 
 class ProviderType(Enum):
     GLONASSSOFT = GlonassSoftProvider
