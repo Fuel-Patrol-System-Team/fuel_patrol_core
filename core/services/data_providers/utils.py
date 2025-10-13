@@ -359,7 +359,13 @@ class GlonassSoftProvider:
                         if input_type == "FMS":
                             key_part = "ign"
                         sensors_mapping['ign'] = f"parameters.{key_part}"
-
+                elif sensor_type == "Motohours" or parameter_name == "can_engine_hours":
+                    if parameter_name:
+                        key_part = parameter_name.split(";")[0]
+                        if key_part.startswith("can_") and input_number:
+                            sensors_mapping['motohours'] = f"parameters.can{input_number}"
+                        else:
+                            sensors_mapping['motohours'] = f"parameters.{key_part}"
             data["input"] = input_value
             data["output"] = output_value
             data["sensorsMapping"] = sensors_mapping
