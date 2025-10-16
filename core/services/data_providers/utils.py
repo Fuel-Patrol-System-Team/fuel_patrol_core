@@ -306,6 +306,7 @@ class GlonassSoftProvider:
                 parameter_name = sensor.get('parameterName')
                 input_number = sensor.get('inputNumber')
                 input_type = sensor.get("inputType")
+                # TODO: нужен refactoring т.к. слишком много edge кейсов
                 if sensor_type == "FuelLvl":
                     if sensor.get("gradeType") == "GradeTable":
                         grades_tables = sensor.get("gradesTables", [{}])
@@ -315,14 +316,19 @@ class GlonassSoftProvider:
                                 record = grades[-1]
                                 input_value = record.get("input")
                                 output_value = record.get("output")
-
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
-                        if key_part.startswith("can_") and input_number:
+                        # без числа именно эта колонка должна быть добавлена
+                        if key_part.startswith("can_fuel_volume"):
+                            sensors_mapping['calc_sensors_fuel_level'] = f"parameters.can_fuel_volume"
+                        # can_fuel_level название датчика can{input_number}
+                        elif key_part.startswith("can_") and input_number:
                             sensors_mapping["calc_sensors_fuel_level"] = f"parameters.can{input_number}"
                         else:
+                            # остальные имеют parameterName как имя колонки (fuel1, fuel2, lss1)
                             sensors_mapping["calc_sensors_fuel_level"] = f"parameters.{key_part}"
                     elif input_number:
+                        # пустой parameterName у датчиков типа Analog, колонка analog{input_number}
                         sensors_mapping["calc_sensors_fuel_level"] = f"parameters.analog{input_number}"
 
                 elif sensor_type == "EngineRPM":
@@ -525,12 +531,13 @@ class GlonassSoftProvider:
         ign_key_path = sensors_mapping.get("ign", "").split(".")
         engine_temp_key_path = sensors_mapping.get("engine_temp", "").split(".")
         mileage_key_path = sensors_mapping.get("mileage", "").split(".")
+        motohours_key_path = sensors_mapping.get("motohours", "").split(".")
 
         logger.info(f"Маппинг для vehicleId={vehicle_id}: fuel_key_path={fuel_key_path}, rpm_key_path={rpm_key_path}")
 
         headers = [
             "auto", "timestamp", "pos_s", "calc_sensors_fuel_level",
-            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude",
+            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude", "motohours",
             "satellites"
         ]
 
@@ -575,6 +582,7 @@ class GlonassSoftProvider:
                         ign = 0
                     engine_temp = get_nested_value(record, engine_temp_key_path)
                     mileage = get_nested_value(record, mileage_key_path)
+                    motohours = get_nested_value(record, motohours_key_path)
 
                     logger.debug(f"Найдено: fuel_level={fuel_level}, rpm={rpm}")
 
@@ -593,9 +601,10 @@ class GlonassSoftProvider:
                         "calc_sensors_voltage": record.get("voltage"),
                         "rpm": rpm,
                         "amtr": amtr,
-                        "ign": ign,
+                        "ign": 1 if ign > 0 else 0,
                         "engine_temp": engine_temp,
                         "mileage": mileage,
+                        "motohours": motohours,
                         "satellites": record.get("satellites")
                     })
 
