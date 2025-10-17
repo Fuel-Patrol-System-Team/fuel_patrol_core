@@ -316,6 +316,7 @@ class GlonassSoftProvider:
                                 record = grades[-1]
                                 input_value = record.get("input")
                                 output_value = record.get("output")
+                    logger.info(f"parameter name is {parameter_name}")
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         # без числа именно эта колонка должна быть добавлена
