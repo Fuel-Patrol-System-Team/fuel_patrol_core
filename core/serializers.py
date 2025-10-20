@@ -239,3 +239,9 @@ class CarActiveStatusSerializer(serializers.Serializer):
         car.save()
         return car
 
+class MileageTestSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField(required=True, help_text="Id автомобиля")
+    start_date = serializers.DateTimeField(required=True, help_text="Начало промежутка")
+    end_date = serializers.DateTimeField(required=True, help_text="Конец промежутка")
+    agg = serializers.IntegerField(required=False, help_text="Агрегация (в минутах)")
+

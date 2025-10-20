@@ -23,7 +23,7 @@ from core.helpers.cars import get_car_or_error, fetch_car_metrics, filter_leaks_
 from .helpers.data_provider import create_provider_data_request, validate_provider_request, validate_provider_cars, \
     create_data_provider
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
-from .helpers.mileage_test import mileage_test
+from .helpers.mileage_test import MileageModes, make_empty_mileage_result, mileage_test
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, SensorsMapping
 from core.helpers.pagination import StandardResultsSetPagination
@@ -33,7 +33,7 @@ from core.helpers.rest import (
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA
 )
 from .serializers import (
-    SensorsMappingOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
+    MileageTestSerializer, SensorsMappingOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
     CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
@@ -216,7 +216,6 @@ class ProviderDataRequestAPIView(APIView):
 
 
 class MileageTestAPIView(APIView):
-    permission_classes = [IsOrgMember]
 
     @swagger_auto_schema(
         operation_description="Расчет mileage для автомобиля за период (синхронно).",
@@ -229,9 +228,17 @@ class MileageTestAPIView(APIView):
         }
     )
     def post(self, request):
-        car_id = request.data.get('car_id')
-        start_date_str = request.data.get('start_date')
-        end_date_str = request.data.get('end_date')
+        serializer = MileageTestSerializer(data=request.data)
+
+        if not serializer.is_valid():
+                logger.error(f"Ошибка валидации параметров: {serializer.errors}")
+                return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        car_id = data.get("car_id")
+        agg = data.get("agg")
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+
 
         try:
             car = Car.objects.prefetch_related('data_providers').get(id=car_id)
@@ -240,9 +247,6 @@ class MileageTestAPIView(APIView):
             if not provider_obj:
                 return Response({"error": "Нет провайдера данных для этого автомобиля."},
                                 status=status.HTTP_400_BAD_REQUEST)
-
-            start_date = datetime.fromisoformat(start_date_str).replace(tzinfo=pytz.UTC)
-            end_date = datetime.fromisoformat(end_date_str).replace(tzinfo=pytz.UTC)
 
             if start_date >= end_date:
                 return Response({"error": "start_date должна быть раньше end_date."},
@@ -265,23 +269,25 @@ class MileageTestAPIView(APIView):
                     return Response({"error": "Не удалось получить данные для указанного периода."},
                                     status=status.HTTP_400_BAD_REQUEST)
 
+                mode = MileageModes.standart if agg is None else MileageModes.agg
                 if not parsed_data:
-                    return Response({"result": []}, status=status.HTTP_200_OK)
+                    result = make_empty_mileage_result(mode)
+                    return Response({"result": result}, status=status.HTTP_200_OK)
+                    
 
                 if parsed_data:
                     df = pl.DataFrame(parsed_data)
-                    result_df = mileage_test(df.with_columns([
+                    
+                    agg = 1 if agg is None else agg
+                    result = mileage_test(df.with_columns([
                         pl.lit(str(car.id)).alias("auto"),
                         pl.col("timestamp").cast(pl.Datetime),
                         pl.col("mileage").cast(pl.Float64),
-                    ]).sort("timestamp").select(["auto", "timestamp", "mileage"]))
+                    ]), AGG_PERIOD_MINUTES=agg, regime=mode)
 
-                    result = result_df.to_dicts() if not result_df.is_empty() else []
-                else:
-                    result = []
+                    
 
-                return Response({"result": 'Мы закончили'}, status=status.HTTP_200_OK)
-                # return Response({"result": result}, status=status.HTTP_200_OK)
+                return Response({"result": result}, status=status.HTTP_200_OK)
 
             except Exception as e:
                 logger.error(f"Ошибка в MileageTestAPIView для car_id={car_id}: {e}", exc_info=True)
@@ -340,7 +346,6 @@ class DataProviderCreateAPIView(APIView):
         if not serializer.is_valid():
             logger.error(f"Ошибка валидации данных провайдера: {serializer.errors}")
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-
         validated_data = serializer.validated_data
         cars = validated_data.pop('cars', [])
 
