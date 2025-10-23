@@ -341,11 +341,11 @@ class GlonassSoftProvider:
                         else:
                             sensors_mapping["rpm"] = f"parameters.{key_part}"
                 # по имени датчика или по типо, + защита от опечаток для имени
-                elif sensor_type == "MileageSensor" or textdistance.damerau_levenshtein(sensor_name, "Пробег") > 0.95:
+                elif sensor_type == "MileageSensor" or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2:
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         if key_part == "can_mileage":
-                            sensors_mapping['can_mileage'] = f'parameters.can_mileage'
+                            sensors_mapping['mileage'] = f'parameters.can_mileage'
                         elif key_part.startswith("can_") and input_number:
                             sensors_mapping['mileage'] = f"parameters.can{input_number}"
                         else:
@@ -370,7 +370,7 @@ class GlonassSoftProvider:
                         if input_type == "FMS":
                             key_part = "ign"
                         sensors_mapping['ign'] = f"parameters.{key_part}"
-                elif sensor_type == "Motohours" or textdistance.damerau_levenshtein(sensor_name, "моточасы") > 0.95:
+                elif sensor_type == "Motohours" or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2:
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         if key_part == "can_engine_hours":
