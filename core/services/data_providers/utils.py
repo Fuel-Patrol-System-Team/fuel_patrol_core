@@ -20,6 +20,7 @@ from itertools import islice
 import requests
 from django.conf import settings
 from django.db import transaction
+import textdistance
 
 from core.models import Car, Media, ReportQuery, CarBadData, SensorsMapping
 from core.helpers.decorators import retry_on_status
@@ -303,6 +304,7 @@ class GlonassSoftProvider:
 
             for sensor in data.get("sensors", []):
                 sensor_type = sensor.get('type')
+                sensor_name = sensor.get("name", "")
                 parameter_name = sensor.get('parameterName')
                 input_number = sensor.get('inputNumber')
                 input_type = sensor.get("inputType")
@@ -338,10 +340,13 @@ class GlonassSoftProvider:
                             sensors_mapping["rpm"] = f"parameters.can{input_number}"
                         else:
                             sensors_mapping["rpm"] = f"parameters.{key_part}"
-                elif sensor_type == "MileageSensor":
+                # по имени датчика или по типо, + защита от опечаток для имени
+                elif sensor_type == "MileageSensor" or textdistance.damerau_levenshtein(sensor_name, "Пробег") > 0.95:
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
-                        if key_part.startswith("can_") and input_number:
+                        if key_part == "can_mileage":
+                            sensors_mapping['can_mileage'] = f'parameters.can_mileage'
+                        elif key_part.startswith("can_") and input_number:
                             sensors_mapping['mileage'] = f"parameters.can{input_number}"
                         else:
                             sensors_mapping['mileage'] = f'parameters.{key_part}'
@@ -365,10 +370,12 @@ class GlonassSoftProvider:
                         if input_type == "FMS":
                             key_part = "ign"
                         sensors_mapping['ign'] = f"parameters.{key_part}"
-                elif sensor_type == "Motohours" or parameter_name == "can_engine_hours":
+                elif sensor_type == "Motohours" or textdistance.damerau_levenshtein(sensor_name, "моточасы") > 0.95:
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
-                        if key_part.startswith("can_") and input_number:
+                        if key_part == "can_engine_hours":
+                            sensors_mapping['motohours'] = f"parameters.can_engine_hours"
+                        elif key_part.startswith("can_") and input_number:
                             sensors_mapping['motohours'] = f"parameters.can{input_number}"
                         else:
                             sensors_mapping['motohours'] = f"parameters.{key_part}"
