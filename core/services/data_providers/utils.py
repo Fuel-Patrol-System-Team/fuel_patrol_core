@@ -50,7 +50,9 @@ class GlonassSoftProvider:
         os.makedirs(tmp_dir, exist_ok=True)
 
         self.csv_file_path = media_dir / f"raw_data_{report_query_id}_{timestamp}.csv"
-        self.full_json_file_path = media_dir / f"full_terminal_messages_{report_query_id}_{timestamp}.json"
+        self.full_json_file_path = (
+            media_dir / f"full_terminal_messages_{report_query_id}_{timestamp}.json"
+        )
         self.tmp_dir = tmp_dir
         self.csv_initialized = False
         self.default_period_days = 90
@@ -67,7 +69,7 @@ class GlonassSoftProvider:
     def _log_resources(self, method: str) -> None:
         """Логирует текущее использование RAM и CPU."""
         process = psutil.Process()
-        ram_mb = process.memory_info().rss / 1024 ** 2
+        ram_mb = process.memory_info().rss / 1024**2
         cpu_percent = psutil.cpu_percent()
         logger.info(f"[{method}] RAM: {ram_mb:.2f} MB, CPU: {cpu_percent:.1f}%")
 
@@ -84,9 +86,7 @@ class GlonassSoftProvider:
         """Создаёт запись в CarBadData для указанной машины с причиной."""
         try:
             CarBadData.objects.create(
-                car_id=car,
-                reason=reason,
-                datetime=datetime.now(tz=pytz.UTC)
+                car_id=car, reason=reason, datetime=datetime.now(tz=pytz.UTC)
             )
             logger.warning(f"Создана запись CarBadData для car_id={car.id}: {reason}")
         except Exception as e:
@@ -124,7 +124,7 @@ class GlonassSoftProvider:
         url = f"{self.base_url}/auth/login"
         payload = {
             "login": self.metadata.get("login"),
-            "password": self.metadata.get("password")
+            "password": self.metadata.get("password"),
         }
         logger.info(f"Авторизация: URL={url}")
 
@@ -147,8 +147,12 @@ class GlonassSoftProvider:
             return False
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
-    def get_vehicles(self, name: Optional[str] = None, start_date: Optional[datetime] = None,
-                     end_date: Optional[datetime] = None) -> Optional[List[Dict[str, Any]]]:
+    def get_vehicles(
+        self,
+        name: Optional[str] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         Получает список автомобилей, их детали и сохраняет данные.
         """
@@ -181,16 +185,20 @@ class GlonassSoftProvider:
         report_query = ReportQuery.objects.get(id=self.report_query_id)
         provider = report_query.provider_id
 
-        existing_cars_qs = Car.objects.filter(data_providers=provider).values('id_in_provider_system',
-                                                                              'last_processed_date')
-        existing_cars_dict = {str(car['id_in_provider_system']): car['last_processed_date'] for car in existing_cars_qs}
+        existing_cars_qs = Car.objects.filter(data_providers=provider).values(
+            "id_in_provider_system", "last_processed_date"
+        )
+        existing_cars_dict = {
+            str(car["id_in_provider_system"]): car["last_processed_date"]
+            for car in existing_cars_qs
+        }
 
         is_initial_processing = not existing_cars_qs.exists()
 
         processed_vehicles = []
 
         for i in range(0, len(data), self.batch_size):
-            batch = data[i:i + self.batch_size]
+            batch = data[i : i + self.batch_size]
             logger.info(f"Батч {i + 1}-{i + len(batch)} из {len(data)}")
 
             for vehicle in batch:
@@ -200,33 +208,45 @@ class GlonassSoftProvider:
                     continue
 
                 if vehicle_id in self.processed_vehicle_ids:
-                    logger.info(f"Пропущена машина vehicleId={vehicle_id}: уже обработана в этом сеансе.")
+                    logger.info(
+                        f"Пропущена машина vehicleId={vehicle_id}: уже обработана в этом сеансе."
+                    )
                     continue
                 self.processed_vehicle_ids.add(vehicle_id)
 
                 vehicle_details = self.get_vehicle_details(vehicle_id)
                 if not vehicle_details:
-                    logger.warning(f"Не удалось получить детали для vehicleId={vehicle_id}")
+                    logger.warning(
+                        f"Не удалось получить детали для vehicleId={vehicle_id}"
+                    )
                     continue
 
                 try:
                     self.save_to_db(vehicle_details, provider)
                 except Exception as e:
-                    logger.error(f"Ошибка сохранения в БД для vehicleId={vehicle_id}: {e}")
+                    logger.error(
+                        f"Ошибка сохранения в БД для vehicleId={vehicle_id}: {e}"
+                    )
                     continue
 
                 if not self._validate_vehicle_data(vehicle_details):
                     car = Car.objects.filter(id_in_provider_system=vehicle_id).first()
                     if car:
-                        self._create_bad_data(car, "Нетарированное ТС или отсутствуют данные")
-                    logger.info(f"Пропущена машина vehicleId={vehicle_id}: не прошла валидацию.")
+                        self._create_bad_data(
+                            car, "Нетарированное ТС или отсутствуют данные"
+                        )
+                    logger.info(
+                        f"Пропущена машина vehicleId={vehicle_id}: не прошла валидацию."
+                    )
                     continue
 
                 car_start_date = start_date
                 created_at_str = vehicle_details.get("createdAt")
 
                 try:
-                    created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.UTC)
+                    created_at = datetime.strptime(
+                        created_at_str, "%Y-%m-%dT%H:%M:%S.%fZ"
+                    ).replace(tzinfo=pytz.UTC)
                 except (ValueError, TypeError):
                     logger.warning(f"Некорректный формат createdAt: {created_at_str}")
                     continue
@@ -234,7 +254,11 @@ class GlonassSoftProvider:
                 last_processed_date = existing_cars_dict.get(str(vehicle_id))
 
                 if not car_start_date:
-                    car_start_date = created_at if is_initial_processing else (last_processed_date or created_at)
+                    car_start_date = (
+                        created_at
+                        if is_initial_processing
+                        else (last_processed_date or created_at)
+                    )
 
                 car_end_date = end_date or datetime.now(tz=pytz.UTC)
 
@@ -242,25 +266,41 @@ class GlonassSoftProvider:
                 if data_period < self.min_data_period_days:
                     car = Car.objects.filter(id_in_provider_system=vehicle_id).first()
                     if car:
-                        self._create_bad_data(car, f"Мало данных, минимальный объём {self.min_data_period_days} дней")
+                        self._create_bad_data(
+                            car,
+                            f"Мало данных, минимальный объём {self.min_data_period_days} дней",
+                        )
                     logger.info(
-                        f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}")
+                        f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}"
+                    )
                     continue
 
                 try:
                     self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
                     processed_vehicles.append(vehicle_details)
                 except Exception as e:
-                    logger.error(f"Критическая ошибка обработки vehicleId={vehicle_id}: {e}", exc_info=True)
+                    logger.error(
+                        f"Критическая ошибка обработки vehicleId={vehicle_id}: {e}",
+                        exc_info=True,
+                    )
                     continue
 
-        if processed_vehicles and os.path.exists(self.csv_file_path) and os.path.getsize(self.csv_file_path) > 0:
+        if (
+            processed_vehicles
+            and os.path.exists(self.csv_file_path)
+            and os.path.getsize(self.csv_file_path) > 0
+        ):
             self._create_media_record(self.csv_file_path, "raw")
 
-        if os.path.exists(self.full_json_file_path) and os.path.getsize(self.full_json_file_path) > 0:
+        if (
+            os.path.exists(self.full_json_file_path)
+            and os.path.getsize(self.full_json_file_path) > 0
+        ):
             self._create_media_record(self.full_json_file_path, "raw_json")
         else:
-            logger.warning("Медиа-файл не создан: нет обработанных данных или CSV/JSON пустой.")
+            logger.warning(
+                "Медиа-файл не создан: нет обработанных данных или CSV/JSON пустой."
+            )
 
         self._cleanup_tmp_files()
         return processed_vehicles if processed_vehicles else None
@@ -276,10 +316,17 @@ class GlonassSoftProvider:
         if not is_active:
             return False
 
-        if (input_value is None or output_value is None) or (input_value == output_value) or output_value == 0.0:
+        if (
+            (input_value is None or output_value is None)
+            or (input_value == output_value)
+            or output_value == 0.0
+        ):
             return False
 
-        if vehicle_details.get("sensorsMapping", {}).get("calc_sensors_fuel_level") is None:
+        if (
+            vehicle_details.get("sensorsMapping", {}).get("calc_sensors_fuel_level")
+            is None
+        ):
             return False
 
         return True
@@ -303,13 +350,15 @@ class GlonassSoftProvider:
             sensors_mapping = {}
 
             for sensor in data.get("sensors", []):
-                sensor_type = sensor.get('type')
+                sensor_type = sensor.get("type")
                 sensor_name = sensor.get("name", "")
-                parameter_name = sensor.get('parameterName')
-                input_number = sensor.get('inputNumber')
+                parameter_name = sensor.get("parameterName")
+                input_number = sensor.get("inputNumber")
                 input_type = sensor.get("inputType")
                 # TODO: нужен refactoring т.к. слишком много edge кейсов
-                if sensor_type == "FuelLvl":
+                if "Скорость" in sensor_name:
+                    sensors_mapping["speed"] = f"parameters.{parameter_name}"
+                elif sensor_type == "FuelLvl":
                     if sensor.get("gradeType") == "GradeTable":
                         grades_tables = sensor.get("gradesTables", [{}])
                         if grades_tables and grades_tables[0]:
@@ -322,16 +371,24 @@ class GlonassSoftProvider:
                         key_part = parameter_name.split(";")[0]
                         # без числа именно эта колонка должна быть добавлена
                         if key_part.startswith("can_fuel_volume"):
-                            sensors_mapping['calc_sensors_fuel_level'] = f"parameters.can_fuel_volume"
+                            sensors_mapping["calc_sensors_fuel_level"] = (
+                                f"parameters.can_fuel_volume"
+                            )
                         # can_fuel_level название датчика can{input_number}
                         elif key_part.startswith("can_") and input_number:
-                            sensors_mapping["calc_sensors_fuel_level"] = f"parameters.can{input_number}"
+                            sensors_mapping["calc_sensors_fuel_level"] = (
+                                f"parameters.can{input_number}"
+                            )
                         else:
                             # остальные имеют parameterName как имя колонки (fuel1, fuel2, lss1)
-                            sensors_mapping["calc_sensors_fuel_level"] = f"parameters.{key_part}"
+                            sensors_mapping["calc_sensors_fuel_level"] = (
+                                f"parameters.{key_part}"
+                            )
                     elif input_number:
                         # пустой parameterName у датчиков типа Analog, колонка analog{input_number}
-                        sensors_mapping["calc_sensors_fuel_level"] = f"parameters.analog{input_number}"
+                        sensors_mapping["calc_sensors_fuel_level"] = (
+                            f"parameters.analog{input_number}"
+                        )
 
                 elif sensor_type == "EngineRPM":
                     if parameter_name:
@@ -341,44 +398,58 @@ class GlonassSoftProvider:
                         else:
                             sensors_mapping["rpm"] = f"parameters.{key_part}"
                 # по имени датчика или по типо, + защита от опечаток для имени
-                elif sensor_type == "MileageSensor" or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2:
+                elif (
+                    sensor_type == "MileageSensor"
+                    or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
+                ):
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         if key_part == "can_mileage":
-                            sensors_mapping['mileage'] = f'parameters.can_mileage'
+                            sensors_mapping["mileage"] = f"parameters.can_mileage"
                         elif key_part.startswith("can_") and input_number:
-                            sensors_mapping['mileage'] = f"parameters.can{input_number}"
+                            sensors_mapping["mileage"] = f"parameters.can{input_number}"
                         else:
-                            sensors_mapping['mileage'] = f'parameters.{key_part}'
+                            sensors_mapping["mileage"] = f"parameters.{key_part}"
                 elif sensor_type == "Temperature":
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         if key_part.startswith("can_") and input_number:
-                            sensors_mapping['engine_temp'] = f"parameters.can{input_number}"
+                            sensors_mapping["engine_temp"] = (
+                                f"parameters.can{input_number}"
+                            )
                         else:
-                            sensors_mapping['engine_temp'] = f"parameters.{key_part}"
+                            sensors_mapping["engine_temp"] = f"parameters.{key_part}"
                 elif sensor_type == "EngineTemperature":
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         if key_part.startswith("can_") and input_number:
-                            sensors_mapping['engine_temp'] = f"parameters.can{input_number}"
+                            sensors_mapping["engine_temp"] = (
+                                f"parameters.can{input_number}"
+                            )
                         else:
-                            sensors_mapping['engine_temp'] = f"parameters.{key_part}"
+                            sensors_mapping["engine_temp"] = f"parameters.{key_part}"
                 elif sensor_type == "Ignition":
                     if parameter_name:
                         key_part = "iobits"
                         if input_type == "FMS":
                             key_part = "ign"
-                        sensors_mapping['ign'] = f"parameters.{key_part}"
-                elif sensor_type == "Motohours" or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2:
+                        sensors_mapping["ign"] = f"parameters.{key_part}"
+                elif (
+                    sensor_type == "Motohours"
+                    or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
+                ):
                     if parameter_name:
                         key_part = parameter_name.split(";")[0]
                         if key_part == "can_engine_hours":
-                            sensors_mapping['motohours'] = f"parameters.can_engine_hours"
+                            sensors_mapping["motohours"] = (
+                                f"parameters.can_engine_hours"
+                            )
                         elif key_part.startswith("can_") and input_number:
-                            sensors_mapping['motohours'] = f"parameters.can{input_number}"
+                            sensors_mapping["motohours"] = (
+                                f"parameters.can{input_number}"
+                            )
                         else:
-                            sensors_mapping['motohours'] = f"parameters.{key_part}"
+                            sensors_mapping["motohours"] = f"parameters.{key_part}"
             data["input"] = input_value
             data["output"] = output_value
             data["sensorsMapping"] = sensors_mapping
@@ -386,10 +457,14 @@ class GlonassSoftProvider:
             return data
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка запроса при получении деталей для vehicleId={vehicle_id}: {e}")
+            logger.error(
+                f"Ошибка запроса при получении деталей для vehicleId={vehicle_id}: {e}"
+            )
             return None
 
-    def get_terminal_to_json(self, vehicle_id: int, start_date: datetime, end_date: datetime) -> None:
+    def get_terminal_to_json(
+        self, vehicle_id: int, start_date: datetime, end_date: datetime
+    ) -> None:
         """
         Получает данные терминала за заданный период и сохраняет их в CSV и JSON.
         """
@@ -402,7 +477,9 @@ class GlonassSoftProvider:
                 logger.info(f"Пропущен vehicleId={vehicle_id}: start_date >= end_date")
                 return
 
-            logger.info(f"Запрос данных vehicleId={vehicle_id} с {start_date} по {end_date}")
+            logger.info(
+                f"Запрос данных vehicleId={vehicle_id} с {start_date} по {end_date}"
+            )
             current_start = start_date
 
             while current_start < end_date:
@@ -410,13 +487,19 @@ class GlonassSoftProvider:
                 current_end = min(current_start + timedelta(days=period_days), end_date)
 
                 try:
-                    success = self._fetch_terminal_to_json_for_period(vehicle_id, current_start, current_end)
+                    success = self._fetch_terminal_to_json_for_period(
+                        vehicle_id, current_start, current_end
+                    )
                     if not success and self.default_period_days > 1:
                         self.default_period_days = max(self.default_period_days // 2, 1)
-                        logger.warning(f"Уменьшен период до {self.default_period_days} дней из-за ошибки.")
+                        logger.warning(
+                            f"Уменьшен период до {self.default_period_days} дней из-за ошибки."
+                        )
                         continue
                     elif not success:
-                        logger.error(f"Не удалось получить данные для vehicleId={vehicle_id} даже за 1 день.")
+                        logger.error(
+                            f"Не удалось получить данные для vehicleId={vehicle_id} даже за 1 день."
+                        )
                         break
 
                     current_start = current_end + timedelta(seconds=1)
@@ -425,7 +508,8 @@ class GlonassSoftProvider:
                     if e.response.status_code == 429:
                         self.default_period_days = max(self.default_period_days // 2, 1)
                         logger.warning(
-                            f"Сработал Rate Limit (429). Уменьшаем период до {self.default_period_days} дней.")
+                            f"Сработал Rate Limit (429). Уменьшаем период до {self.default_period_days} дней."
+                        )
                         continue
                     else:
                         raise
@@ -435,20 +519,29 @@ class GlonassSoftProvider:
 
             if not car.last_processed_date or end_date > car.last_processed_date:
                 car.last_processed_date = end_date
-                car.save(update_fields=['last_processed_date'])
-                logger.info(f"Обновлена last_processed_date для vehicleId={vehicle_id} до {end_date}")
+                car.save(update_fields=["last_processed_date"])
+                logger.info(
+                    f"Обновлена last_processed_date для vehicleId={vehicle_id} до {end_date}"
+                )
             else:
-                logger.info(f"last_processed_date для vehicleId={vehicle_id} не обновлена: {car.last_processed_date}")
+                logger.info(
+                    f"last_processed_date для vehicleId={vehicle_id} не обновлена: {car.last_processed_date}"
+                )
 
             self._log_resources("get_terminal_to_json")
 
         except Car.DoesNotExist:
             logger.error(f"Автомобиль vehicleId={vehicle_id} не найден.")
         except Exception as e:
-            logger.error(f"Критическая ошибка получения данных для vehicleId={vehicle_id}: {e}", exc_info=True)
+            logger.error(
+                f"Критическая ошибка получения данных для vehicleId={vehicle_id}: {e}",
+                exc_info=True,
+            )
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
-    def _fetch_terminal_to_json_for_period(self, vehicle_id: int, start_date: datetime, end_date: datetime) -> bool:
+    def _fetch_terminal_to_json_for_period(
+        self, vehicle_id: int, start_date: datetime, end_date: datetime
+    ) -> bool:
         """
         Запрашивает данные терминала за указанный период.
         """
@@ -457,8 +550,10 @@ class GlonassSoftProvider:
 
         payload = {
             "vehicleId": vehicle_id,
-            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
-            "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3]
+            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[
+                :-3
+            ],
+            "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
         }
         headers = {"X-Auth": self.auth_token}
         logger.info(f"Запрос данных vehicleId={vehicle_id}, {start_date} - {end_date}")
@@ -473,20 +568,28 @@ class GlonassSoftProvider:
                 logger.error(f"'Messages' не список: {type(messages)}")
                 return False
 
-            logger.info(f"Получено {len(messages)} сообщений для vehicleId={vehicle_id}.")
+            logger.info(
+                f"Получено {len(messages)} сообщений для vehicleId={vehicle_id}."
+            )
 
             if not messages:
                 logger.info(f"Нет сообщений для vehicleId={vehicle_id}.")
                 return True
 
-            if not hasattr(self, 'all_terminal_messages') or self.all_terminal_messages is None:
+            if (
+                not hasattr(self, "all_terminal_messages")
+                or self.all_terminal_messages is None
+            ):
                 self.all_terminal_messages = {}
 
             if vehicle_id not in self.all_terminal_messages:
                 self.all_terminal_messages[vehicle_id] = []
             self.all_terminal_messages[vehicle_id].extend(messages)
 
-            tmp_json_path = self.tmp_dir / f"terminal_messages_{vehicle_id}_{start_date.strftime('%Y%m%d%H%M%S')}.json"
+            tmp_json_path = (
+                self.tmp_dir
+                / f"terminal_messages_{vehicle_id}_{start_date.strftime('%Y%m%d%H%M%S')}.json"
+            )
             with open(tmp_json_path, "wb") as f:
                 f.write(orjson.dumps(data, option=orjson.OPT_INDENT_2))
             logger.debug(f"Буферные данные сохранены в {tmp_json_path}")
@@ -497,7 +600,9 @@ class GlonassSoftProvider:
             logger.error(f"HTTP-ошибка при запросе данных: {e.response.status_code}")
             return False
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка запроса данных терминала для vehicleId={vehicle_id}: {e}")
+            logger.error(
+                f"Ошибка запроса данных терминала для vehicleId={vehicle_id}: {e}"
+            )
             return False
 
     def _save_full_terminal_messages_to_json(self, vehicle_id: int) -> None:
@@ -510,8 +615,10 @@ class GlonassSoftProvider:
         with open(self.full_json_file_path, "wb") as f:
             f.write(orjson.dumps(messages, option=orjson.OPT_INDENT_2))
 
-        file_size = os.path.getsize(self.full_json_file_path) / 1024 ** 2
-        logger.info(f"Полные данные JSON сохранены в {self.full_json_file_path} ({file_size:.2f} MB)")
+        file_size = os.path.getsize(self.full_json_file_path) / 1024**2
+        logger.info(
+            f"Полные данные JSON сохранены в {self.full_json_file_path} ({file_size:.2f} MB)"
+        )
 
         self.all_terminal_messages.pop(vehicle_id, None)
 
@@ -533,6 +640,7 @@ class GlonassSoftProvider:
             logger.error(f"Автомобиль vehicleId={vehicle_id} не найден")
             return
 
+        speed_key_path = sensors_mapping.get("speed", "speed").split(".")
         fuel_key_path = sensors_mapping.get("calc_sensors_fuel_level", "").split(".")
         rpm_key_path = sensors_mapping.get("rpm", "").split(".")
         ign_key_path = sensors_mapping.get("ign", "").split(".")
@@ -540,12 +648,25 @@ class GlonassSoftProvider:
         mileage_key_path = sensors_mapping.get("mileage", "").split(".")
         motohours_key_path = sensors_mapping.get("motohours", "").split(".")
 
-        logger.info(f"Маппинг для vehicleId={vehicle_id}: fuel_key_path={fuel_key_path}, rpm_key_path={rpm_key_path}")
+        logger.info(
+            f"Маппинг для vehicleId={vehicle_id}: fuel_key_path={fuel_key_path}, rpm_key_path={rpm_key_path}"
+        )
 
         headers = [
-            "auto", "timestamp", "pos_s", "calc_sensors_fuel_level",
-            "calc_sensors_voltage", "rpm", "amtr", "mileage", "engine_temp", "ign", "latitude", "longitude", "motohours",
-            "satellites"
+            "auto",
+            "timestamp",
+            "pos_s",
+            "calc_sensors_fuel_level",
+            "calc_sensors_voltage",
+            "rpm",
+            "amtr",
+            "mileage",
+            "engine_temp",
+            "ign",
+            "latitude",
+            "longitude",
+            "motohours",
+            "satellites",
         ]
 
         if not self.csv_initialized:
@@ -556,8 +677,8 @@ class GlonassSoftProvider:
             mode = "a"
 
         messages_iter = iter(messages)
-        with open(self.csv_file_path, mode, encoding="utf-8", newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=headers, lineterminator='\n')
+        with open(self.csv_file_path, mode, encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=headers, lineterminator="\n")
             if mode == "w":
                 writer.writeheader()
 
@@ -568,10 +689,10 @@ class GlonassSoftProvider:
 
                 rows_to_write = []
                 for record in chunk:
-
+                    # TODO: может это куда-то перенести?
                     def get_nested_value(d: dict, keys: list):
                         current = d
-                        if not keys or keys == ['']:
+                        if not keys or keys == [""]:
                             return None
 
                         for key in keys:
@@ -580,14 +701,18 @@ class GlonassSoftProvider:
                             current = current[key]
                         return current
 
+                    speed = get_nested_value(record, speed_key_path)
                     fuel_level = get_nested_value(record, fuel_key_path)
                     rpm = get_nested_value(record, rpm_key_path)
                     ign = get_nested_value(record, ign_key_path)
-                    try:
-                        ign = int(ign)
-                    except:
+                    if ign is None:
                         ign = 0
-                    engine_temp = get_nested_value(record, engine_temp_key_path)
+                    else:
+                        try:
+                            ign = int(ign)
+                        except:
+                            ign = 0
+                        engine_temp = get_nested_value(record, engine_temp_key_path)
                     mileage = get_nested_value(record, mileage_key_path)
                     motohours = get_nested_value(record, motohours_key_path)
 
@@ -598,28 +723,32 @@ class GlonassSoftProvider:
                     amtr_z = float(record.get("amtr_z", 0) or 0)
                     amtr = int(abs(amtr_x) + abs(amtr_y) + abs(amtr_z))
 
-                    rows_to_write.append({
-                        "auto": vehicle_guid,
-                        "timestamp": record.get("deviceTime"),
-                        "pos_s": record.get("speed"),
-                        "latitude": record.get("latitude"),
-                        "longitude": record.get("longitude"),
-                        "calc_sensors_fuel_level": fuel_level,
-                        "calc_sensors_voltage": record.get("voltage"),
-                        "rpm": rpm,
-                        "amtr": amtr,
-                        "ign": 1 if ign > 0 else 0,
-                        "engine_temp": engine_temp,
-                        "mileage": mileage,
-                        "motohours": motohours,
-                        "satellites": record.get("satellites")
-                    })
+                    rows_to_write.append(
+                        {
+                            "auto": vehicle_guid,
+                            "timestamp": record.get("deviceTime"),
+                            "pos_s": speed,
+                            "latitude": record.get("latitude"),
+                            "longitude": record.get("longitude"),
+                            "calc_sensors_fuel_level": fuel_level,
+                            "calc_sensors_voltage": record.get("voltage"),
+                            "rpm": rpm,
+                            "amtr": amtr,
+                            "ign": 1 if ign > 0 else 0,
+                            "engine_temp": engine_temp,
+                            "mileage": mileage,
+                            "motohours": motohours,
+                            "satellites": record.get("satellites"),
+                        }
+                    )
 
                 writer.writerows(rows_to_write)
-                logger.info(f"Добавлено {len(rows_to_write)} записей для vehicle_guid={vehicle_guid}")
+                logger.info(
+                    f"Добавлено {len(rows_to_write)} записей для vehicle_guid={vehicle_guid}"
+                )
                 self._log_resources("_save_all_terminal_messages_to_csv chunk")
 
-        file_size = os.path.getsize(self.csv_file_path) / 1024 ** 2
+        file_size = os.path.getsize(self.csv_file_path) / 1024**2
         logger.info(f"Все данные сохранены в {self.csv_file_path} ({file_size:.2f} MB)")
 
         self.all_terminal_messages.pop(vehicle_id, None)
@@ -632,10 +761,14 @@ class GlonassSoftProvider:
         try:
             report_query = ReportQuery.objects.get(id=self.report_query_id)
             if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                logger.warning(f"Файл {file_path} не существует или пустой, пропускаем создание Media")
+                logger.warning(
+                    f"Файл {file_path} не существует или пустой, пропускаем создание Media"
+                )
                 return
 
-            existing_media = Media.objects.filter(report_query_id=report_query, type=file_type).first()
+            existing_media = Media.objects.filter(
+                report_query_id=report_query, type=file_type
+            ).first()
 
             media_file_relative_path = str(file_path.relative_to(settings.MEDIA_ROOT))
             file_size = os.path.getsize(file_path)
@@ -656,7 +789,7 @@ class GlonassSoftProvider:
                     type=file_type,
                     file=media_file_relative_path,
                     filename=file_path.name,
-                    size=file_size
+                    size=file_size,
                 )
                 logger.info(f"Создана запись Media: {media.id}")
         except Exception as e:
@@ -668,13 +801,18 @@ class GlonassSoftProvider:
         """
         Сохраняет или обновляет данные об автомобиле и датчиках в БД.
         """
-        custom_fields = {field["name"]: field["value"] for field in vehicle_data.get("customFields", [])}
+        custom_fields = {
+            field["name"]: field["value"]
+            for field in vehicle_data.get("customFields", [])
+        }
         engine_type = 1.0 if custom_fields.get("Тип учета") == "Моточасы" else 0.0
         vehicle_guid = vehicle_data.get("vehicleGuid")
         vehicle_id = vehicle_data.get("vehicleId")
 
         if not vehicle_guid or not vehicle_id:
-            logger.error(f"Отсутствуют vehicleGuid или vehicleId в данных: {vehicle_data}")
+            logger.error(
+                f"Отсутствуют vehicleGuid или vehicleId в данных: {vehicle_data}"
+            )
             raise ValueError("Missing vehicleGuid or vehicleId")
 
         car, created = Car.objects.update_or_create(
@@ -686,26 +824,32 @@ class GlonassSoftProvider:
                 "engine_type": engine_type,
                 "input": vehicle_data.get("input"),
                 "output": vehicle_data.get("output"),
-                "is_tarrified": not ((vehicle_data.get("input") is None or vehicle_data.get("input") == 1.0) and
-                                     (vehicle_data.get("output") is None or vehicle_data.get("output") == 1.0)),
-                "is_active": vehicle_data.get("isActive", True)
-            }
+                "is_tarrified": not (
+                    (
+                        vehicle_data.get("input") is None
+                        or vehicle_data.get("input") == 1.0
+                    )
+                    and (
+                        vehicle_data.get("output") is None
+                        or vehicle_data.get("output") == 1.0
+                    )
+                ),
+                "is_active": vehicle_data.get("isActive", True),
+            },
         )
 
         provider.cars.add(car)
 
-
         for label, value in vehicle_data.get("sensorsMapping", {}).items():
             SensorsMapping.objects.update_or_create(
-                car_id=car,
-                label=label,
-                defaults={"value": value}
+                car_id=car, label=label, defaults={"value": value}
             )
 
         logger.info(f"Сохранены данные для vehicleId={vehicle_id}.")
 
-    def get_single_vehicle_data_in_memory(self, vehicle_id: int, start_date: datetime, end_date: datetime) -> Optional[
-        List[Dict[str, Any]]]:
+    def get_single_vehicle_data_in_memory(
+        self, vehicle_id: int, start_date: datetime, end_date: datetime
+    ) -> Optional[List[Dict[str, Any]]]:
         """
         Получает данные для одного автомобиля за период, парсит timestamp и mileage "на лету" и возвращает результат в памяти.
         """
@@ -727,7 +871,10 @@ class GlonassSoftProvider:
             for period_start, period_end in periods:
                 future = executor.submit(
                     self._fetch_and_parse_mileage_messages_for_period,
-                    vehicle_id, period_start, period_end, mileage_key_path
+                    vehicle_id,
+                    period_start,
+                    period_end,
+                    mileage_key_path,
                 )
                 futures.append(future)
 
@@ -736,27 +883,31 @@ class GlonassSoftProvider:
                 if result is not None:
                     parsed_data.extend(result)
 
-        logger.info(f"Всего спарсено {len(parsed_data)} записей timestamp + mileage для vehicleId={vehicle_id}")
+        logger.info(
+            f"Всего спарсено {len(parsed_data)} записей timestamp + mileage для vehicleId={vehicle_id}"
+        )
         return parsed_data
 
     @lru_cache(maxsize=100)
     def _get_mileage_key_path(self, vehicle_id: int) -> Optional[List[str]]:
         """Кешируем получение пути к mileage."""
         try:
-            car = Car.objects.only('id').get(id_in_provider_system=vehicle_id)
-            sensor = car.sensors.only('label', 'value').filter(label="mileage").first()
+            car = Car.objects.only("id").get(id_in_provider_system=vehicle_id)
+            sensor = car.sensors.only("label", "value").filter(label="mileage").first()
             if not sensor or not sensor.value:
                 logger.warning(f"Нет маппинга для mileage для vehicleId={vehicle_id}.")
                 return None
 
             key_path = sensor.value.split(".")
-            return key_path if key_path and key_path != [''] else None
+            return key_path if key_path and key_path != [""] else None
 
         except Car.DoesNotExist:
             logger.error(f"Автомобиль vehicleId={vehicle_id} не найден.")
             return None
 
-    def _calculate_periods(self, start_date: datetime, end_date: datetime) -> List[Tuple[datetime, datetime]]:
+    def _calculate_periods(
+        self, start_date: datetime, end_date: datetime
+    ) -> List[Tuple[datetime, datetime]]:
         """Предварительно рассчитываем все периоды для параллельной обработки."""
         periods = []
         current_start = start_date
@@ -771,11 +922,11 @@ class GlonassSoftProvider:
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
     def _fetch_and_parse_mileage_messages_for_period(
-            self,
-            vehicle_id: int,
-            start_date: datetime,
-            end_date: datetime,
-            mileage_key_path: List[str]
+        self,
+        vehicle_id: int,
+        start_date: datetime,
+        end_date: datetime,
+        mileage_key_path: List[str],
     ) -> Optional[List[Dict[str, Any]]]:
         """Упрощенная версия без передачи parsed_data по ссылке."""
         self._enforce_rate_limit()
@@ -783,8 +934,10 @@ class GlonassSoftProvider:
         url = f"{self.base_url}/terminalMessages"
         payload = {
             "vehicleId": vehicle_id,
-            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
-            "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3]
+            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[
+                :-3
+            ],
+            "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
         }
         headers = {"X-Auth": self.auth_token}
 
@@ -800,20 +953,25 @@ class GlonassSoftProvider:
                 logger.error(f"'Messages' не список: {type(messages)}")
                 return []
 
-            logger.info(f"Получено {len(messages)} сообщений за {time.time() - start_time:.2f} сек")
-
+            logger.info(
+                f"Получено {len(messages)} сообщений за {time.time() - start_time:.2f} сек"
+            )
 
             parsed_data = self._parse_messages_batch(messages, mileage_key_path)
             return parsed_data
 
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP-ошибка {e.response.status_code} для периода {start_date} - {end_date}")
+            logger.error(
+                f"HTTP-ошибка {e.response.status_code} для периода {start_date} - {end_date}"
+            )
             return None
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка запроса для vehicleId={vehicle_id}: {e}")
             return None
 
-    def _parse_messages_batch(self, messages: List[Dict], mileage_key_path: List[str]) -> List[Dict[str, Any]]:
+    def _parse_messages_batch(
+        self, messages: List[Dict], mileage_key_path: List[str]
+    ) -> List[Dict[str, Any]]:
         """Батчевый парсинг сообщений."""
         parsed_data = []
 
@@ -828,14 +986,13 @@ class GlonassSoftProvider:
 
             timestamp = self._parse_timestamp(timestamp_str)
             if timestamp:
-                parsed_data.append({
-                    "timestamp": timestamp,
-                    "mileage": float(mileage)
-                })
+                parsed_data.append({"timestamp": timestamp, "mileage": float(mileage)})
 
         return parsed_data
 
-    def _extract_mileage(self, record: Dict, mileage_key_path: List[str]) -> Optional[float]:
+    def _extract_mileage(
+        self, record: Dict, mileage_key_path: List[str]
+    ) -> Optional[float]:
         """Быстрое извлечение mileage по пути."""
         try:
             current = record
@@ -850,12 +1007,17 @@ class GlonassSoftProvider:
     def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
         """Быстрый парсинг timestamp."""
         try:
-            if '.' in timestamp_str:
-                return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=pytz.UTC)
+            if "." in timestamp_str:
+                return datetime.strptime(
+                    timestamp_str, "%Y-%m-%dT%H:%M:%S.%fZ"
+                ).replace(tzinfo=pytz.UTC)
             else:
-                return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=pytz.UTC)
+                return datetime.strptime(timestamp_str, "%Y-%m-%dT%H:%M:%SZ").replace(
+                    tzinfo=pytz.UTC
+                )
         except ValueError:
             return None
+
 
 class ProviderType(Enum):
     GLONASSSOFT = GlonassSoftProvider
@@ -875,7 +1037,9 @@ def provider_factory(report_query_id: str, metadata: Dict[str, Any]) -> Optional
     try:
         provider_type_str = metadata.get("provider_type")
         if not provider_type_str:
-            logger.error(f"В метаданных ReportQuery ID={report_query_id} отсутствует ключ 'provider_type'.")
+            logger.error(
+                f"В метаданных ReportQuery ID={report_query_id} отсутствует ключ 'provider_type'."
+            )
             return None
 
         provider_class = ProviderType.get_class(provider_type_str)
@@ -887,11 +1051,15 @@ def provider_factory(report_query_id: str, metadata: Dict[str, Any]) -> Optional
         return provider_class(metadata, report_query_id)
 
     except Exception as e:
-        logger.error(f"Ошибка при создании экземпляра провайдера для ReportQuery ID={report_query_id}: {e}")
+        logger.error(
+            f"Ошибка при создании экземпляра провайдера для ReportQuery ID={report_query_id}: {e}"
+        )
         return None
 
 
-def save_response_to_file(data: Dict[str, Any], filename: str = "response.json") -> None:
+def save_response_to_file(
+    data: Dict[str, Any], filename: str = "response.json"
+) -> None:
     """Сохраняет JSON-ответ в файл для отладки."""
     file_path = Path(settings.BASE_DIR) / filename
     try:
