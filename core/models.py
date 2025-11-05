@@ -30,6 +30,21 @@ class Organization(models.Model):
         return self.name
 
 
+class Language(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(max_length=5, default='ru')
+    name = models.CharField(max_length=100, default='Русский')
+    description = models.TextField(**NULLABLE)
+
+    class Meta:
+        verbose_name = "Language"
+        verbose_name_plural = "Languages"
+        ordering = ['code']
+
+    def __str__(self):
+        return self.name
+
+
 class OrgUser(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     username = models.CharField(max_length=150, unique=True)
@@ -43,6 +58,7 @@ class OrgUser(AbstractUser):
     is_superuser = models.BooleanField(default=False)
     last_login = models.DateTimeField(**NULLABLE)
     date_joined = models.DateTimeField(auto_now_add=True)
+    active_language = models.ForeignKey(Language, on_delete=models.SET_NULL, **NULLABLE)
 
     class Meta:
         verbose_name = "Org User"
@@ -203,15 +219,44 @@ def delete_media_file(sender, instance, **kwargs):
         logger.info(f"Deleting file: {instance.file.path}")
         os.remove(instance.file.path)
 
-class SensorsMapping(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=True)
-    label = models.CharField(max_length=64)
-    value = models.CharField(max_length=64)
-    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="sensors")
+
+class SensorsKey(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.CharField(max_length=64)
 
     class Meta:
-        verbose_name = "SensorsMapping"
-        verbose_name_plural = "SensorsMappings"
-    
+        verbose_name = "SensorsKey"
+        verbose_name_plural = "SensorsKeys"
+
     def __str__(self):
-        return self.label + " " + self.value
+        return self.key
+
+
+class SensorsValues(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name='values')
+    value = models.CharField(max_length=255)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='values')
+
+    class Meta:
+        verbose_name = "SensorsValues"
+        verbose_name_plural = "SensorsValues"
+        ordering = ['key']
+
+    def __str__(self):
+        return f"{self.key} - {self.value}"
+
+
+class SensorsKeyLocalization(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name='locations')
+    language = models.ForeignKey(Language, on_delete=models.CASCADE, related_name='locations')
+    localization = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = "SensorsKeyLocalization"
+        verbose_name_plural = "SensorsKeyLocalizations"
+        ordering = ['key']
+
+    def __str__(self):
+        return f"{self.key} - {self.language} - {self.localization}"

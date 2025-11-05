@@ -3,7 +3,8 @@ from datetime import datetime
 
 import polars as pl
 import pytz
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.shortcuts import render
 from django_filters.rest_framework import DjangoFilterBackend
 
@@ -24,8 +25,9 @@ from .helpers.data_provider import create_provider_data_request, validate_provid
     create_data_provider
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
 from .helpers.mileage_test import MileageModes, make_empty_mileage_result, mileage_test
+from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, SensorsMapping
+    CarBadData, SensorsKey, SensorsKeyLocalization, Language
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -33,12 +35,12 @@ from core.helpers.rest import (
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA
 )
 from .serializers import (
-    MileageTestSerializer, SensorsMappingOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
+    MileageTestSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
     CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
-    DataProviderSerializer, CarBadDataOutputSerializer
+    DataProviderSerializer, CarBadDataOutputSerializer, SensorsKeyOutputSerializer, LanguageSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, attach_media_response, user_response, \
@@ -231,14 +233,13 @@ class MileageTestAPIView(APIView):
         serializer = MileageTestSerializer(data=request.data)
 
         if not serializer.is_valid():
-                logger.error(f"Ошибка валидации параметров: {serializer.errors}")
-                return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
         data = serializer.validated_data
         car_id = data.get("car_id")
         agg = data.get("agg")
         start_date = data.get("start_date")
         end_date = data.get("end_date")
-
 
         try:
             car = Car.objects.prefetch_related('data_providers').get(id=car_id)
@@ -273,19 +274,16 @@ class MileageTestAPIView(APIView):
                 if not parsed_data:
                     result = make_empty_mileage_result(mode)
                     return Response({"result": result}, status=status.HTTP_200_OK)
-                    
 
                 if parsed_data:
                     df = pl.DataFrame(parsed_data)
-                    
+
                     agg = 1 if agg is None else agg
                     result = mileage_test(df.with_columns([
                         pl.lit(str(car.id)).alias("auto"),
                         pl.col("timestamp").cast(pl.Datetime),
                         pl.col("mileage").cast(pl.Float64),
                     ]), AGG_PERIOD_MINUTES=agg, regime=mode)
-
-                    
 
                 return Response({"result": result}, status=status.HTTP_200_OK)
 
@@ -419,6 +417,12 @@ class CarDetailAPIView(RetrieveAPIView):
         return Car.objects.filter(
             data_providers__org_id=self.request.user.org
         )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        user_language = getattr(self.request.user, 'active_language', None)
+        context['language_code'] = user_language.code if user_language else 'ru'
+        return context
 
 
 class CarConsumptionListAPIView(ListAPIView):
@@ -614,18 +618,50 @@ class CarBadDataListByCarAPIView(ListAPIView):
         ).select_related('car_id').order_by('-datetime')
 
 
-class SensorsMappingListByCardAPIView(ListAPIView):
+class SensorsKeyListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
-    serializer_class = SensorsMappingOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [SearchFilter]
-    search_fields = ['label']
+    search_fields = ['key']
+    serializer_class = SensorsKeyOutputSerializer
 
     def get_queryset(self):
-        return SensorsMapping.objects.filter(
-            car_id__data_providers__org_id=self.request.user.org.id
+        language_code = get_user_language_code(self.request.user)
+        search_query = self.request.query_params.get('search', None)
+
+        return get_sensors_keys_with_localization(
+            org_id=self.request.user.org.id,
+            language_code=language_code,
+            search_query=search_query
         )
 
+
+class CarSensorsValuesAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [SearchFilter]
+    search_fields = ['key__key']
+    serializer_class = SensorsKeyOutputSerializer
+
+    def get_queryset(self):
+        car_id = self.kwargs.get('car_id')
+        language_code = get_user_language_code(self.request.user)
+        search_query = self.request.query_params.get('search', None)
+
+        return get_car_sensors_values(
+            car_id=car_id,
+            org_id=self.request.user.org.id,
+            language_code=language_code,
+            search_query=search_query
+        )
+
+class LanguageListAPIView(ListAPIView):
+    """
+    API для получения списка всех доступных языков
+    """
+    queryset = Language.objects.all()
+    serializer_class = LanguageSerializer
+    pagination_class = None
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

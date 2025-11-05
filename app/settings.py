@@ -282,6 +282,7 @@ UNFOLD = {
                 "core.orguser",
                 "core.reportquery",
                 "core.media",
+                "core.language",
             ),
             "items": [
                 {
@@ -300,6 +301,10 @@ UNFOLD = {
                     "title": "Медиафайлы",
                     "link": reverse_lazy("admin:core_media_changelist"),
                 },
+                {
+                    "title": "Языки",
+                    "link": reverse_lazy("admin:core_language_changelist"),
+                },
             ],
         },
         {
@@ -308,9 +313,10 @@ UNFOLD = {
                 "core.carreport",
                 "core.carconsumption",
                 "core.driver",
-                "core.drivercar",
                 "core.carbaddata",
-                "core.sensorsmapping"
+                "core.sensorskey",
+                "core.sensorsvalues",
+                "core.sensorskeylocalization"
             ),
             "items": [
                 {
@@ -333,9 +339,17 @@ UNFOLD = {
                     "title": "Отчёты об ошибках",
                     "link": reverse_lazy("admin:core_carbaddata_changelist"),
                 },
-                {   # <-- Добавляем новый элемент для SensorsMapping
-                    "title": "Сопоставление датчиков",
-                    "link": reverse_lazy("admin:core_sensorsmapping_changelist"),
+                {
+                    "title": "Ключи датчиков",
+                    "link": reverse_lazy("admin:core_sensorskey_changelist"),
+                },
+                {
+                    "title": "Значения датчиков",
+                    "link": reverse_lazy("admin:core_sensorsvalues_changelist"),
+                },
+                {
+                    "title": "Локализации датчиков",
+                    "link": reverse_lazy("admin:core_sensorskeylocalization_changelist"),
                 },
             ],
         },
@@ -410,6 +424,11 @@ UNFOLD = {
                         "icon": "image",
                         "link": reverse_lazy("admin:core_media_changelist"),
                     },
+                    {
+                        "title": "Языки",
+                        "icon": "language",
+                        "link": reverse_lazy("admin:core_language_changelist"),
+                    },
                 ],
             },
             {
@@ -441,10 +460,26 @@ UNFOLD = {
                         "icon": "drive_eta",
                         "link": reverse_lazy("admin:core_driver_changelist"),
                     },
-                    {   # <-- Добавляем новый элемент для SensorsMapping
-                        "title": "Сопоставление датчиков",
+                ],
+            },
+            {
+                "title": "Датчики",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Ключи датчиков",
+                        "icon": "vpn_key",
+                        "link": reverse_lazy("admin:core_sensorskey_changelist"),
+                    },
+                    {
+                        "title": "Значения датчиков",
                         "icon": "sensors",
-                        "link": reverse_lazy("admin:core_sensorsmapping_changelist"),
+                        "link": reverse_lazy("admin:core_sensorsvalues_changelist"),
+                    },
+                    {
+                        "title": "Локализации датчиков",
+                        "icon": "translate",
+                        "link": reverse_lazy("admin:core_sensorskeylocalization_changelist"),
                     },
                 ],
             },

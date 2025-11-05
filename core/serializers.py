@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Media, Organization, ReportQuery, OrgUser, Driver, CarReport, CarConsumption, Car, DataProvider, \
-    CarBadData, SensorsMapping
+    CarBadData, SensorsKey, SensorsKeyLocalization, SensorsValues, Language
 
 
 class OrganizationOutputSerializer(serializers.ModelSerializer):
@@ -10,11 +10,40 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
 
 
 class CarOutputSerializer(serializers.ModelSerializer):
-    bad_data_count = serializers.IntegerField(read_only=True)
+    sensors = serializers.SerializerMethodField()
+
     class Meta:
         model = Car
-        fields = ['id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output',
-                  'is_tarrified', 'is_active', 'created_at', 'bad_data_count']
+        fields = [
+            'id', 'id_in_provider_system', 'name', 'description',
+            'engine_type', 'input', 'output', 'created_at',
+            'last_processed_date', 'is_tarrified', 'is_active',
+            'sensors'  # добавляем поле с датчиками
+        ]
+
+    def get_sensors(self, obj):
+        language_code = self.context.get('language_code', 'ru')
+
+        sensors_values = SensorsValues.objects.filter(car_id=obj)
+
+        sensors_data = []
+        for sensor_value in sensors_values:
+            try:
+                localization = SensorsKeyLocalization.objects.get(
+                    key=sensor_value.key,
+                    language__code=language_code
+                )
+                display_name = localization.localization
+            except SensorsKeyLocalization.DoesNotExist:
+                display_name = sensor_value.key.key
+
+            sensors_data.append({
+                'display_name': display_name,
+                'value': sensor_value.value,
+                'key': sensor_value.key.key
+            })
+
+        return sensors_data
 
 
 class DriverOutputSerializer(serializers.ModelSerializer):
@@ -88,10 +117,13 @@ class CarBadDataOutputSerializer(serializers.ModelSerializer):
         model = CarBadData
         fields = ['id', 'car_name', 'reason', 'datetime']
 
-class SensorsMappingOutputSerializer(serializers.ModelSerializer):
+class SensorsKeyOutputSerializer(serializers.ModelSerializer):
+    display_name = serializers.CharField(read_only=True)
+
     class Meta:
-        model = SensorsMapping
-        fields = ['id', 'label', 'value', 'car_id']
+        model = SensorsKey
+        fields = ['id', 'key', 'display_name']
+
 
 
 class AttachMediaSerializer(serializers.ModelSerializer):
@@ -108,24 +140,39 @@ class AttachMediaSerializer(serializers.ModelSerializer):
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     org_name = serializers.CharField(write_only=True)
+    language_code = serializers.CharField(write_only=True, required=False)
 
     class Meta:
         model = OrgUser
-        fields = ['id', 'username', 'password', 'org_name']
+        fields = ['id', 'username', 'password', 'org_name', 'language_code']
         read_only_fields = ['id']
 
     def create(self, validated_data):
         org_name = validated_data.pop('org_name')
+        language_code = validated_data.pop('language_code', 'ru')
+
         try:
             organization = Organization.objects.get(name=org_name)
         except Organization.DoesNotExist:
             raise serializers.ValidationError(f"Organization with name '{org_name}' not found.")
+
+        try:
+            language = Language.objects.get(code=language_code)
+        except Language.DoesNotExist:
+            language = Language.objects.get(code='ru')
+
         user = OrgUser.objects.create_user(
             username=validated_data['username'],
             password=validated_data['password'],
-            org=organization
+            org=organization,
+            active_language=language
         )
         return user
+
+class LanguageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Language
+        fields = ['id', 'code', 'name', 'description']
 
 
 class CarMetricSerializer(serializers.Serializer):

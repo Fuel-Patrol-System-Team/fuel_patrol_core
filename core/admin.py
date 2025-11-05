@@ -13,7 +13,8 @@ from django_celery_beat.admin import (
 )
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
-    Media, ReportQuery, DataProvider, CarBadData, SensorsMapping
+    Media, ReportQuery, DataProvider, CarBadData, Language,
+    SensorsKey, SensorsValues, SensorsKeyLocalization
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -24,7 +25,6 @@ admin.site.unregister(SolarSchedule)
 admin.site.unregister(ClockedSchedule)
 
 
-# Inlines
 class MediaInline(admin.TabularInline):
     model = Media
     extra = 0
@@ -45,12 +45,21 @@ class CarReportInline(admin.TabularInline):
     can_delete = False
 
 
-class SensorsMappingInline(admin.TabularInline):
-    model = SensorsMapping
+class SensorsValuesInline(admin.TabularInline):
+    model = SensorsValues
     extra = 0
-    fields = ('label', 'value')
-    verbose_name = "Сопоставление датчика"
-    verbose_name_plural = "Сопоставления датчиков"
+    fields = ('key', 'value')
+    verbose_name = "Значение датчика"
+    verbose_name_plural = "Значения датчиков"
+    can_delete = True
+
+
+class SensorsKeyLocalizationInline(admin.TabularInline):
+    model = SensorsKeyLocalization
+    extra = 0
+    fields = ('language', 'localization')
+    verbose_name = "Локализация"
+    verbose_name_plural = "Локализации"
     can_delete = True
 
 
@@ -87,8 +96,8 @@ class ReportQueryInline(admin.TabularInline):
 class OrgUserInline(admin.TabularInline):
     model = OrgUser
     extra = 0
-    fields = ('username', 'is_active', 'email')
-    readonly_fields = ('username', 'is_active', 'email')
+    fields = ('username', 'is_active', 'email', 'active_language')
+    readonly_fields = ('username', 'is_active', 'email', 'active_language')
     verbose_name = "Пользователь организации"
     verbose_name_plural = "Пользователи организации"
     can_delete = False
@@ -104,7 +113,6 @@ class CarInline(admin.TabularInline):
     autocomplete_fields = ['car']
 
 
-# Admin Classes
 @admin.register(Organization)
 class OrganizationAdmin(ImportExportMixin, ModelAdmin):
     list_display = ('id', 'name', 'bot_token_display', 'chat_id')
@@ -122,10 +130,21 @@ class OrganizationAdmin(ImportExportMixin, ModelAdmin):
     bot_token_display.short_description = "Токен бота"
 
 
+@admin.register(Language)
+class LanguageAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('id', 'code', 'name', 'description')
+    list_filter = ('code',)
+    search_fields = ('code', 'name')
+    ordering = ('code',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    actions = ['export_selected']
+
+
 @admin.register(OrgUser)
 class OrgUserAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'username', 'organization_display', 'email', 'is_active', 'last_login')
-    list_filter = ('org', 'is_active', 'is_staff')
+    list_display = ('id', 'username', 'organization_display', 'email', 'active_language_display', 'is_active', 'last_login')
+    list_filter = ('org', 'is_active', 'is_staff', 'active_language')
     search_fields = ('username', 'org__name', 'email')
     ordering = ('username',)
     export_form_class = UnfoldExportForm
@@ -139,6 +158,13 @@ class OrgUserAdmin(ImportExportMixin, ModelAdmin):
         return "Не указана"
 
     organization_display.short_description = "Организация"
+
+    def active_language_display(self, obj):
+        if obj.active_language:
+            return obj.active_language.name
+        return "Не указан"
+
+    active_language_display.short_description = "Активный язык"
 
     def activate_users(self, request, queryset):
         queryset.update(is_active=True)
@@ -164,7 +190,7 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
     ordering = ('name', 'is_active', 'is_tarrified')
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
-    inlines = [CarReportInline, CarConsumptionInline, DriverCarInline]
+    inlines = [CarReportInline, CarConsumptionInline, DriverCarInline, SensorsValuesInline]
     actions = ['export_selected', 'deactivate_selected', 'activate_selected']
 
     def data_providers_display(self, obj):
@@ -386,12 +412,26 @@ class DataProviderAdmin(ImportExportMixin, ModelAdmin):
     cars_display.short_description = "Автомобили"
 
 
-@admin.register(SensorsMapping)
-class SensorsMappingAdmin(ModelAdmin):
-    list_display = ('id', 'car_display', 'label', 'value')
-    list_filter = ('car_id',)
-    search_fields = ('car_id__name', 'label', 'value')
-    ordering = ('car_id__name',)
+@admin.register(SensorsKey)
+class SensorsKeyAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('id', 'key')
+    search_fields = ('key',)
+    ordering = ('key',)
+    inlines = [SensorsKeyLocalizationInline, SensorsValuesInline]
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    actions = ['export_selected']
+
+
+@admin.register(SensorsValues)
+class SensorsValuesAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('id', 'car_display', 'key_display', 'value')
+    list_filter = ('key', 'car_id')
+    search_fields = ('car_id__name', 'key__key', 'value')
+    ordering = ('car_id__name', 'key__key')
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    actions = ['export_selected']
 
     def car_display(self, obj):
         if obj.car_id:
@@ -400,6 +440,41 @@ class SensorsMappingAdmin(ModelAdmin):
         return "Не указан"
 
     car_display.short_description = "Автомобиль"
+
+    def key_display(self, obj):
+        if obj.key:
+            url = reverse("admin:core_sensorskey_change", args=[obj.key.id])
+            return mark_safe(f'<a href="{url}">{obj.key.key}</a>')
+        return "Не указан"
+
+    key_display.short_description = "Ключ датчика"
+
+
+@admin.register(SensorsKeyLocalization)
+class SensorsKeyLocalizationAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('id', 'key_display', 'language_display', 'localization')
+    list_filter = ('key', 'language')
+    search_fields = ('key__key', 'language__name', 'localization')
+    ordering = ('key__key', 'language__name')
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    actions = ['export_selected']
+
+    def key_display(self, obj):
+        if obj.key:
+            url = reverse("admin:core_sensorskey_change", args=[obj.key.id])
+            return mark_safe(f'<a href="{url}">{obj.key.key}</a>')
+        return "Не указан"
+
+    key_display.short_description = "Ключ датчика"
+
+    def language_display(self, obj):
+        if obj.language:
+            url = reverse("admin:core_language_change", args=[obj.language.id])
+            return mark_safe(f'<a href="{url}">{obj.language.name}</a>')
+        return "Не указан"
+
+    language_display.short_description = "Язык"
 
 
 @admin.register(PeriodicTask)
