@@ -207,6 +207,15 @@ class GlonassSoftProvider:
                     logger.warning(f"Пропущена машина без vehicleId")
                     continue
 
+                unit = vehicle.get("unitName")
+                if not unit:
+                    logger.warning(f"Пропущена машина без unit")
+                    continue
+
+                if unit is not "Гараж":
+                    logger.warning("Пропущена машина без Unit Гараж")
+                    continue
+
                 if vehicle_id in self.processed_vehicle_ids:
                     logger.info(
                         f"Пропущена машина vehicleId={vehicle_id}: уже обработана в этом сеансе."
@@ -356,7 +365,7 @@ class GlonassSoftProvider:
                 input_number = sensor.get("inputNumber")
                 input_type = sensor.get("inputType")
                 # TODO: нужен refactoring т.к. слишком много edge кейсов
-                if "Скорость" in sensor_name:
+                if "Скорость" in sensor_name or parameter_name == "can_speed":
                     sensors_mapping["speed"] = f"parameters.{parameter_name}"
                 elif sensor_type == "FuelLvl":
                     if sensor.get("gradeType") == "GradeTable":
