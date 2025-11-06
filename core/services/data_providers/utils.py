@@ -212,7 +212,7 @@ class GlonassSoftProvider:
                     logger.warning(f"Пропущена машина без unit")
                     continue
 
-                if unit is not "Гараж":
+                if unit != "Гараж":
                     logger.warning("Пропущена машина без Unit Гараж")
                     continue
 
