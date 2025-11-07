@@ -721,7 +721,7 @@ class GlonassSoftProvider:
                             ign = int(ign)
                         except:
                             ign = 0
-                        engine_temp = get_nested_value(record, engine_temp_key_path)
+                    engine_temp = get_nested_value(record, engine_temp_key_path)
                     mileage = get_nested_value(record, mileage_key_path)
                     motohours = get_nested_value(record, motohours_key_path)
 
