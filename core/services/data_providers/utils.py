@@ -21,9 +21,11 @@ import requests
 from django.conf import settings
 from django.db import transaction
 import textdistance
+from django.utils import timezone
 
 from core.models import Car, Media, ReportQuery, CarBadData, Language, SensorsKeyLocalization, SensorsKey, SensorsValues
 from core.helpers.decorators import retry_on_status
+from core.helpers.report_details import update_report_details_with_error, update_report_details_success
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +51,11 @@ class GlonassSoftProvider:
         self.report_query_id = report_query_id
         self.batch_size = 10
         self.chunk_size = 25_000
+
+        self.cars_proceed = 0
+        self.cars_skipped = 0
+        self.parsing_start_time = None
+        self.parsing_end_time = None
 
         timestamp = datetime.now(tz=pytz.UTC).strftime("%Y%m%d_%H%M%S")
         media_dir = Path(settings.MEDIA_ROOT) / "raw_data"
@@ -107,11 +114,9 @@ class GlonassSoftProvider:
         """
         errors = []
 
-        # Проверка датчика уровня топлива - это критическая ошибка, машину нужно пропускать
         if not sensors_mapping.get("calc_sensors_fuel_level"):
             errors.append(CarDataError.NO_FUEL_LEVEL_SENSOR)
 
-        # Проверка ремаппинга одного датчика в два поля - это критическая ошибка
         sensor_paths = list(sensors_mapping.values())
         if len(sensor_paths) != len(set(sensor_paths)):
             seen_paths = set()
@@ -121,7 +126,6 @@ class GlonassSoftProvider:
                     break
                 seen_paths.add(path)
 
-        # Отсутствие пробега или моточасов - НЕ критическая ошибка, только создаем запись в CarBadData
         if not sensors_mapping.get("mileage"):
             errors.append(CarDataError.NO_MILEAGE_SENSOR)
 
@@ -204,8 +208,15 @@ class GlonassSoftProvider:
         """
         Получает список автомобилей, их детали и сохраняет данные.
         """
+        self.parsing_start_time = timezone.now()
+
         if not self.auth_token:
-            logger.error("Токен отсутствует. Выполните аутентификацию.")
+            error_msg = "Токен отсутствует. Выполните аутентификацию."
+            logger.error(error_msg)
+            update_report_details_with_error(
+                self.report_query_id, error_msg,
+                self.parsing_start_time, self.cars_proceed, self.cars_skipped
+            )
             return None
 
         self._enforce_rate_limit()
@@ -216,18 +227,62 @@ class GlonassSoftProvider:
 
         try:
             response = requests.post(url, json=params, headers=headers)
+
+            if response.status_code == 401:
+                error_msg = "Ошибка аутентификации (401)"
+                logger.error(error_msg)
+                update_report_details_with_error(
+                    self.report_query_id, error_msg,
+                    self.parsing_start_time, self.cars_proceed, self.cars_skipped
+                )
+                return None
+            elif response.status_code == 403:
+                error_msg = "Доступ запрещен (403)"
+                logger.error(error_msg)
+                update_report_details_with_error(
+                    self.report_query_id, error_msg,
+                    self.parsing_start_time, self.cars_proceed, self.cars_skipped
+                )
+                return None
+            elif response.status_code == 429:
+                error_msg = "Превышен лимит запросов (429)"
+                logger.error(error_msg)
+                update_report_details_with_error(
+                    self.report_query_id, error_msg,
+                    self.parsing_start_time, self.cars_proceed, self.cars_skipped
+                )
+                return None
+            elif response.status_code >= 400:
+                error_msg = f"HTTP ошибка {response.status_code}"
+                logger.error(error_msg)
+                update_report_details_with_error(
+                    self.report_query_id, error_msg,
+                    self.parsing_start_time, self.cars_proceed, self.cars_skipped
+                )
+                return None
+
             response.raise_for_status()
             data = orjson.loads(response.content)
 
             if not isinstance(data, list):
-                logger.error(f"Ожидался список, получен: {type(data)}")
+                error_msg = f"Ожидался список, получен: {type(data)}"
+                logger.error(error_msg)
+                update_report_details_with_error(
+                    self.report_query_id, error_msg,
+                    self.parsing_start_time, self.cars_proceed, self.cars_skipped
+                )
                 return None
 
             logger.info(f"Получено {len(data)} автомобилей.")
             self._log_resources("get_vehicles")
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка запроса при получении списка автомобилей: {e}")
+            error_msg = f"Ошибка запроса при получении списка автомобилей: {e}"
+            logger.error(error_msg)
+            update_report_details_with_error(
+                self.report_query_id, error_msg,
+                self.parsing_start_time, self.cars_proceed, self.cars_skipped
+            )
             return None
 
         report_query = ReportQuery.objects.get(id=self.report_query_id)
@@ -253,12 +308,14 @@ class GlonassSoftProvider:
                 vehicle_id = vehicle.get("vehicleId")
                 if not vehicle_id:
                     logger.warning(f"Пропущена машина без vehicleId")
+                    self.cars_skipped += 1
                     continue
 
                 if vehicle_id in self.processed_vehicle_ids:
                     logger.info(
                         f"Пропущена машина vehicleId={vehicle_id}: уже обработана в этом сеансе."
                     )
+                    self.cars_skipped += 1
                     continue
                 self.processed_vehicle_ids.add(vehicle_id)
 
@@ -267,6 +324,7 @@ class GlonassSoftProvider:
                     logger.warning(
                         f"Не удалось получить детали для vehicleId={vehicle_id}"
                     )
+                    self.cars_skipped += 1
                     continue
 
                 try:
@@ -275,13 +333,12 @@ class GlonassSoftProvider:
                     logger.error(
                         f"Ошибка сохранения в БД для vehicleId={vehicle_id}: {e}"
                     )
+                    self.cars_skipped += 1
                     continue
 
-                # Проверка сенсоров на ошибки
                 sensors_mapping = vehicle_details.get("sensorsMapping", {})
                 sensor_errors = self._validate_sensors_mapping(sensors_mapping)
 
-                # Создаем запись в CarBadData для всех ошибок
                 if sensor_errors:
                     car = Car.objects.filter(id_in_provider_system=vehicle_id).first()
                     if car:
@@ -289,11 +346,11 @@ class GlonassSoftProvider:
                         error_message = "; ".join(error_descriptions)
                         self._create_bad_data(car, error_message)
 
-                    # Пропускаем машину только при критических ошибках
                     if self._has_critical_errors(sensor_errors):
                         logger.warning(
                             f"Пропущена машина vehicleId={vehicle_id} из-за критических ошибок сенсоров: {sensor_errors}"
                         )
+                        self.cars_skipped += 1
                         continue
                     else:
                         logger.warning(
@@ -309,6 +366,7 @@ class GlonassSoftProvider:
                     logger.info(
                         f"Пропущена машина vehicleId={vehicle_id}: не прошла валидацию."
                     )
+                    self.cars_skipped += 1
                     continue
 
                 car_start_date = start_date
@@ -320,6 +378,7 @@ class GlonassSoftProvider:
                     ).replace(tzinfo=pytz.UTC)
                 except (ValueError, TypeError):
                     logger.warning(f"Некорректный формат createdAt: {created_at_str}")
+                    self.cars_skipped += 1
                     continue
 
                 last_processed_date = existing_cars_dict.get(str(vehicle_id))
@@ -344,16 +403,19 @@ class GlonassSoftProvider:
                     logger.info(
                         f"Пропущена машина vehicleId={vehicle_id}: Период данных {data_period} дней < {self.min_data_period_days}"
                     )
+                    self.cars_skipped += 1
                     continue
 
                 try:
                     self.get_terminal_to_json(vehicle_id, car_start_date, car_end_date)
                     processed_vehicles.append(vehicle_details)
+                    self.cars_proceed += 1
                 except Exception as e:
                     logger.error(
                         f"Критическая ошибка обработки vehicleId={vehicle_id}: {e}",
                         exc_info=True,
                     )
+                    self.cars_skipped += 1
                     continue
 
         if (
@@ -374,6 +436,13 @@ class GlonassSoftProvider:
             )
 
         self._cleanup_tmp_files()
+
+        self.parsing_end_time = timezone.now()
+        update_report_details_success(
+            self.report_query_id, self.parsing_end_time,
+            self.parsing_start_time, self.cars_proceed, self.cars_skipped
+        )
+
         return processed_vehicles if processed_vehicles else None
 
     def _validate_vehicle_data(self, vehicle_details: Dict[str, Any]) -> bool:
@@ -704,7 +773,7 @@ class GlonassSoftProvider:
 
         try:
             car = Car.objects.get(id_in_provider_system=vehicle_id)
-            # Исправление: используем правильную связь через SensorsValues
+
             sensors_values = SensorsValues.objects.filter(car_id=car).select_related('key')
             sensors_mapping = {sv.key.key: sv.value for sv in sensors_values}
             vehicle_guid = car.id
@@ -975,7 +1044,7 @@ class GlonassSoftProvider:
         """Кешируем получение пути к mileage."""
         try:
             car = Car.objects.only("id").get(id_in_provider_system=vehicle_id)
-            # Исправление: используем правильную связь через SensorsValues
+
             sensor_value = SensorsValues.objects.filter(
                 car_id=car,
                 key__key="mileage"

@@ -161,12 +161,17 @@ CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True') == 'True'
 # ======================
 # SECURITY SETTINGS
 # ======================
-# USE_X_FORWARDED_HOST = True
+##TODO: Все настройки с CRSF для работы с куки надо расскоментить
 # CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', '').split()
+# CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False') == 'True'
+# SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'
+# CSRF_COOKIE_SAMESITE = 'Lax'
+# SESSION_COOKIE_SAMESITE = 'Lax'
+
+# USE_X_FORWARDED_HOST = True
 # SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False') == 'False'
 # SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'
-# CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False') == 'True'
 # SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
 # SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False') == 'True'
 # SECURE_HSTS_PRELOAD = os.getenv('SECURE_HSTS_PRELOAD', 'False') == 'True'
@@ -445,6 +450,7 @@ UNFOLD = {
                         "icon": "report_problem",
                         "link": reverse_lazy("admin:core_carreport_changelist"),
                     },
+
                     {
                         "title": "Расход топлива",
                         "icon": "local_gas_station",
@@ -454,6 +460,11 @@ UNFOLD = {
                         "title": "Отчёты об ошибках",
                         "icon": "error",
                         "link": reverse_lazy("admin:core_carbaddata_changelist")
+                    },
+                    {
+                        "title": "Детали выполнения",
+                        "icon": "details",
+                        "link": reverse_lazy("admin:core_reportquerydetails_changelist"),
                     },
                     {
                         "title": "Водители",

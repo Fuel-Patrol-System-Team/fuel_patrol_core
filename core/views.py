@@ -17,7 +17,9 @@ from rest_framework import status
 import logging
 
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from app import settings
 from core.helpers.cars import get_car_or_error, fetch_car_metrics, filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
@@ -655,6 +657,7 @@ class CarSensorsValuesAPIView(ListAPIView):
             search_query=search_query
         )
 
+
 class LanguageListAPIView(ListAPIView):
     """
     API для получения списка всех доступных языков
@@ -662,6 +665,62 @@ class LanguageListAPIView(ListAPIView):
     queryset = Language.objects.all()
     serializer_class = LanguageSerializer
     pagination_class = None
+
+
+
+##TODO: YShipik - кастомные руты с куками для токенов
+class CustomTokenObtainPairView(TokenObtainPairView):
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+
+        if response.status_code == 200:
+            access_token = response.data.get('access')
+            refresh_token = response.data.get('refresh')
+
+            if access_token:
+                response.set_cookie(
+                    key='access_token',
+                    value=access_token,
+                    httponly=True,
+                    secure=not settings.DEBUG,
+                    samesite='Lax',
+                    max_age=60 * 60 * 24,
+                )
+
+            if refresh_token:
+                response.set_cookie(
+                    key='refresh_token',
+                    value=refresh_token,
+                    httponly=True,
+                    secure=not settings.DEBUG,
+                    samesite='Lax',
+                    max_age=60 * 60 * 24 * 7,
+                )
+
+        return response
+
+
+
+
+class CustomTokenRefreshView(TokenRefreshView):
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+
+        if response.status_code == 200:
+            access_token = response.data.get('access')
+
+            if access_token:
+                response.set_cookie(
+                    key='access_token',
+                    value=access_token,
+                    httponly=True,
+                    secure=not settings.DEBUG,
+                    samesite='Lax',
+                    max_age=60 * 60 * 24,
+                )
+
+        return response
+
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

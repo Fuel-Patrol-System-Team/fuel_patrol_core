@@ -1,8 +1,10 @@
 import pytz
 from datetime import datetime
 from celery.exceptions import CeleryError
+from django.utils import timezone
+
 from core.helpers import *
-from core.models import ReportQuery, DataProvider, Car
+from core.models import ReportQuery, DataProvider, Car, ReportQueryDetails
 from app.tasks import fetch_data_from_provider
 
 
@@ -47,6 +49,10 @@ def create_provider_data_request(provider, start_date, end_date, is_save_bad_dat
         status="created",
         is_save_bad_data=is_save_bad_data
     )
+    ReportQueryDetails.objects.create(
+        report_query=report_query,
+        start_time=timezone.now()
+    )
     try:
         fetch_data_from_provider.delay(
             report_query_id=report_query.id,
@@ -59,6 +65,10 @@ def create_provider_data_request(provider, start_date, end_date, is_save_bad_dat
         logger.error(f"Ошибка Celery при запуске задачи: {e}")
         report_query.status = "error"
         report_query.save()
+        ReportQueryDetails.objects.filter(report_query=report_query).update(
+            end_time=timezone.now(),
+            traceback={"celery_error": str(e)}
+        )
         return None, error_response(f"Failed to launch provider data task: {e}", status.HTTP_503_SERVICE_UNAVAILABLE)
 
 

@@ -139,6 +139,24 @@ class ReportQuery(models.Model):
     def __str__(self):
         return f"Report {self.id}"
 
+class ReportQueryDetails(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    report_query = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, related_name='report_query_details')
+    traceback = models.JSONField(**NULLABLE)
+    start_time = models.DateTimeField(**NULLABLE)
+    end_time = models.DateTimeField(**NULLABLE)
+    time_proceed = models.TimeField(**NULLABLE)
+    cars_proceed = models.IntegerField(**NULLABLE)
+    cars_skipped = models.IntegerField(**NULLABLE)
+
+    class Meta:
+        verbose_name = "Report Query Details"
+        verbose_name_plural = "Report Query Details"
+        ordering = ['-id']
+
+    def __str__(self):
+        return f"Report {self.report_query} Details {self.id}"
+
 
 class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -180,6 +198,7 @@ class CarReport(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
+
 
 
 class CarBadData(models.Model):

@@ -14,7 +14,7 @@ from django_celery_beat.admin import (
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
     Media, ReportQuery, DataProvider, CarBadData, Language,
-    SensorsKey, SensorsValues, SensorsKeyLocalization
+    SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -112,6 +112,38 @@ class CarInline(admin.TabularInline):
     fields = ('car',)
     autocomplete_fields = ['car']
 
+class ReportQueryDetailsInline(admin.TabularInline):
+    model = ReportQueryDetails
+    extra = 0
+    fields = ('start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
+    readonly_fields = ('start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
+    verbose_name = "Детали выполнения"
+    verbose_name_plural = "Детали выполнения"
+    can_delete = False
+    classes = ('collapse',)
+
+    def time_proceed_display(self, obj):
+        if obj.time_proceed:
+            return str(obj.time_proceed)
+        return "Не указано"
+
+    time_proceed_display.short_description = "Время выполнения"
+
+    def traceback_preview(self, obj):
+        if obj.traceback:
+            import json
+            traceback_str = json.dumps(obj.traceback, ensure_ascii=False, indent=2)
+            return mark_safe(f'<pre style="max-height: 200px; overflow: auto; background-color: #f8f8f8; padding: 10px; border: 1px solid #ddd;">{traceback_str}</pre>')
+        return "Нет данных об ошибках"
+
+    traceback_preview.short_description = "Детали ошибки"
+    traceback_preview.allow_tags = True
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 @admin.register(Organization)
 class OrganizationAdmin(ImportExportMixin, ModelAdmin):
@@ -350,6 +382,64 @@ class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
 
     mark_as_error.short_description = "Отметить как с ошибкой"
 
+@admin.register(ReportQueryDetails)
+class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('id', 'report_query_display', 'start_time', 'end_time', 'time_proceed_display',
+                   'cars_proceed', 'cars_skipped', 'has_traceback')
+    list_filter = ('start_time', 'end_time')
+    search_fields = ('report_query__id',)
+    ordering = ('-start_time',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    readonly_fields = ('id', 'report_query_display', 'start_time', 'end_time', 'time_proceed',
+                      'cars_proceed', 'cars_skipped', 'traceback_preview')
+    actions = ['export_selected', 'clear_traceback']
+
+    def report_query_display(self, obj):
+        if obj.report_query:
+            url = reverse("admin:core_reportquery_change", args=[obj.report_query.id])
+            return mark_safe(f'<a href="{url}">{obj.report_query.id}</a>')
+        return "Не указан"
+
+    report_query_display.short_description = "Запрос отчета"
+
+    def time_proceed_display(self, obj):
+        if obj.time_proceed:
+            return str(obj.time_proceed)
+        return "Не указано"
+
+    time_proceed_display.short_description = "Время выполнения"
+
+    def has_traceback(self, obj):
+        return bool(obj.traceback)
+
+    has_traceback.short_description = "Есть ошибка"
+    has_traceback.boolean = True
+
+    def traceback_preview(self, obj):
+        if obj.traceback:
+            import json
+            traceback_str = json.dumps(obj.traceback, ensure_ascii=False, indent=2)
+            return mark_safe(f'<pre style="max-height: 300px; overflow: auto;">{traceback_str}</pre>')
+        return "Нет данных об ошибках"
+
+    traceback_preview.short_description = "Детали ошибки"
+
+    def clear_traceback(self, request, queryset):
+        updated = queryset.update(traceback=None)
+        self.message_user(
+            request,
+            f'Traceback очищен для {updated} записей',
+            messages.SUCCESS
+        )
+
+    clear_traceback.short_description = "Очистить traceback"
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 @admin.register(CarBadData)
 class CarBadDataAdmin(ImportExportMixin, ModelAdmin):

@@ -10,10 +10,13 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Q
 from django.core.exceptions import ObjectDoesNotExist
+from django.utils import timezone
+
 from app.celery import app as celery_app
 from app.constants import BATCH_SIZE
 from app.settings import BASE_DIR
-from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption, DataProvider, CarBadData
+from core.models import ReportQuery, Media, Organization, Car, CarReport, CarConsumption, DataProvider, CarBadData, \
+    ReportQueryDetails
 from core.services.csv_parsing.utils import PARSE_NORMS_OUTPUT_COLUMNS, parse_cars, parse_merged_util, parse_norms
 from core.services.data_providers.utils import save_response_to_file, provider_factory
 from core.services.databases.influx_db import write_to_influxdb
@@ -125,6 +128,18 @@ def fetch_data_from_provider(self, report_query_id: str,
             if report_query:
                 report_query.status = "error"
                 report_query.save()
+                try:
+                    report_details = ReportQueryDetails.objects.get(report_query_id=report_query_id)
+                    import traceback
+                    report_details.traceback = {
+                        "error": str(e),
+                        "traceback": traceback.format_exc(),
+                        "timestamp": timezone.now().isoformat()
+                    }
+                    report_details.end_time = timezone.now()
+                    report_details.save()
+                except Exception as detail_error:
+                    logger.error(f"Ошибка сохранения traceback: {detail_error}")
             raise
 
     return _timeit("fetch_data_from_provider", _fetch)
