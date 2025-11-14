@@ -386,7 +386,7 @@ class MotohoursTestAPIView(APIView):
                         logger.info(f"Все значения motohours null, используем расчет по ign")
 
                 agg_period = 1 if agg is None else agg
-                result = compute_motohours_total(df, agg_period)
+                result = compute_motohours(df, agg_period)
 
                 if isinstance(result, pl.DataFrame):
                     result_data = result.to_dicts()
