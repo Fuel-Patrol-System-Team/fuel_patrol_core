@@ -112,11 +112,13 @@ class CarInline(admin.TabularInline):
     fields = ('car',)
     autocomplete_fields = ['car']
 
+
 class ReportQueryDetailsInline(admin.TabularInline):
     model = ReportQueryDetails
     extra = 0
     fields = ('start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
-    readonly_fields = ('start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
+    readonly_fields = (
+    'start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
     verbose_name = "Детали выполнения"
     verbose_name_plural = "Детали выполнения"
     can_delete = False
@@ -133,7 +135,8 @@ class ReportQueryDetailsInline(admin.TabularInline):
         if obj.traceback:
             import json
             traceback_str = json.dumps(obj.traceback, ensure_ascii=False, indent=2)
-            return mark_safe(f'<pre style="max-height: 200px; overflow: auto; background-color: #f8f8f8; padding: 10px; border: 1px solid #ddd;">{traceback_str}</pre>')
+            return mark_safe(
+                f'<pre style="max-height: 200px; overflow: auto; background-color: #f8f8f8; padding: 10px; border: 1px solid #ddd;">{traceback_str}</pre>')
         return "Нет данных об ошибках"
 
     traceback_preview.short_description = "Детали ошибки"
@@ -144,6 +147,7 @@ class ReportQueryDetailsInline(admin.TabularInline):
 
     def has_change_permission(self, request, obj=None):
         return False
+
 
 @admin.register(Organization)
 class OrganizationAdmin(ImportExportMixin, ModelAdmin):
@@ -175,7 +179,8 @@ class LanguageAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(OrgUser)
 class OrgUserAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'username', 'organization_display', 'email', 'active_language_display', 'is_active', 'last_login')
+    list_display = (
+    'id', 'username', 'organization_display', 'email', 'active_language_display', 'is_active', 'last_login')
     list_filter = ('org', 'is_active', 'is_staff', 'active_language')
     search_fields = ('username', 'org__name', 'email')
     ordering = ('username',)
@@ -214,11 +219,11 @@ class OrgUserAdmin(ImportExportMixin, ModelAdmin):
 @admin.register(Car)
 class CarAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
-        'id', 'name', 'description', 'engine_type', 'input', 'output',
+        'id', 'id_in_provider_system', 'name', 'description', 'engine_type', 'input', 'output',
         'is_tarrified', 'is_active', 'data_providers_display', 'created_at'
     )
     list_filter = ('engine_type', 'created_at', 'is_tarrified')
-    search_fields = ('name', 'description')
+    search_fields = ('name', 'description', 'id_in_provider_system')
     ordering = ('name', 'is_active', 'is_tarrified')
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
@@ -382,17 +387,18 @@ class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
 
     mark_as_error.short_description = "Отметить как с ошибкой"
 
+
 @admin.register(ReportQueryDetails)
 class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
     list_display = ('id', 'report_query_display', 'start_time', 'end_time', 'time_proceed_display',
-                   'cars_proceed', 'cars_skipped', 'has_traceback')
+                    'cars_proceed', 'cars_skipped', 'has_traceback')
     list_filter = ('start_time', 'end_time')
     search_fields = ('report_query__id',)
     ordering = ('-start_time',)
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
     readonly_fields = ('id', 'report_query_display', 'start_time', 'end_time', 'time_proceed',
-                      'cars_proceed', 'cars_skipped', 'traceback_preview')
+                       'cars_proceed', 'cars_skipped', 'traceback_preview')
     actions = ['export_selected', 'clear_traceback']
 
     def report_query_display(self, obj):
@@ -440,6 +446,7 @@ class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
 
 @admin.register(CarBadData)
 class CarBadDataAdmin(ImportExportMixin, ModelAdmin):

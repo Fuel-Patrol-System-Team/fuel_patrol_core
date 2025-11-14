@@ -997,13 +997,10 @@ class GlonassSoftProvider:
                     continue
 
         logger.info(f"Сохранены данные для vehicleId={vehicle_id}. Сенсоров: {len(sensors_mapping)}")
-
+    ##TODO: Вынести в отдельный парсер
     def get_single_vehicle_data_in_memory(
             self, vehicle_id: int, start_date: datetime, end_date: datetime
     ) -> Optional[List[Dict[str, Any]]]:
-        """
-        Получает данные для одного автомобиля за период, парсит timestamp и mileage "на лету" и возвращает результат в памяти.
-        """
         if not self.auth_token:
             logger.error("Токен отсутствует. Выполните аутентификацию.")
             return None
@@ -1172,6 +1169,176 @@ class GlonassSoftProvider:
                     tzinfo=pytz.UTC
                 )
         except ValueError:
+            return None
+    ##TODO:Вынести
+    def get_single_vehicle_motohours_data_in_memory(
+            self, vehicle_id: int, start_date: datetime, end_date: datetime, car_guid: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        if not self.auth_token:
+            logger.error("Токен отсутствует. Выполните аутентификацию.")
+            return None
+
+        motohours_key_path = self._get_sensor_key_path(vehicle_id, "motohours")
+        ign_key_path = self._get_sensor_key_path(vehicle_id, "ign")
+
+        if not motohours_key_path and not ign_key_path:
+            logger.warning(f"Нет маппинга для motohours и ign для vehicleId={vehicle_id}.")
+            return []
+
+        parsed_data = []
+        periods = self._calculate_periods(start_date, end_date)
+
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+            futures = []
+            for period_start, period_end in periods:
+                future = executor.submit(
+                    self._fetch_and_parse_motohours_messages_for_period,
+                    vehicle_id,
+                    period_start,
+                    period_end,
+                    motohours_key_path,
+                    ign_key_path,
+                    car_guid,
+                )
+                futures.append(future)
+
+            for future in futures:
+                result = future.result()
+                if result is not None:
+                    parsed_data.extend(result)
+
+        logger.info(
+            f"Всего спарсено {len(parsed_data)} записей для моточасов vehicleId={vehicle_id}"
+        )
+        return parsed_data
+
+    @lru_cache(maxsize=100)
+    def _get_sensor_key_path(self, vehicle_id: int, sensor_key: str) -> Optional[List[str]]:
+        try:
+            car = Car.objects.only("id").get(id_in_provider_system=vehicle_id)
+
+            sensor_value = SensorsValues.objects.filter(
+                car_id=car,
+                key__key=sensor_key
+            ).select_related('key').first()
+
+            if not sensor_value or not sensor_value.value:
+                logger.debug(f"Нет маппинга для {sensor_key} для vehicleId={vehicle_id}.")
+                return None
+
+            key_path = sensor_value.value.split(".")
+            return key_path if key_path and key_path != [""] else None
+
+        except Car.DoesNotExist:
+            logger.error(f"Автомобиль vehicleId={vehicle_id} не найден.")
+            return None
+
+    @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
+    def _fetch_and_parse_motohours_messages_for_period(
+            self,
+            vehicle_id: int,
+            start_date: datetime,
+            end_date: datetime,
+            motohours_key_path: Optional[List[str]],
+            ign_key_path: Optional[List[str]],
+            car_guid: str,
+    ) -> Optional[List[Dict[str, Any]]]:
+        self._enforce_rate_limit()
+
+        url = f"{self.base_url}/terminalMessages"
+        payload = {
+            "vehicleId": vehicle_id,
+            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+            "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+        }
+        headers = {"X-Auth": self.auth_token}
+
+        try:
+            start_time = time.time()
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response.raise_for_status()
+
+            data = orjson.loads(response.content)
+            messages = data.get("messages", [])
+
+            if not isinstance(messages, list):
+                logger.error(f"'Messages' не список: {type(messages)}")
+                return []
+
+            logger.info(
+                f"Получено {len(messages)} сообщений за {time.time() - start_time:.2f} сек"
+            )
+
+            parsed_data = self._parse_motohours_messages_batch(
+                messages, motohours_key_path, ign_key_path, car_guid
+            )
+            return parsed_data
+
+        except requests.exceptions.HTTPError as e:
+            logger.error(
+                f"HTTP-ошибка {e.response.status_code} для периода {start_date} - {end_date}"
+            )
+            return None
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса для vehicleId={vehicle_id}: {e}")
+            return None
+
+    def _parse_motohours_messages_batch(
+            self,
+            messages: List[Dict],
+            motohours_key_path: Optional[List[str]],
+            ign_key_path: Optional[List[str]],
+            car_guid: str,
+    ) -> List[Dict[str, Any]]:
+        parsed_data = []
+
+        for record in messages:
+            timestamp_str = record.get("deviceTime")
+            if not timestamp_str:
+                continue
+
+            motohours = self._extract_sensor_value(record, motohours_key_path) if motohours_key_path else None
+            ign = self._extract_sensor_value(record, ign_key_path) if ign_key_path else None
+
+            if ign is not None:
+                try:
+                    ign = 1 if int(float(ign)) > 0 else 0
+                except (ValueError, TypeError):
+                    ign = 0
+            else:
+                ign = 0
+
+            timestamp = self._parse_timestamp(timestamp_str)
+            if timestamp:
+                parsed_record = {
+                    "auto": car_guid,
+                    "timestamp": timestamp,
+                    "ign": ign
+                }
+
+                if motohours is not None:
+                    try:
+                        parsed_record["motohours"] = float(motohours)
+                    except (ValueError, TypeError):
+                        parsed_record["motohours"] = None
+                else:
+                    parsed_record["motohours"] = None
+
+                parsed_data.append(parsed_record)
+
+        return parsed_data
+
+    def _extract_sensor_value(
+            self, record: Dict, key_path: List[str]
+    ) -> Optional[float]:
+        try:
+            current = record
+            for key in key_path:
+                current = current.get(key) if isinstance(current, dict) else None
+                if current is None:
+                    return None
+            return float(current) if current is not None else None
+        except (ValueError, TypeError, AttributeError):
             return None
 
 

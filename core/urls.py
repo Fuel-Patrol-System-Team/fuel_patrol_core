@@ -10,7 +10,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView, DataProviderListAPIView, DataProviderDetailAPIView, \
     ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, CarBadDataListByCarAPIView, \
     CarActiveStatusAPIView, MileageTestAPIView, SensorsKeyListAPIView, LanguageListAPIView, CustomTokenObtainPairView, \
-    CustomTokenRefreshView
+    CustomTokenRefreshView, MotohoursTestAPIView
 
 urlpatterns = [
 
@@ -61,6 +61,8 @@ urlpatterns = [
     path('sensors/keys', SensorsKeyListAPIView.as_view(), name='sensors-keys-list'),
 
     path('test-mileage',MileageTestAPIView.as_view(),name='mileage-test'),
+
+    path('test-motohours',MotohoursTestAPIView.as_view(),name='motohours-test'),
 
     path('languages', LanguageListAPIView.as_view(), name='languages-list'),
 ]

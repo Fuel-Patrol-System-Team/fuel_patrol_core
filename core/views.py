@@ -27,6 +27,7 @@ from .helpers.data_provider import create_provider_data_request, validate_provid
     create_data_provider
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
 from .helpers.mileage_test import MileageModes, make_empty_mileage_result, mileage_test
+from .helpers.motohours import compute_motohours_total, compute_motohours
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, SensorsKey, SensorsKeyLocalization, Language
@@ -34,7 +35,8 @@ from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
-    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA
+    CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
+    MOTOHOURS_REQUEST_SCHEMA
 )
 from .serializers import (
     MileageTestSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
@@ -220,7 +222,6 @@ class ProviderDataRequestAPIView(APIView):
 
 
 class MileageTestAPIView(APIView):
-
     @swagger_auto_schema(
         operation_description="Расчет mileage для автомобиля за период (синхронно).",
         request_body=MILEAGE_REQUEST_SCHEMA,
@@ -299,6 +300,113 @@ class MileageTestAPIView(APIView):
             return Response({"error": f"Неверный формат даты: {e}"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             logger.error(f"Общая ошибка в MileageTestAPIView: {e}")
+            return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class MotohoursTestAPIView(APIView):
+    @swagger_auto_schema(
+        operation_description="Расчет моточасов для автомобиля за период (синхронно).",
+        request_body=MILEAGE_REQUEST_SCHEMA,
+        responses={
+            200: "Результат в JSON",
+            400: "Неверные данные",
+            404: "Автомобиль или провайдер не найден",
+            500: "Ошибка обработки"
+        }
+    )
+    def post(self, request):
+        serializer = MileageTestSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        car_id = data.get("car_id")
+        agg = data.get("agg")
+        start_date = data.get("start_date")
+        end_date = data.get("end_date")
+
+        try:
+            car = Car.objects.prefetch_related('data_providers').get(id=car_id)
+            provider_obj = car.data_providers.first()
+
+            if not provider_obj:
+                return Response({"error": "Нет провайдера данных для этого автомобиля."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            if start_date >= end_date:
+                return Response({"error": "start_date должна быть раньше end_date."},
+                                status=status.HTTP_400_BAD_REQUEST)
+
+            try:
+                provider = provider_factory(str(int(time.time())), provider_obj.metadata)
+                if not provider:
+                    return Response({"error": "Не удалось создать провайдера"},
+                                    status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                if not provider.authenticate():
+                    return Response({"error": "Не удалось авторизоваться"}, status=status.HTTP_401_UNAUTHORIZED)
+
+                vehicle_id = car.id_in_provider_system
+
+                parsed_data = provider.get_single_vehicle_motohours_data_in_memory(vehicle_id, start_date, end_date,
+                                                                                   str(car.id))
+
+                if parsed_data is None:
+                    return Response({"error": "Не удалось получить данные для указанного периода."},
+                                    status=status.HTTP_400_BAD_REQUEST)
+
+                if not parsed_data:
+                    result = {
+                        "motohours_start": None,
+                        "motohours_end": None,
+                        "data": [],
+                        "motohours_fraud": 0,
+                        "motohours": 0
+                    }
+                    return Response({"result": result}, status=status.HTTP_200_OK)
+
+                df = pl.DataFrame(parsed_data)
+
+                if df.is_empty():
+                    result = {
+                        "motohours_start": None,
+                        "motohours_end": None,
+                        "data": [],
+                        "motohours_fraud": 0,
+                        "motohours": 0
+                    }
+                    return Response({"result": result}, status=status.HTTP_200_OK)
+
+                if "motohours" in df.columns:
+                    motohours_non_null_count = df["motohours"].is_not_null().sum()
+                    if motohours_non_null_count == 0:
+                        df = df.drop("motohours")
+                        logger.info(f"Все значения motohours null, используем расчет по ign")
+
+                agg_period = 1 if agg is None else agg
+                result = compute_motohours_total(df, agg_period)
+
+                if isinstance(result, pl.DataFrame):
+                    result_data = result.to_dicts()
+                else:
+                    if isinstance(result, dict) and 'data' in result and isinstance(result['data'], pl.DataFrame):
+                        result['data'] = result['data'].to_dicts()
+                    result_data = result
+
+                return Response({"result": result_data}, status=status.HTTP_200_OK)
+
+            except Exception as e:
+                logger.error(f"Ошибка в MotohoursTestAPIView для car_id={car_id}: {e}", exc_info=True)
+                return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        except Car.DoesNotExist:
+            return Response({"error": "Автомобиль не найден."}, status=status.HTTP_404_NOT_FOUND)
+        except ValueError as e:
+            return Response({"error": f"Неверный формат даты: {e}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.error(f"Общая ошибка в MotohoursTestAPIView: {e}")
             return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
