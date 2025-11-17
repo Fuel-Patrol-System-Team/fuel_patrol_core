@@ -543,8 +543,8 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
                         except Exception as e:
                             logger.error(f"Ошибка сохранения CarBadData для car_id={car_id}: {e}")
                             continue
-
-            write_to_influxdb(preprocessed_df, org_id, report_query_id)
+            ##TODO: Если нужна запись в флюкс
+            ##write_to_influxdb(preprocessed_df, org_id, report_query_id)
 
             _log_resources("process_chunk")
             return result_df
@@ -554,7 +554,7 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
 
     return _timeit("process_chunk", _process)
 
-
+##TODO: НЕ ИСПОЛЬЗУЕТСЯ
 @shared_task(
     bind=True,
     soft_time_limit=300,
@@ -690,7 +690,7 @@ def parse_cars_task(self, report_query_id):
                                   f"Ошибка в parse_cars_task для {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
+##TODO: Не используется
 @shared_task(
     bind=True,
     soft_time_limit=300,
@@ -914,7 +914,7 @@ def save_leak_results(self, results, report_query_id):
                                   f"Ошибка в save_leak_results для {report_query_id}: {e}")
         raise self.retry(exc=e)
 
-
+##TODO: Не используется
 @shared_task(
     bind=True,
     soft_time_limit=1000,
@@ -981,7 +981,7 @@ def check_and_process_raw_reports(self):
         logger.error(f"Ошибка в check_and_process_raw_reports: {e}")
         raise self.retry(exc=e)
 
-
+##TODO: Не используется
 @shared_task(
     bind=True,
     soft_time_limit=300,
