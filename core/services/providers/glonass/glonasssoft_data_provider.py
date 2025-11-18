@@ -256,19 +256,16 @@ class GlonassSoftDataProvider(BaseDataProvider):
             return pl.DataFrame()
 
         try:
-            df = pl.DataFrame(processed_data)
-
-            df = df.with_columns(
-                [
-                    pl.col("timestamp").str.strptime(
-                        pl.Datetime, format="%Y-%m-%dT%H:%M:%S%.fZ"
-                    ),
-                    pl.col("calc_sensors_fuel_level").cast(pl.Float32),
-                    pl.col("pos_s").cast(pl.Float32),
-                    pl.col("rpm").cast(pl.Float32),
-                    pl.col("ign").cast(pl.Int8),
-                    pl.col("auto").cast(pl.Categorical),
-                ]
+            df = pl.DataFrame(
+                processed_data,
+                schema_overrides={
+                    "timestamp": pl.Datetime,
+                    "auto": pl.Categorical,
+                    "calc_sensors_voltage": pl.Int32,
+                    "calc_sensors_fuel_level": pl.Float32,
+                    "rpm": pl.Int32,
+                    "ign": pl.Int8,
+                },
             )
 
             logger.info(f"Создан DataFrame: {df.shape}, колонки: {df.columns}")
