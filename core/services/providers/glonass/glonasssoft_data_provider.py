@@ -259,7 +259,6 @@ class GlonassSoftDataProvider(BaseDataProvider):
             df = pl.DataFrame(
                 processed_data,
                 schema_overrides={
-                    "timestamp": pl.Datetime,
                     "auto": pl.Categorical,
                     "calc_sensors_voltage": pl.Int32,
                     "calc_sensors_fuel_level": pl.Float32,
