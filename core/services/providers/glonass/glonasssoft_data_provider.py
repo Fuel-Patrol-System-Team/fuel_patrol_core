@@ -61,7 +61,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
             raise e
 
     def get_car_data(
-        self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
+            self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
     ) -> Optional[pl.DataFrame]:
         """
         Получает данные terminalMessages для конкретной машины и возвращает как polars DataFrame
@@ -101,7 +101,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
         return df
 
     def _split_period(
-        self, start_date: datetime, end_date: datetime, days_per_chunk: int = 10
+            self, start_date: datetime, end_date: datetime, days_per_chunk: int = 10
     ) -> List[tuple]:
         """Разбивает период на чанки для последовательной обработки"""
         periods = []
@@ -121,7 +121,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
         return periods
 
     def _get_data_sequential(
-        self, vehicle_id: int, periods: List[tuple]
+            self, vehicle_id: int, periods: List[tuple]
     ) -> List[Dict[str, Any]]:
         """Последовательно получает данные за все периоды с соблюдением rate limit"""
         all_messages = []
@@ -155,7 +155,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
         return all_messages
 
     def _get_terminal_messages_safe(
-        self, vehicle_id: int, start_date: datetime, end_date: datetime
+            self, vehicle_id: int, start_date: datetime, end_date: datetime
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Безопасная версия получения terminalMessages с обработкой ошибок
@@ -181,7 +181,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
 
     @retry_on_status(retry_delays=[8, 15, 25], status_codes=[400, 429, 500, 502, 503])
     def _get_terminal_messages(
-        self, vehicle_id: int, start_date: datetime, end_date: datetime
+            self, vehicle_id: int, start_date: datetime, end_date: datetime
     ) -> Optional[List[Dict[str, Any]]]:
         """Получает terminalMessages за указанный период"""
         self._enforce_rate_limit()
@@ -190,8 +190,8 @@ class GlonassSoftDataProvider(BaseDataProvider):
         payload = {
             "vehicleId": vehicle_id,
             "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[
-                :-3
-            ],
+                    :-3
+                    ],
             "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
         }
         headers = {"X-Auth": self.auth_token}
@@ -219,7 +219,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
             raise e
 
     def _convert_to_dataframe(
-        self, messages: List[Dict[str, Any]], vehicle_id: int
+            self, messages: List[Dict[str, Any]], vehicle_id: int
     ) -> pl.DataFrame:
         """Конвертирует сообщения в polars DataFrame"""
         if not messages:
@@ -256,79 +256,131 @@ class GlonassSoftDataProvider(BaseDataProvider):
             return pl.DataFrame()
 
         try:
-            df = pl.DataFrame(
-                processed_data,
-                schema_overrides={
-                    "auto": pl.Categorical,
-                    "calc_sensors_voltage": pl.Int32,
-                    "calc_sensors_fuel_level": pl.Float32,
-                    "rpm": pl.Int32,
-                    "ign": pl.Int8,
-                },
-            )
+            schema = {
+                "auto": pl.Utf8,
+                "timestamp": pl.Utf8,
+                "latitude": pl.Float64,
+                "longitude": pl.Float64,
+                "satellites": pl.Int64,
+                "calc_sensors_voltage": pl.Float64,
+                "calc_sensors_fuel_level": pl.Float64,
+                "pos_s": pl.Float64,
+                "rpm": pl.Float64,
+                "ign": pl.Int64,
+                "mileage": pl.Float64,
+                "motohours": pl.Float64,
+                "engine_temp": pl.Float64,
+                "amtr": pl.Int64,
+            }
 
-            df = df.with_columns(pl.col("timestamp").cast(pl.Datetime))
+            df = pl.DataFrame(processed_data, schema=schema)
 
-            logger.info(f"Создан DataFrame: {df.shape}, колонки: {df.columns}")
+            logger.info(f"Создан DataFrame с базовой схемой: {df.shape}")
+            logger.info(f"Типы колонок: {df.schema}")
+
+            df = df.with_columns([
+                pl.col("timestamp").str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%S%.fZ", strict=False).alias(
+                    "timestamp"),
+                pl.col("auto").cast(pl.Categorical),
+                pl.col("calc_sensors_voltage").cast(pl.Float32),
+                pl.col("calc_sensors_fuel_level").cast(pl.Float32),
+                pl.col("rpm").cast(pl.Float32),
+                pl.col("ign").cast(pl.Int8),
+                pl.col("pos_s").cast(pl.Float32),
+                pl.col("latitude").cast(pl.Float32),
+                pl.col("longitude").cast(pl.Float32),
+                pl.col("satellites").cast(pl.Int16),
+                pl.col("amtr").cast(pl.Int32),
+                pl.col("mileage").cast(pl.Float32),
+                pl.col("motohours").cast(pl.Float32),
+                pl.col("engine_temp").cast(pl.Float32),
+            ])
+
+            logger.info(f"DataFrame после преобразования типов: {df.shape}")
+            logger.info(f"Типы колонок после преобразования: {df.schema}")
+
+            null_counts = df.null_count()
+            logger.info(f"Количество null значений по колонкам: {null_counts}")
+
+            if not df.is_empty():
+                logger.info(f"Пример данных timestamp: {df['timestamp'].head(3)}")
+                logger.info(f"Пример данных fuel_level: {df['calc_sensors_fuel_level'].head(3)}")
+                logger.info(f"Пример данных speed: {df['pos_s'].head(3)}")
 
             return df
 
         except Exception as e:
-            logger.error(f"Ошибка создания DataFrame: {e}")
+            logger.error(f"Ошибка создания DataFrame: {e}", exc_info=True)
+
+            if processed_data:
+                logger.error(f"Всего processed_data: {len(processed_data)} записей")
+
+                type_analysis = {}
+                for i, row in enumerate(processed_data[:5]):
+                    logger.error(f"Строка {i}:")
+                    for key, value in row.items():
+                        if key not in type_analysis:
+                            type_analysis[key] = set()
+                        type_analysis[key].add(type(value).__name__)
+                        logger.error(f"  {key}: {value} (type: {type(value).__name__})")
+
+                logger.error(f"Анализ типов по колонкам:")
+                for key, types in type_analysis.items():
+                    logger.error(f"  {key}: {list(types)}")
+
+                try:
+                    logger.info("Пробуем создать DataFrame с infer_schema_length=1000")
+                    df_fallback = pl.DataFrame(processed_data, infer_schema_length=1000)
+                    logger.info(f"Успешно создан DataFrame с fallback: {df_fallback.shape}")
+                    logger.info(f"Схема fallback: {df_fallback.schema}")
+                    return df_fallback
+                except Exception as e2:
+                    logger.error(f"Fallback также не сработал: {e2}")
+
             return pl.DataFrame()
 
     def _extract_message_data(
-        self, message: Dict[str, Any], sensors_mapping: Dict[str, str], car_guid: str
+            self,
+            message: Dict[str, Any],
+            sensors_mapping: Dict[str, str],
+            car_guid: str
     ) -> Optional[Dict[str, Any]]:
         """Извлекает данные из сообщения по маппингу сенсоров"""
         try:
             row = {
-                # TODO: зачем latitude и longitude
-                "auto": car_guid,
-                "timestamp": message.get("deviceTime"),
-                "latitude": message.get("latitude"),
-                "longitude": message.get("longitude"),
-                "satellites": message.get("satellites"),
-                "calc_sensors_voltage": message.get("voltage"),
+                "auto": str(car_guid),
+                "timestamp": str(message.get("deviceTime", "")),
+                "latitude": float(message.get("latitude", 0) or 0),
+                "longitude": float(message.get("longitude", 0) or 0),
+                "satellites": int(message.get("satellites", 0) or 0),
+                "calc_sensors_voltage": float(message.get("voltage", 0) or 0),
             }
 
-            def get_nested_value(data: dict, path: str):
+            def get_nested_value(data: dict, path: str, default=0.0):
                 if not path or path == "":
-                    return None
+                    return default
                 keys = path.split(".")
                 current = data
                 for key in keys:
                     if isinstance(current, dict) and key in current:
                         current = current[key]
                     else:
-                        return None
-                return current
+                        return default
+                try:
+                    return float(current) if current is not None else default
+                except (ValueError, TypeError):
+                    return default
 
             fuel_path = sensors_mapping.get("calc_sensors_fuel_level", "")
             row["calc_sensors_fuel_level"] = get_nested_value(message, fuel_path)
-
-            row["pos_s"] = get_nested_value(
-                message, sensors_mapping.get("speed", "speed")  # это fallback
-            )
+            row["pos_s"] = get_nested_value(message, sensors_mapping.get("speed", ""))
             row["rpm"] = get_nested_value(message, sensors_mapping.get("rpm", ""))
-            row["ign"] = get_nested_value(message, sensors_mapping.get("ign", ""))
-            row["mileage"] = get_nested_value(
-                message, sensors_mapping.get("mileage", "")
-            )
-            row["motohours"] = get_nested_value(
-                message, sensors_mapping.get("motohours", "")
-            )
-            row["engine_temp"] = get_nested_value(
-                message, sensors_mapping.get("engine_temp", "")
-            )
+            row["mileage"] = get_nested_value(message, sensors_mapping.get("mileage", ""))
+            row["motohours"] = get_nested_value(message, sensors_mapping.get("motohours", ""))
+            row["engine_temp"] = get_nested_value(message, sensors_mapping.get("engine_temp", ""))
 
-            if row["ign"] is not None:
-                try:
-                    row["ign"] = 1 if int(float(row["ign"])) > 0 else 0
-                except (ValueError, TypeError):
-                    row["ign"] = 0
-            else:
-                row["ign"] = 0
+            ign_value = get_nested_value(message, sensors_mapping.get("ign", ""))
+            row["ign"] = 1 if ign_value > 0 else 0
 
             try:
                 amtr_x = float(message.get("amtr_x", 0) or 0)
@@ -338,11 +390,9 @@ class GlonassSoftDataProvider(BaseDataProvider):
             except (ValueError, TypeError):
                 row["amtr"] = 0
 
-            if (
-                row["calc_sensors_fuel_level"] is None
-                and row["pos_s"] is None
-                and row["rpm"] is None
-            ):
+            if (row["calc_sensors_fuel_level"] == 0 and
+                    row["pos_s"] == 0 and
+                    row["rpm"] == 0):
                 return None
 
             return row
