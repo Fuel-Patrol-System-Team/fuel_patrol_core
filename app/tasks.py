@@ -34,7 +34,9 @@ import pickle
 import time
 
 from core.services.providers.car_data_service import CarDataService
+from core.services.providers.filtering_service import FilteringService
 from core.services.providers.glonass.glonasssoft_data_provider import GlonassSoftDataProvider
+from core.services.providers.leaks_service import LeaksService
 from core.services.providers.norms_service import NormsService
 from core.services.providers.provider_factory import ProviderFactory
 from core.services.providers.vehicle_sync_service import VehicleSyncService
@@ -205,6 +207,9 @@ def sync_vehicles_task(self, provider_id: str, organization_id: str):
 
 @shared_task(
     bind=True,
+    name="process_single_car_data_task",
+    soft_time_limit=1800,
+    time_limit=1850,
     priority=5,
     rate_limit="1/s"
 )
@@ -216,7 +221,7 @@ def process_single_car_data_task(
         end_date: str = None,
         is_save_bad_data: bool = False
 ):
-    """Обрабатывает данные для одной машины включая расчет норм"""
+    """Обрабатывает данные для одной машины включая расчет утечек"""
     try:
         logger.info(f"=== НАЧАЛО ПОЛНОЙ ОБРАБОТКИ ДЛЯ МАШИНЫ {car_id} ===")
 
@@ -242,7 +247,7 @@ def process_single_car_data_task(
         start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')) if start_date else None
         end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00')) if end_date else None
 
-        logger.info(f"Получение сырых данных для машины {car_id}...")
+        logger.info(f"ЭТАП 1: Получение сырых данных для машины {car_id}...")
         raw_df = data_provider.get_car_data(start_dt, end_dt)
 
         if raw_df is None or raw_df.is_empty():
@@ -254,7 +259,7 @@ def process_single_car_data_task(
 
         auto_df = CarDataService.prepare_auto_data(car)
 
-        logger.info("ЭТАП 1: Вычисление первичных показателей...")
+        logger.info("ЭТАП 2: Вычисление первичных показателей...")
         primary_df = CarDataService.calculate_primary_single(raw_df, auto_df)
 
         if primary_df is None or primary_df.is_empty():
@@ -265,7 +270,7 @@ def process_single_car_data_task(
         primary_csv_path = CarDataService.save_result_to_csv(primary_df, car_id, "primary")
         logger.info(f"Первичные показатели сохранены: {primary_csv_path}")
 
-        logger.info("ЭТАП 2: Расчет норм расхода топлива...")
+        logger.info("ЭТАП 3: Расчет норм расхода топлива...")
         norms_df = NormsService.calculate_norms_single(raw_df, primary_df, auto_df)
 
         if norms_df is None or norms_df.is_empty():
@@ -282,9 +287,61 @@ def process_single_car_data_task(
                 "warning": "Нормы не рассчитаны"
             }
 
-
         norms_csv_path = NormsService.save_norms_to_csv(norms_df, car_id)
         logger.info(f"Нормы сохранены: {norms_csv_path}")
+
+        logger.info("ЭТАП 4: Расчет утечек топлива...")
+        leaks_service = LeaksService()
+        leaks_result, intermediate_df = leaks_service.compute_leaks(
+            auto_df=auto_df,
+            data_df=raw_df,
+            primary_df=primary_df,
+            norma_df=norms_df,
+            is_save_bad_data=is_save_bad_data,
+            is_filter_bad_data=True
+        )
+
+        if leaks_result is None or leaks_result.is_empty():
+            error_msg = f"Не удалось рассчитать утечки для машины {car_id}"
+            logger.error(error_msg)
+            return {
+                "success": True,
+                "car_id": car_id,
+                "primary_path": primary_csv_path,
+                "norms_path": norms_csv_path,
+                "leaks_path": None,
+                "rows_processed": len(raw_df),
+                "primary_rows": len(primary_df),
+                "norms_rows": len(norms_df),
+                "leaks_rows": 0,
+                "warning": "Утечки не рассчитаны"
+            }
+
+        logger.info("ЭТАП 5: Фильтрация результатов утечек...")
+        filtering_service = FilteringService()
+        filtered_leaks = filtering_service.apply_filters(leaks_result)
+
+        leaks_csv_path = CarDataService.save_result_to_csv(filtered_leaks, car_id, "leaks")
+        logger.info(f"Результаты утечек сохранены: {leaks_csv_path}")
+
+        intermediate_path = None
+        if intermediate_df is not None and not intermediate_df.is_empty():
+            intermediate_path = CarDataService.save_result_to_csv(intermediate_df, car_id, "intermediate")
+            logger.info(f"Промежуточные данные сохранены: {intermediate_path}")
+
+        presentable_columns = [
+            "timestamp", "auto", "name", "pos_s", "spent_fuel",
+            "is_special_car", "ign", "ign_max", "load_ratio",
+            "speed_etalon", "norma_rasx_per_travel", "is_leak", "leak"
+        ]
+
+        available_columns = [col for col in presentable_columns if col in filtered_leaks.columns]
+        if available_columns:
+            presentable_df = filtered_leaks.select(available_columns)
+            presentable_path = CarDataService.save_result_to_csv(presentable_df, car_id, "leaks_readable")
+            logger.info(f"Читабельные результаты сохранены: {presentable_path}")
+        else:
+            presentable_path = None
 
         logger.info(f"=== ПОЛНАЯ ОБРАБОТКА ЗАВЕРШЕНА ДЛЯ МАШИНЫ {car_id} ===")
         return {
@@ -292,9 +349,14 @@ def process_single_car_data_task(
             "car_id": car_id,
             "primary_path": primary_csv_path,
             "norms_path": norms_csv_path,
+            "leaks_path": leaks_csv_path,
+            "intermediate_path": intermediate_path,
+            "presentable_path": presentable_path,
             "rows_processed": len(raw_df),
             "primary_rows": len(primary_df),
-            "norms_rows": len(norms_df)
+            "norms_rows": len(norms_df),
+            "leaks_rows": len(filtered_leaks),
+            "filtered_leaks_rows": len(filtered_leaks)
         }
 
     except Car.DoesNotExist:

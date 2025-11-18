@@ -110,7 +110,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
         total_days = (end_date - start_date).days
         logger.info(f"Общий период: {total_days} дней")
 
-        days_per_chunk = 30
+        days_per_chunk = 15
 
         while current_start < end_date:
             current_end = min(current_start + timedelta(days=days_per_chunk), end_date)
@@ -400,3 +400,36 @@ class GlonassSoftDataProvider(BaseDataProvider):
         except Exception as e:
             logger.debug(f"Ошибка обработки сообщения: {e}")
             return None
+
+    @staticmethod
+    def prepare_auto_data(car) -> pl.DataFrame:
+        """Подготавливает auto DataFrame с дополнительными полями для утечек"""
+        try:
+            # Добавляем ign_working и norm_speed как в примере
+            ign_working = True  # Можно добавить логику определения
+            norm_speed = 60.0  # Стандартная скорость
+
+            auto_data = [{
+                "id": str(car.id),
+                "auto": str(car.id),
+                "input": float(car.input) if car.input else 1.0,
+                "output": float(car.output) if car.output else 1.0,
+                "name": car.name,
+                "engine_type": float(car.engine_type) if car.engine_type else 0.0,
+                "is_tarrified": car.is_tarrified,
+                "ign_working": ign_working,
+                "norm_speed": norm_speed
+            }]
+
+            auto_df = pl.DataFrame(auto_data).with_columns([
+                pl.col("id").cast(pl.Categorical),
+                pl.col("auto").cast(pl.Categorical),
+                pl.col("input").cast(pl.Float32),
+                pl.col("output").cast(pl.Float32)
+            ])
+
+            return auto_df
+
+        except Exception as e:
+            logger.error(f"Ошибка подготовки auto данных: {e}")
+            raise

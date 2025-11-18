@@ -82,29 +82,50 @@ class CarDataService:
     def _calculate_primary_speed(df: pl.DataFrame) -> pl.DataFrame:
         """Вычисляет показатели скорости"""
         try:
-            speed_stats = df.filter(pl.col("pos_s").is_not_null()).group_by("auto").agg([
-                pl.col("pos_s").mean().alias("speed_mean"),
-                pl.col("pos_s").std().alias("speed_std"),
-                pl.col("pos_s").max().alias("speed_max")
-            ])
-            return speed_stats
+            tmp = df.filter(pl.col("pos_s") > 0)
+            return tmp.group_by("auto").agg(
+                [
+                    pl.col("pos_s").quantile(0.50).alias("norm_speed"),
+                    pl.col("pos_s").quantile(0.75).alias("norm_speed_2"),
+                ]
+            )
         except Exception as e:
             logger.error(f"Ошибка вычисления скорости: {e}")
             return pl.DataFrame()
 
     @staticmethod
-    def _calculate_primary_is_special(df: pl.DataFrame) -> pl.DataFrame:
-        """Вычисляет специальные показатели"""
-        try:
+    def _calculate_primary_is_special(df: pl.DataFrame):
+        col_dtime_period = pl.col("timestamp").dt.truncate("2h")
 
-            special_stats = df.group_by("auto").agg([
-                pl.col("amtr").mean().alias("amtr_mean"),
-                pl.col("engine_temp").mean().alias("engine_temp_mean")
-            ])
-            return special_stats
-        except Exception as e:
-            logger.error(f"Ошибка вычисления специальных показателей: {e}")
-            return pl.DataFrame()
+        df_test = df.with_columns(
+            pl.col("calc_sensors_fuel_level")
+            .diff()
+            .over(["auto", col_dtime_period])
+            .fill_null(0)
+            .cast(pl.Float32)
+            .alias("spent_fuel"),
+        )
+        df_test = df_test.filter([pl.col("spent_fuel").gt(0)])
+
+        df_test = df_test.with_columns(
+            [pl.when(pl.col("pos_s").gt(0)).then(1).otherwise(0).alias("movable")]
+        )
+
+        cars_active = df_test.group_by("auto").agg(
+            [
+                (pl.col("ign").max() > 0).alias("ign_working"),
+                (pl.col("movable").sum() / pl.col("movable").count()).alias("sp_factor"),
+            ]
+        )
+        cars_active = cars_active.with_columns(
+            [
+                (pl.col("sp_factor").lt(0.75)).alias("is_special_car"),
+            ]
+        )
+        cars_active = cars_active.select(
+            ["auto", "ign_working", "sp_factor", "is_special_car"]
+        )
+        return cars_active
 
     @staticmethod
     def save_result_to_csv(result_df: pl.DataFrame, car_id: str, prefix: str = "primary") -> str:
