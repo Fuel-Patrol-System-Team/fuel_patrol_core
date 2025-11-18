@@ -268,6 +268,8 @@ class GlonassSoftDataProvider(BaseDataProvider):
                 },
             )
 
+            df = df.with_columns(pl.col("timestamp").cast(pl.Datetime))
+
             logger.info(f"Создан DataFrame: {df.shape}, колонки: {df.columns}")
 
             return df
