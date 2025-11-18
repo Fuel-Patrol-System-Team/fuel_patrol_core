@@ -6,10 +6,12 @@ import pytz
 from django.db.models import Count, OuterRef, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import render
+from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
+from rest_framework.status import HTTP_201_CREATED, HTTP_200_OK
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.parsers import MultiPartParser
@@ -30,14 +32,15 @@ from .helpers.mileage_test import MileageModes, make_empty_mileage_result, milea
 from .helpers.motohours import compute_motohours_total, compute_motohours
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, SensorsKey, SensorsKeyLocalization, Language
+    CarBadData, SensorsKey, SensorsKeyLocalization, Language, ReportQueryDetails
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA
+    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA
 )
+from app.tasks import sync_vehicles_task, process_single_car_data_task
 from .serializers import (
     MileageTestSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -51,6 +54,7 @@ from core.helpers.responses import error_response, user_registered_response, att
     success_response
 from core.helpers.permissions import IsOrgMember
 from .services.data_providers.utils import provider_factory
+from .services.providers.vehicle_sync_service import VehicleSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -219,6 +223,112 @@ class ProviderDataRequestAPIView(APIView):
             return error
 
         return success_response({"report_query_id": report_query_id}, status.HTTP_201_CREATED)
+
+
+class VehicleSyncAPIView(APIView):
+    @swagger_auto_schema(
+        operation_description="Запускает асинхронную синхронизацию транспортных средств с провайдером",
+        request_body=VEHICLE_SYNC_SCHEMA,
+        responses={
+            202: "Задача синхронизации запущена",
+            400: "Неверные данные",
+            404: "Провайдер не найден"
+        }
+    )
+    def post(self, request):
+        provider_name = request.data.get('provider_name')
+
+        if not provider_name:
+            return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
+
+        if not request.user.org:
+            return error_response("User must be associated with an organization", status.HTTP_400_BAD_REQUEST)
+
+        try:
+            provider = DataProvider.objects.get(name=provider_name)
+        except DataProvider.DoesNotExist:
+            return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
+
+        try:
+            task = sync_vehicles_task.delay(
+                provider_id=str(provider.id),
+                organization_id=str(request.user.org.id)
+            )
+
+            return success_response({
+                "task_id": task.id,
+                "message": "Синхронизация транспортных средств запущена",
+                "provider": provider_name
+            }, status.HTTP_202_ACCEPTED)
+
+        except Exception as e:
+            logger.error(f"Ошибка запуска задачи синхронизации: {e}")
+            return error_response(
+                "Failed to start synchronization task",
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+
+class CarDataRequestAPIView(APIView):
+    @swagger_auto_schema(
+        operation_description="Создаёт заявку на получение и обработку данных по конкретным машинам",
+        request_body=CAR_DATA_REQUEST_SCHEMA,
+        responses={
+            202: "Задачи обработки запущены",
+            400: "Неверные данные",
+            404: "Провайдер или машины не найдены"
+        }
+    )
+    def post(self, request):
+        provider_name = request.data.get('provider_name')
+        car_ids = request.data.get('car_ids', [])
+        start_date = request.data.get('start_date')
+        end_date = request.data.get('end_date')
+        is_save_bad_data = request.data.get('is_save_bad_data', False)
+
+        if not provider_name:
+            return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
+
+        if not car_ids:
+            return error_response("Car IDs are required", status.HTTP_400_BAD_REQUEST)
+
+        if not request.user.org:
+            return error_response("User must be associated with an organization", status.HTTP_400_BAD_REQUEST)
+
+        try:
+            provider = DataProvider.objects.get(name=provider_name, org_id=request.user.org)
+        except DataProvider.DoesNotExist:
+            return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
+
+        cars = Car.objects.filter(
+            id__in=car_ids,
+            data_providers=provider
+        )
+
+        if len(cars) != len(car_ids):
+            found_ids = set(str(car.id) for car in cars)
+            missing_ids = set(car_ids) - found_ids
+            return error_response(
+                f"Some cars not found or don't belong to provider: {missing_ids}",
+                status.HTTP_404_NOT_FOUND
+            )
+
+        task_ids = []
+        for car in cars:
+            task = process_single_car_data_task.delay(
+                car_id=str(car.id),
+                provider_id=str(provider.id),
+                start_date=start_date,
+                end_date=end_date,
+                is_save_bad_data=is_save_bad_data
+            )
+            task_ids.append(task.id)
+
+        return success_response({
+            "task_ids": task_ids,
+            "message": f"Обработка данных запущена для {len(cars)} машин",
+            "total_cars": len(cars)
+        }, status.HTTP_202_ACCEPTED)
 
 
 class MileageTestAPIView(APIView):
@@ -775,7 +885,6 @@ class LanguageListAPIView(ListAPIView):
     pagination_class = None
 
 
-
 ##TODO: YShipik - кастомные руты с куками для токенов
 class CustomTokenObtainPairView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
@@ -806,8 +915,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 )
 
         return response
-
-
 
 
 class CustomTokenRefreshView(TokenRefreshView):

@@ -3,6 +3,7 @@ from drf_yasg import openapi
 from core.serializers import CarMetricSerializer, CarReportOutputSerializer, DataProviderSerializer, \
     CarActiveStatusSerializer
 
+
 PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
@@ -28,6 +29,55 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
             description="Сохранять ли некорректные данные в CarBadData (по умолчанию False)",
             example=False,
             default=False
+        )
+    },
+    required=["provider_name"]
+)
+
+
+CAR_DATA_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "provider_name": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            description="Имя провайдера (например, 'glonasssoft')",
+            example="glonasssoft"
+        ),
+        "car_ids": openapi.Schema(
+            type=openapi.TYPE_ARRAY,
+            items=openapi.Schema(type=openapi.TYPE_STRING),
+            description="Список ID машин для обработки",
+            example=["car-uuid-1", "car-uuid-2"]
+        ),
+        "start_date": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATETIME,
+            description="Начальная дата для запроса данных (ISO формат)",
+            example="2025-01-01T00:00:00Z"
+        ),
+        "end_date": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATETIME,
+            description="Конечная дата для запроса данных (ISO формат)",
+            example="2025-06-13T23:59:59Z"
+        ),
+        "is_save_bad_data": openapi.Schema(
+            type=openapi.TYPE_BOOLEAN,
+            description="Сохранять ли некорректные данные в CarBadData (по умолчанию False)",
+            example=False,
+            default=False
+        )
+    },
+    required=["provider_name", "car_ids", "start_date", "end_date"]
+)
+
+VEHICLE_SYNC_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "provider_name": openapi.Schema(
+            type=openapi.TYPE_STRING,
+            description="Имя провайдера (например, 'glonasssoft')",
+            example="glonasssoft"
         )
     },
     required=["provider_name"]
@@ -125,27 +175,27 @@ MILEAGE_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
         'car_id': openapi.Schema(type=openapi.TYPE_STRING, description='UUID автомобиля'),
-        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME, description='Дата начала в ISO формате'),
-        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME, description='Дата конца в ISO формате'),
-        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32 ,description="Агрегация в минутах")
+        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                     description='Дата начала в ISO формате'),
+        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                   description='Дата конца в ISO формате'),
+        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах")
     },
     required=['car_id', 'start_date', 'end_date']
 )
-
 
 MOTOHOURS_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
         'car_id': openapi.Schema(type=openapi.TYPE_STRING, description='UUID автомобиля'),
-        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME, description='Дата начала в ISO формате'),
-        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME, description='Дата конца в ISO формате'),
-        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32 ,description="Агрегация в минутах")
+        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                     description='Дата начала в ISO формате'),
+        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                   description='Дата конца в ISO формате'),
+        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах")
     },
     required=['car_id', 'start_date', 'end_date']
 )
-
-
-
 
 LEAKS_COUNT_SCHEMA = {
     "tags": ["leaks"],

@@ -997,6 +997,7 @@ class GlonassSoftProvider:
                     continue
 
         logger.info(f"Сохранены данные для vehicleId={vehicle_id}. Сенсоров: {len(sensors_mapping)}")
+
     ##TODO: Вынести в отдельный парсер
     def get_single_vehicle_data_in_memory(
             self, vehicle_id: int, start_date: datetime, end_date: datetime
@@ -1170,6 +1171,7 @@ class GlonassSoftProvider:
                 )
         except ValueError:
             return None
+
     ##TODO:Вынести
     def get_single_vehicle_motohours_data_in_memory(
             self, vehicle_id: int, start_date: datetime, end_date: datetime, car_guid: str

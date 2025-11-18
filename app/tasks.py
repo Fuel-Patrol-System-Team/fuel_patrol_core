@@ -1,5 +1,6 @@
 import logging
 import pathlib
+import polars as pl
 from datetime import datetime
 from typing import Dict, Optional, Any
 
@@ -31,6 +32,12 @@ import psutil
 import gzip
 import pickle
 import time
+
+from core.services.providers.car_data_service import CarDataService
+from core.services.providers.glonass.glonasssoft_data_provider import GlonassSoftDataProvider
+from core.services.providers.norms_service import NormsService
+from core.services.providers.provider_factory import ProviderFactory
+from core.services.providers.vehicle_sync_service import VehicleSyncService
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -143,6 +150,168 @@ def fetch_data_from_provider(self, report_query_id: str,
             raise
 
     return _timeit("fetch_data_from_provider", _fetch)
+
+
+@shared_task(
+    bind=True,
+    name="sync_vehicles_task",
+    soft_time_limit=300,
+    priority=5,
+    rate_limit="1/s"
+)
+def sync_vehicles_task(self, provider_id: str, organization_id: str):
+    """
+    Celery задача для асинхронной синхронизации транспортных средств
+    """
+
+    def _sync():
+        try:
+            logger.info(f"Запуск синхронизации машин для провайдера {provider_id}")
+
+            provider = DataProvider.objects.get(id=provider_id)
+            organization = Organization.objects.get(id=organization_id)
+
+            sync_service = VehicleSyncService(provider, organization)
+            result = sync_service.sync_vehicles()
+
+            if result["success"]:
+                logger.info(
+                    f"Синхронизация завершена: "
+                    f"всего {result['total_vehicles']}, "
+                    f"создано {result['created']}, "
+                    f"обновлено {result['updated']}, "
+                    f"ошибок {result['failed']}"
+                )
+            else:
+                logger.error(f"Ошибка синхронизации: {result['error']}")
+
+            return result
+
+        except DataProvider.DoesNotExist:
+            error_msg = f"Провайдер {provider_id} не найден"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        except Organization.DoesNotExist:
+            error_msg = f"Организация {organization_id} не найдена"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+        except Exception as e:
+            error_msg = f"Неожиданная ошибка при синхронизации: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {"success": False, "error": error_msg}
+
+    return _sync()
+
+
+@shared_task(
+    bind=True,
+    priority=5,
+    rate_limit="1/s"
+)
+def process_single_car_data_task(
+        self,
+        car_id: str,
+        provider_id: str,
+        start_date: str = None,
+        end_date: str = None,
+        is_save_bad_data: bool = False
+):
+    """Обрабатывает данные для одной машины включая расчет норм"""
+    try:
+        logger.info(f"=== НАЧАЛО ПОЛНОЙ ОБРАБОТКИ ДЛЯ МАШИНЫ {car_id} ===")
+
+        car = Car.objects.get(id=car_id)
+        provider = DataProvider.objects.get(id=provider_id)
+
+        data_provider = ProviderFactory.create_provider(
+            provider.metadata,
+            provider_type="data",
+            car_id=car_id
+        )
+
+        if not data_provider:
+            error_msg = f"Не удалось создать провайдер данных для машины {car_id}"
+            logger.error(error_msg)
+            return {"success": False, "car_id": car_id, "error": error_msg}
+
+        if not data_provider.authenticate():
+            error_msg = f"Ошибка аутентификации для машины {car_id}"
+            logger.error(error_msg)
+            return {"success": False, "car_id": car_id, "error": error_msg}
+
+        start_dt = datetime.fromisoformat(start_date.replace('Z', '+00:00')) if start_date else None
+        end_dt = datetime.fromisoformat(end_date.replace('Z', '+00:00')) if end_date else None
+
+        logger.info(f"Получение сырых данных для машины {car_id}...")
+        raw_df = data_provider.get_car_data(start_dt, end_dt)
+
+        if raw_df is None or raw_df.is_empty():
+            error_msg = f"Нет сырых данных для машины {car_id}"
+            logger.warning(error_msg)
+            return {"success": False, "car_id": car_id, "error": error_msg}
+
+        logger.info(f"Получено {len(raw_df)} строк сырых данных")
+
+        auto_df = CarDataService.prepare_auto_data(car)
+
+        logger.info("ЭТАП 1: Вычисление первичных показателей...")
+        primary_df = CarDataService.calculate_primary_single(raw_df, auto_df)
+
+        if primary_df is None or primary_df.is_empty():
+            error_msg = f"Не удалось вычислить первичные показатели для машины {car_id}"
+            logger.error(error_msg)
+            return {"success": False, "car_id": car_id, "error": error_msg}
+
+        primary_csv_path = CarDataService.save_result_to_csv(primary_df, car_id, "primary")
+        logger.info(f"Первичные показатели сохранены: {primary_csv_path}")
+
+        logger.info("ЭТАП 2: Расчет норм расхода топлива...")
+        norms_df = NormsService.calculate_norms_single(raw_df, primary_df, auto_df)
+
+        if norms_df is None or norms_df.is_empty():
+            error_msg = f"Не удалось рассчитать нормы для машины {car_id}"
+            logger.error(error_msg)
+            return {
+                "success": True,
+                "car_id": car_id,
+                "primary_path": primary_csv_path,
+                "norms_path": None,
+                "rows_processed": len(raw_df),
+                "primary_rows": len(primary_df),
+                "norms_rows": 0,
+                "warning": "Нормы не рассчитаны"
+            }
+
+
+        norms_csv_path = NormsService.save_norms_to_csv(norms_df, car_id)
+        logger.info(f"Нормы сохранены: {norms_csv_path}")
+
+        logger.info(f"=== ПОЛНАЯ ОБРАБОТКА ЗАВЕРШЕНА ДЛЯ МАШИНЫ {car_id} ===")
+        return {
+            "success": True,
+            "car_id": car_id,
+            "primary_path": primary_csv_path,
+            "norms_path": norms_csv_path,
+            "rows_processed": len(raw_df),
+            "primary_rows": len(primary_df),
+            "norms_rows": len(norms_df)
+        }
+
+    except Car.DoesNotExist:
+        error_msg = f"Машина {car_id} не найдена"
+        logger.error(error_msg)
+        return {"success": False, "car_id": car_id, "error": error_msg}
+
+    except DataProvider.DoesNotExist:
+        error_msg = f"Провайдер {provider_id} не найден"
+        logger.error(error_msg)
+        return {"success": False, "car_id": car_id, "error": error_msg}
+
+    except Exception as e:
+        error_msg = f"Неожиданная ошибка при обработке машины {car_id}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return {"success": False, "car_id": car_id, "error": error_msg}
+
 
 @shared_task(
     bind=True,
@@ -554,6 +723,7 @@ def process_chunk(self, chunk_pickle: bytes, car_data_pickle: bytes, norma_data_
 
     return _timeit("process_chunk", _process)
 
+
 ##TODO: НЕ ИСПОЛЬЗУЕТСЯ
 @shared_task(
     bind=True,
@@ -689,6 +859,7 @@ def parse_cars_task(self, report_query_id):
             send_telegram_message(organization.bot_token, organization.chat_id,
                                   f"Ошибка в parse_cars_task для {report_query_id}: {e}")
         raise self.retry(exc=e)
+
 
 ##TODO: Не используется
 @shared_task(
@@ -914,6 +1085,7 @@ def save_leak_results(self, results, report_query_id):
                                   f"Ошибка в save_leak_results для {report_query_id}: {e}")
         raise self.retry(exc=e)
 
+
 ##TODO: Не используется
 @shared_task(
     bind=True,
@@ -980,6 +1152,7 @@ def check_and_process_raw_reports(self):
     except Exception as e:
         logger.error(f"Ошибка в check_and_process_raw_reports: {e}")
         raise self.retry(exc=e)
+
 
 ##TODO: Не используется
 @shared_task(
