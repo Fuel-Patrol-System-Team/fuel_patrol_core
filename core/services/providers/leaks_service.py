@@ -301,9 +301,12 @@ class LeaksService(BaseLeaksCalculator):
         ])
         logger.debug("Выполнены дополнительные расчеты")
 
+        print(df.head())
+
         df = df.with_columns([
-            ((pl.col("pos_s") / pl.lit(primary['speed_etalon'])) * pl.col("dtime")).fill_nan(0).alias("load"),
-        ])
+            ((pl.col("pos_s") / pl.lit(primary['norm_speed'])) * pl.col("dtime")).fill_nan(0).alias("load"),
+        ]
+        )
         logger.debug("Рассчитана нагрузка")
 
         df = df.with_columns(
