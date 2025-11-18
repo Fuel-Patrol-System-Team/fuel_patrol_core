@@ -61,9 +61,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
             raise e
 
     def get_car_data(
-            self,
-            start_date: Optional[datetime] = None,
-            end_date: Optional[datetime] = None
+        self, start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
     ) -> Optional[pl.DataFrame]:
         """
         Получает данные terminalMessages для конкретной машины и возвращает как polars DataFrame
@@ -72,8 +70,8 @@ class GlonassSoftDataProvider(BaseDataProvider):
             logger.error("Токен отсутствует. Выполните аутентификацию.")
             return None
 
-
         from core.models import Car
+
         try:
             car = Car.objects.get(id=self.car_id)
             vehicle_id = car.id_in_provider_system
@@ -82,17 +80,16 @@ class GlonassSoftDataProvider(BaseDataProvider):
             logger.error(f"Car with id {self.car_id} not found")
             return None
 
-
         if not end_date:
             end_date = datetime.now(pytz.UTC)
         if not start_date:
             start_date = end_date - timedelta(days=30)
 
-        logger.info(f"Получение данных для vehicle_id={vehicle_id} с {start_date} по {end_date}")
-
+        logger.info(
+            f"Получение данных для vehicle_id={vehicle_id} с {start_date} по {end_date}"
+        )
 
         periods = self._split_period(start_date, end_date)
-
 
         all_messages = self._get_data_sequential(vehicle_id, periods)
 
@@ -100,11 +97,12 @@ class GlonassSoftDataProvider(BaseDataProvider):
             logger.warning(f"Нет данных для vehicle_id={vehicle_id}")
             return None
 
-
         df = self._convert_to_dataframe(all_messages, vehicle_id)
         return df
 
-    def _split_period(self, start_date: datetime, end_date: datetime, days_per_chunk: int = 10) -> List[tuple]:
+    def _split_period(
+        self, start_date: datetime, end_date: datetime, days_per_chunk: int = 10
+    ) -> List[tuple]:
         """Разбивает период на чанки для последовательной обработки"""
         periods = []
         current_start = start_date
@@ -122,24 +120,34 @@ class GlonassSoftDataProvider(BaseDataProvider):
         logger.info(f"Разбит период на {len(periods)} чанков по {days_per_chunk} дней")
         return periods
 
-    def _get_data_sequential(self, vehicle_id: int, periods: List[tuple]) -> List[Dict[str, Any]]:
+    def _get_data_sequential(
+        self, vehicle_id: int, periods: List[tuple]
+    ) -> List[Dict[str, Any]]:
         """Последовательно получает данные за все периоды с соблюдением rate limit"""
         all_messages = []
         total_periods = len(periods)
 
         for i, (period_start, period_end) in enumerate(periods, 1):
-            logger.info(f"Обработка периода {i}/{total_periods}: {period_start} - {period_end}")
+            logger.info(
+                f"Обработка периода {i}/{total_periods}: {period_start} - {period_end}"
+            )
 
             try:
-                messages = self._get_terminal_messages_safe(vehicle_id, period_start, period_end)
+                messages = self._get_terminal_messages_safe(
+                    vehicle_id, period_start, period_end
+                )
                 if messages:
                     all_messages.extend(messages)
                     logger.info(f"Получено {len(messages)} сообщений за период")
                 else:
-                    logger.warning(f"Нет сообщений за период {period_start} - {period_end}")
+                    logger.warning(
+                        f"Нет сообщений за период {period_start} - {period_end}"
+                    )
 
             except Exception as e:
-                logger.error(f"Критическая ошибка получения данных за период {period_start} - {period_end}: {e}")
+                logger.error(
+                    f"Критическая ошибка получения данных за период {period_start} - {period_end}: {e}"
+                )
 
                 continue
 
@@ -147,10 +155,7 @@ class GlonassSoftDataProvider(BaseDataProvider):
         return all_messages
 
     def _get_terminal_messages_safe(
-            self,
-            vehicle_id: int,
-            start_date: datetime,
-            end_date: datetime
+        self, vehicle_id: int, start_date: datetime, end_date: datetime
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Безопасная версия получения terminalMessages с обработкой ошибок
@@ -159,21 +164,24 @@ class GlonassSoftDataProvider(BaseDataProvider):
             return self._get_terminal_messages(vehicle_id, start_date, end_date)
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
-                logger.error(f"Rate limit превышен для vehicle_id={vehicle_id}, пропускаем период")
+                logger.error(
+                    f"Rate limit превышен для vehicle_id={vehicle_id}, пропускаем период"
+                )
                 return None
             else:
-                logger.error(f"HTTP ошибка {e.response.status_code} для vehicle_id={vehicle_id}")
+                logger.error(
+                    f"HTTP ошибка {e.response.status_code} для vehicle_id={vehicle_id}"
+                )
                 return None
         except Exception as e:
-            logger.error(f"Общая ошибка получения данных для vehicle_id={vehicle_id}: {e}")
+            logger.error(
+                f"Общая ошибка получения данных для vehicle_id={vehicle_id}: {e}"
+            )
             return None
 
     @retry_on_status(retry_delays=[8, 15, 25], status_codes=[400, 429, 500, 502, 503])
     def _get_terminal_messages(
-            self,
-            vehicle_id: int,
-            start_date: datetime,
-            end_date: datetime
+        self, vehicle_id: int, start_date: datetime, end_date: datetime
     ) -> Optional[List[Dict[str, Any]]]:
         """Получает terminalMessages за указанный период"""
         self._enforce_rate_limit()
@@ -181,12 +189,16 @@ class GlonassSoftDataProvider(BaseDataProvider):
         url = f"{self.base_url}/terminalMessages"
         payload = {
             "vehicleId": vehicle_id,
-            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+            "from": start_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[
+                :-3
+            ],
             "to": end_date.astimezone(pytz.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
         }
         headers = {"X-Auth": self.auth_token}
 
-        logger.debug(f"Запрос данных для vehicle_id={vehicle_id}, период: {start_date} - {end_date}")
+        logger.debug(
+            f"Запрос данных для vehicle_id={vehicle_id}, период: {start_date} - {end_date}"
+        )
 
         try:
             response = requests.post(url, json=payload, headers=headers, timeout=60)
@@ -198,31 +210,33 @@ class GlonassSoftDataProvider(BaseDataProvider):
             return messages if isinstance(messages, list) else []
 
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP ошибка {e.response.status_code} для vehicle_id={vehicle_id}")
+            logger.error(
+                f"HTTP ошибка {e.response.status_code} для vehicle_id={vehicle_id}"
+            )
             raise e
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка запроса для vehicle_id={vehicle_id}: {e}")
             raise e
 
-
-    def _convert_to_dataframe(self, messages: List[Dict[str, Any]], vehicle_id: int) -> pl.DataFrame:
+    def _convert_to_dataframe(
+        self, messages: List[Dict[str, Any]], vehicle_id: int
+    ) -> pl.DataFrame:
         """Конвертирует сообщения в polars DataFrame"""
         if not messages:
             return pl.DataFrame()
 
-
         from core.models import Car, SensorsValues
+
         try:
             car = Car.objects.get(id_in_provider_system=vehicle_id)
             sensors_mapping = {
                 sv.key.key: sv.value
-                for sv in SensorsValues.objects.filter(car_id=car).select_related('key')
+                for sv in SensorsValues.objects.filter(car_id=car).select_related("key")
             }
             logger.info(f"Получен маппинг сенсоров: {len(sensors_mapping)} сенсоров")
         except Exception as e:
             logger.error(f"Ошибка получения маппинга сенсоров: {e}")
             sensors_mapping = {}
-
 
         processed_data = []
         skipped_messages = 0
@@ -241,19 +255,21 @@ class GlonassSoftDataProvider(BaseDataProvider):
             logger.warning("Нет обработанных данных для создания DataFrame")
             return pl.DataFrame()
 
-
         try:
             df = pl.DataFrame(processed_data)
 
-
-            df = df.with_columns([
-                pl.col("timestamp").str.strptime(pl.Datetime, format="%Y-%m-%dT%H:%M:%S%.fZ"),
-                pl.col("calc_sensors_fuel_level").cast(pl.Float32),
-                pl.col("pos_s").cast(pl.Float32),
-                pl.col("rpm").cast(pl.Float32),
-                pl.col("ign").cast(pl.Int8),
-                pl.col("auto").cast(pl.Categorical)
-            ])
+            df = df.with_columns(
+                [
+                    pl.col("timestamp").str.strptime(
+                        pl.Datetime, format="%Y-%m-%dT%H:%M:%S%.fZ"
+                    ),
+                    pl.col("calc_sensors_fuel_level").cast(pl.Float32),
+                    pl.col("pos_s").cast(pl.Float32),
+                    pl.col("rpm").cast(pl.Float32),
+                    pl.col("ign").cast(pl.Int8),
+                    pl.col("auto").cast(pl.Categorical),
+                ]
+            )
 
             logger.info(f"Создан DataFrame: {df.shape}, колонки: {df.columns}")
 
@@ -264,14 +280,12 @@ class GlonassSoftDataProvider(BaseDataProvider):
             return pl.DataFrame()
 
     def _extract_message_data(
-            self,
-            message: Dict[str, Any],
-            sensors_mapping: Dict[str, str],
-            car_guid: str
+        self, message: Dict[str, Any], sensors_mapping: Dict[str, str], car_guid: str
     ) -> Optional[Dict[str, Any]]:
         """Извлекает данные из сообщения по маппингу сенсоров"""
         try:
             row = {
+                # TODO: зачем latitude и longitude
                 "auto": car_guid,
                 "timestamp": message.get("deviceTime"),
                 "latitude": message.get("latitude"),
@@ -279,7 +293,6 @@ class GlonassSoftDataProvider(BaseDataProvider):
                 "satellites": message.get("satellites"),
                 "calc_sensors_voltage": message.get("voltage"),
             }
-
 
             def get_nested_value(data: dict, path: str):
                 if not path or path == "":
@@ -293,17 +306,23 @@ class GlonassSoftDataProvider(BaseDataProvider):
                         return None
                 return current
 
-
             fuel_path = sensors_mapping.get("calc_sensors_fuel_level", "")
             row["calc_sensors_fuel_level"] = get_nested_value(message, fuel_path)
 
-            row["pos_s"] = get_nested_value(message, sensors_mapping.get("speed", ""))
+            row["pos_s"] = get_nested_value(
+                message, sensors_mapping.get("speed", "speed")  # это fallback
+            )
             row["rpm"] = get_nested_value(message, sensors_mapping.get("rpm", ""))
             row["ign"] = get_nested_value(message, sensors_mapping.get("ign", ""))
-            row["mileage"] = get_nested_value(message, sensors_mapping.get("mileage", ""))
-            row["motohours"] = get_nested_value(message, sensors_mapping.get("motohours", ""))
-            row["engine_temp"] = get_nested_value(message, sensors_mapping.get("engine_temp", ""))
-
+            row["mileage"] = get_nested_value(
+                message, sensors_mapping.get("mileage", "")
+            )
+            row["motohours"] = get_nested_value(
+                message, sensors_mapping.get("motohours", "")
+            )
+            row["engine_temp"] = get_nested_value(
+                message, sensors_mapping.get("engine_temp", "")
+            )
 
             if row["ign"] is not None:
                 try:
@@ -313,7 +332,6 @@ class GlonassSoftDataProvider(BaseDataProvider):
             else:
                 row["ign"] = 0
 
-
             try:
                 amtr_x = float(message.get("amtr_x", 0) or 0)
                 amtr_y = float(message.get("amtr_y", 0) or 0)
@@ -322,8 +340,11 @@ class GlonassSoftDataProvider(BaseDataProvider):
             except (ValueError, TypeError):
                 row["amtr"] = 0
 
-
-            if row["calc_sensors_fuel_level"] is None and row["pos_s"] is None and row["rpm"] is None:
+            if (
+                row["calc_sensors_fuel_level"] is None
+                and row["pos_s"] is None
+                and row["rpm"] is None
+            ):
                 return None
 
             return row
