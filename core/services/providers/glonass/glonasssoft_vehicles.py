@@ -63,7 +63,9 @@ class GlonassSoftVehiclesProvider(BaseProvider):
             response = requests.post(url, json={}, headers=headers)
 
             if response.status_code == 429:
-                logger.warning("Rate limit достигнут при получении списка машин, повтор через 5 секунд")
+                logger.warning(
+                    "Rate limit достигнут при получении списка машин, повтор через 5 секунд"
+                )
                 time.sleep(5)
                 self._enforce_rate_limit()
                 response = requests.post(url, json={}, headers=headers)
@@ -80,7 +82,9 @@ class GlonassSoftVehiclesProvider(BaseProvider):
 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
-                logger.error("Rate limit превышен после повторной попытки получения списка машин")
+                logger.error(
+                    "Rate limit превышен после повторной попытки получения списка машин"
+                )
             logger.error(f"Ошибка при получении списка автомобилей: {e}")
             return None
         except requests.exceptions.RequestException as e:
@@ -98,7 +102,8 @@ class GlonassSoftVehiclesProvider(BaseProvider):
 
             if response.status_code == 429:
                 logger.warning(
-                    f"Rate limit достигнут при получении деталей vehicle_id={vehicle_id}, повтор через 5 секунд")
+                    f"Rate limit достигнут при получении деталей vehicle_id={vehicle_id}, повтор через 5 секунд"
+                )
                 time.sleep(5)
                 self._enforce_rate_limit()
                 response = requests.get(url, headers=headers)
@@ -111,14 +116,18 @@ class GlonassSoftVehiclesProvider(BaseProvider):
 
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 429:
-                logger.error(f"Rate limit превышен после повторной попытки для vehicle_id={vehicle_id}")
+                logger.error(
+                    f"Rate limit превышен после повторной попытки для vehicle_id={vehicle_id}"
+                )
             logger.error(f"Ошибка при получении деталей vehicleId={vehicle_id}: {e}")
             return None
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка при получении деталей vehicleId={vehicle_id}: {e}")
             return None
 
-    def _enrich_with_sensors_mapping(self, vehicle_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _enrich_with_sensors_mapping(
+        self, vehicle_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
         input_value, output_value = None, None
         sensors_mapping = {}
 
@@ -172,8 +181,8 @@ class GlonassSoftVehiclesProvider(BaseProvider):
                         sensors_mapping["rpm"] = f"parameters.{key_part}"
 
             elif (
-                    sensor_type == "MileageSensor"
-                    or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
+                sensor_type == "MileageSensor"
+                or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
             ):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
@@ -187,18 +196,14 @@ class GlonassSoftVehiclesProvider(BaseProvider):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping["engine_temp"] = (
-                            f"parameters.can{input_number}"
-                        )
+                        sensors_mapping["engine_temp"] = f"parameters.can{input_number}"
                     else:
                         sensors_mapping["engine_temp"] = f"parameters.{key_part}"
             elif sensor_type == "EngineTemperature":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping["engine_temp"] = (
-                            f"parameters.can{input_number}"
-                        )
+                        sensors_mapping["engine_temp"] = f"parameters.can{input_number}"
                     else:
                         sensors_mapping["engine_temp"] = f"parameters.{key_part}"
             elif sensor_type == "Ignition":
@@ -208,22 +213,20 @@ class GlonassSoftVehiclesProvider(BaseProvider):
                         key_part = "ign"
                     sensors_mapping["ign"] = f"parameters.{key_part}"
             elif (
-                    sensor_type == "Motohours"
-                    or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
+                sensor_type == "Motohours"
+                or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
             ):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part == "can_engine_hours":
-                        sensors_mapping["motohours"] = (
-                            f"parameters.can_engine_hours"
-                        )
+                        sensors_mapping["motohours"] = f"parameters.can_engine_hours"
                     elif key_part.startswith("can_") and input_number:
-                        sensors_mapping["motohours"] = (
-                            f"parameters.can{input_number}"
-                        )
+                        sensors_mapping["motohours"] = f"parameters.can{input_number}"
                     else:
                         sensors_mapping["motohours"] = f"parameters.{key_part}"
 
+        if "speed" is not sensors_mapping:
+            sensors_mapping["speed"] = "speed"
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
         vehicle_data["sensorsMapping"] = sensors_mapping
