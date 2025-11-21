@@ -347,7 +347,7 @@ def process_single_car_data_task(
                 auto_df=auto_df,
                 data_df=raw_df,
                 primary_df=primary_df,
-                norma_df=None,  ##TODO: Юлик, верно ли?
+                norma_df=None,  ##TODO: Юлик, верно ли? (yshipik) плохая идея в таком случае должна быть ошибка и причина в виде отсутствия норм
                 is_save_bad_data=is_save_bad_data,
                 is_filter_bad_data=True
             )

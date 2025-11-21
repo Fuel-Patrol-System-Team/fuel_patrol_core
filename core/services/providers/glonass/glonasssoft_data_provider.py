@@ -4,7 +4,7 @@ import requests
 import orjson
 import pytz
 import polars as pl
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, cast
 from datetime import datetime, timedelta
 
 from core.services.providers.data_provider_base import BaseDataProvider
@@ -22,7 +22,6 @@ class GlonassSoftDataProvider(RateLimitedProvider):
         super().__init__(metadata, car_id)
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
         self.request_count = 0
-
 
     @retry_on_status(retry_delays=[5, 10, 20], status_codes=[400, 429, 500, 502, 503])
     def authenticate(self) -> bool:
@@ -357,7 +356,13 @@ class GlonassSoftDataProvider(RateLimitedProvider):
                 "calc_sensors_voltage": float(message.get("voltage", 0) or 0),
             }
 
-            def get_nested_value(data: dict, path: str, default=0.0):
+            # TODO: проблема со сливами возника из-за этой функции (отдавала float 0 по умолчанию) хотя если в записи нет топлива,
+            # то такую запись надо отсекать.
+            # Нужно
+            # а) вынести ее куда-нибудь в другое место
+            # б) сделать тест юнит, в случае падения
+
+            def get_nested_value(data: dict, path: str, default: float | None = 0.0):
                 if not path or path == "":
                     return default
                 keys = path.split(".")
@@ -373,7 +378,7 @@ class GlonassSoftDataProvider(RateLimitedProvider):
                     return default
 
             fuel_path = sensors_mapping.get("calc_sensors_fuel_level", "")
-            row["calc_sensors_fuel_level"] = get_nested_value(message, fuel_path)
+            row["calc_sensors_fuel_level"] = get_nested_value(message, fuel_path, None)
             row["pos_s"] = get_nested_value(
                 message, sensors_mapping.get("speed", "speed")
             )
@@ -388,7 +393,9 @@ class GlonassSoftDataProvider(RateLimitedProvider):
                 message, sensors_mapping.get("engine_temp", "")
             )
 
-            ign_value = get_nested_value(message, sensors_mapping.get("ign", ""))
+            ign_value = cast(
+                float, get_nested_value(message, sensors_mapping.get("ign", ""), 0)
+            )
             row["ign"] = 1 if ign_value > 0 else 0
 
             try:
@@ -398,9 +405,9 @@ class GlonassSoftDataProvider(RateLimitedProvider):
                 row["amtr"] = int(abs(amtr_x) + abs(amtr_y) + abs(amtr_z))
             except (ValueError, TypeError):
                 row["amtr"] = 0
-
+            # TODO: зачем, насколько я знаю оно должно отскекаться алгоритмом если надо
             if (
-                row["calc_sensors_fuel_level"] == 0
+                row["calc_sensors_fuel_level"] is None
                 and row["pos_s"] == 0
                 and row["rpm"] == 0
             ):
@@ -416,7 +423,7 @@ class GlonassSoftDataProvider(RateLimitedProvider):
     def prepare_auto_data(car) -> pl.DataFrame:
         """Подготавливает auto DataFrame с дополнительными полями для утечек"""
         try:
-            ##TODO: Юлик глянь сюда
+            ##TODO: тут все ок, можно нужно убирать комментарий(yshipik)
             ign_working = True
             norm_speed = 60.0
 
