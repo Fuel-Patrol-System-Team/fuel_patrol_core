@@ -1,7 +1,12 @@
 import logging
-from typing import Dict, Any
-from core.models import DataProvider, Organization
+from typing import Dict, Any, List
+from django.utils import timezone
+from django.db import transaction
+
+from core.models import DataProvider, Organization, Car, CarBadData
+
 from core.services.providers.provider_factory import ProviderFactory
+from core.services.providers.report_service import ReportService
 from core.services.providers.vehicle_service import VehicleService
 
 logger = logging.getLogger(__name__)
@@ -15,8 +20,8 @@ class VehicleSyncService:
         self.organization = organization
         self.provider_instance = None
 
-    def sync_vehicles(self) -> Dict[str, Any]:
-        """Основной метод синхронизации"""
+    def sync_vehicles(self, report_query=None) -> Dict[str, Any]:
+        """Основной метод синхронизации с созданием отчета"""
         try:
 
             self.provider_instance = ProviderFactory.create_provider(
@@ -25,44 +30,76 @@ class VehicleSyncService:
             )
 
             if not self.provider_instance:
+                error_msg = "Не удалось создать экземпляр провайдера"
+                if report_query:
+                    ReportService.complete_report_error(report_query, error_msg)
                 return {
                     "success": False,
-                    "error": "Не удалось создать экземпляр провайдера"
+                    "error": error_msg
                 }
 
             if not self.provider_instance.authenticate():
+                error_msg = "Ошибка аутентификации у провайдера"
+                if report_query:
+                    ReportService.complete_report_error(report_query, error_msg)
                 return {
                     "success": False,
-                    "error": "Ошибка аутентификации у провайдера"
+                    "error": error_msg
                 }
 
             vehicles = self.provider_instance.get_vehicles()
             if vehicles is None:
+                error_msg = "Не удалось получить список транспортных средств"
+                if report_query:
+                    ReportService.complete_report_error(report_query, error_msg)
                 return {
                     "success": False,
-                    "error": "Не удалось получить список транспортных средств"
+                    "error": error_msg
                 }
 
-            stats = self._process_vehicles(vehicles)
+            logger.info(f"Получено {len(vehicles)} транспортных средств для обработки")
 
-            return {
+            stats = self._process_vehicles(vehicles, report_query)
+
+            result = {
                 "success": True,
                 "total_vehicles": len(vehicles),
                 "created": stats["created"],
                 "updated": stats["updated"],
-                "failed": stats["failed"]
+                "failed": stats["failed"],
+                "inactivated": stats["inactivated"]
             }
+
+            if report_query:
+                ReportService.complete_report_success(
+                    report_query,
+                    result,
+                    cars_proceed=stats["created"] + stats["updated"],
+                    cars_skipped=stats["failed"]
+                )
+
+            return result
 
         except Exception as e:
+            error_msg = f"Внутренняя ошибка сервера: {str(e)}"
             logger.error(f"Ошибка синхронизации транспортных средств: {e}")
+
+            if report_query:
+                ReportService.complete_report_error(report_query, error_msg, e)
+
             return {
                 "success": False,
-                "error": f"Внутренняя ошибка сервера: {str(e)}"
+                "error": error_msg
             }
 
-    def _process_vehicles(self, vehicles: list) -> Dict[str, int]:
-        """Обрабатывает список транспортных средств"""
-        stats = {"created": 0, "updated": 0, "failed": 0}
+    def _process_vehicles(self, vehicles: list, report_query=None) -> Dict[str, int]:
+        """Обрабатывает список транспортных средств с созданием CarBadData записей"""
+        stats = {
+            "created": 0,
+            "updated": 0,
+            "failed": 0,
+            "inactivated": 0
+        }
 
         for i, vehicle in enumerate(vehicles, 1):
             try:
@@ -80,14 +117,35 @@ class VehicleSyncService:
                     logger.warning(f"Не удалось получить детали для vehicleId={vehicle_id}")
                     continue
 
-                car, created = VehicleService.save_vehicle_to_db(vehicle_details, self.provider)
+                car, created, critical_errors = VehicleService.save_vehicle_with_validation(
+                    vehicle_details,
+                    self.provider
+                )
 
-                if created:
-                    stats["created"] += 1
-                    logger.info(f"Создан автомобиль: {car.name} (ID: {car.id})")
+                if critical_errors:
+
+                    for error in critical_errors:
+                        ReportService.create_bad_data_record(car, error, report_query)
+
+                    car.is_active = False
+                    car.save()
+                    stats["inactivated"] += 1
+
+                    logger.warning(f"Машина {car.name} деактивирована из-за ошибок: {critical_errors}")
+
+                    if created:
+                        stats["created"] += 1
+                    else:
+                        stats["updated"] += 1
+
                 else:
-                    stats["updated"] += 1
-                    logger.info(f"Обновлен автомобиль: {car.name} (ID: {car.id})")
+
+                    if created:
+                        stats["created"] += 1
+                        logger.info(f"Создан автомобиль: {car.name} (ID: {car.id})")
+                    else:
+                        stats["updated"] += 1
+                        logger.info(f"Обновлен автомобиль: {car.name} (ID: {car.id})")
 
             except Exception as e:
                 stats["failed"] += 1

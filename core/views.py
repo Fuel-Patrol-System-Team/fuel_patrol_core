@@ -3,6 +3,7 @@ from datetime import datetime
 
 import polars as pl
 import pytz
+from celery import group
 from django.db.models import Count, OuterRef, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.shortcuts import render
@@ -54,6 +55,11 @@ from core.helpers.responses import error_response, user_registered_response, att
     success_response
 from core.helpers.permissions import IsOrgMember
 from .services.data_providers.utils import provider_factory
+from .services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
+from .services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
+from .services.providers.mileage_calculation_service import MileageCalculationService
+from .services.providers.motohours_calculation_service import MotohoursCalculationService
+from .services.providers.report_service import ReportService
 from .services.providers.vehicle_sync_service import VehicleSyncService
 
 logger = logging.getLogger(__name__)
@@ -227,7 +233,7 @@ class ProviderDataRequestAPIView(APIView):
 
 class VehicleSyncAPIView(APIView):
     @swagger_auto_schema(
-        operation_description="Запускает асинхронную синхронизацию транспортных средств с провайдером",
+        operation_description="Запускает асинхронную синхронизацию транспортных средств с созданием отчета",
         request_body=VEHICLE_SYNC_SCHEMA,
         responses={
             202: "Задача синхронизации запущена",
@@ -238,16 +244,19 @@ class VehicleSyncAPIView(APIView):
     def post(self, request):
         provider_name = request.data.get('provider_name')
 
+
         if not provider_name:
-            return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Provider name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
         if not request.user.org:
-            return error_response("User must be associated with an organization", status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "User must be associated with an organization"},
+                            status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            provider = DataProvider.objects.get(name=provider_name)
+            provider = DataProvider.objects.get(name=provider_name, org_id=request.user.org)
         except DataProvider.DoesNotExist:
-            return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
+            return Response({"error": f"Provider {provider_name} not found"}, status=status.HTTP_404_NOT_FOUND)
+
 
         try:
             task = sync_vehicles_task.delay(
@@ -255,17 +264,19 @@ class VehicleSyncAPIView(APIView):
                 organization_id=str(request.user.org.id)
             )
 
-            return success_response({
+            return Response({
                 "task_id": task.id,
-                "message": "Синхронизация транспортных средств запущена",
-                "provider": provider_name
-            }, status.HTTP_202_ACCEPTED)
+                "message": "Синхронизация транспортных средств запущена с созданием отчета",
+                "provider": provider_name,
+                "report_created": True,
+                "status_endpoint": f"/api/tasks/{task.id}/status/"
+            }, status=status.HTTP_202_ACCEPTED)
 
         except Exception as e:
             logger.error(f"Ошибка запуска задачи синхронизации: {e}")
-            return error_response(
-                "Failed to start synchronization task",
-                status.HTTP_503_SERVICE_UNAVAILABLE
+            return Response(
+                {"error": "Failed to start synchronization task"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
 
@@ -286,238 +297,177 @@ class CarDataRequestAPIView(APIView):
         end_date = request.data.get('end_date')
         is_save_bad_data = request.data.get('is_save_bad_data', False)
 
+
         if not provider_name:
             return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
 
         if not car_ids:
-            return error_response("Car IDs are required", status.HTTP_400_BAD_REQUEST)
+            return error_response("Car IDs list is required and cannot be empty", status.HTTP_400_BAD_REQUEST)
 
-        if not request.user.org:
-            return error_response("User must be associated with an organization", status.HTTP_400_BAD_REQUEST)
+        if not start_date or not end_date:
+            return error_response("Start date and end date are required", status.HTTP_400_BAD_REQUEST)
 
         try:
-            provider = DataProvider.objects.get(name=provider_name, org_id=request.user.org)
+            provider = DataProvider.objects.get(name=provider_name)
         except DataProvider.DoesNotExist:
             return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
 
-        cars = Car.objects.filter(
-            id__in=car_ids,
-            data_providers=provider
+
+        try:
+            cars = Car.objects.filter(id__in=car_ids)
+            found_car_ids = set(str(car.id) for car in cars)
+            missing_car_ids = set(car_ids) - found_car_ids
+
+            if missing_car_ids:
+                return error_response(
+                    f"Some cars not found: {list(missing_car_ids)}",
+                    status.HTTP_404_NOT_FOUND
+                )
+
+        except Exception as e:
+            logger.error(f"Error checking cars existence: {e}")
+            return error_response("Error validating car IDs", status.HTTP_400_BAD_REQUEST)
+
+
+        task_group = []
+        report_query_ids = []
+        car_names = {}
+
+        try:
+            for car in cars:
+
+                report_query, report_details = ReportService.create_report(
+                    provider_id=str(provider.id),
+                    report_type=ReportQuery.ReportType.LEAKS,
+                    is_save_bad_data=is_save_bad_data
+                )
+
+
+                task = process_single_car_data_task.s(
+                    car_id=str(car.id),
+                    provider_id=str(provider.id),
+                    report_query_id=str(report_query.id),
+                    start_date=start_date,
+                    end_date=end_date
+                )
+
+                task_group.append(task)
+                report_query_ids.append(str(report_query.id))
+                car_names[str(car.id)] = car.name
+
+
+            job = group(task_group)
+            result = job.apply_async()
+
+            return success_response({
+                "task_group_id": result.id,
+                "report_query_ids": report_query_ids,
+                "total_cars": len(car_ids),
+                "car_names": car_names,
+                "message": f"Обработка данных для {len(car_ids)} машин запущена",
+                "provider_name": provider_name,
+                "status_endpoint": f"/api/tasks/{result.id}/status/",
+                "individual_status_endpoint": "/api/tasks/{task_id}/status/"
+            }, status.HTTP_202_ACCEPTED)
+
+        except Exception as e:
+            logger.error(f"Ошибка запуска задач обработки: {e}")
+
+
+            for report_query_id in report_query_ids:
+                try:
+                    report_query = ReportQuery.objects.get(id=report_query_id)
+                    ReportService.complete_report_error(
+                        report_query, f"Failed to start processing task: {str(e)}"
+                    )
+                except Exception:
+                    pass
+
+            return error_response(
+                "Failed to start processing tasks",
+                status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+
+class MileageCalculationAPIView(APIView):
+    @swagger_auto_schema(
+        operation_description="Расчет пробега для автомобиля за период с созданием отчета",
+        request_body=MILEAGE_REQUEST_SCHEMA,
+        responses={
+            200: "Успешно",
+            400: "Неверные данные",
+            401: "Ошибка аутентификации",
+            404: "Автомобиль не найден",
+            500: "Ошибка обработки"
+        }
+    )
+    def post(self, request):
+        car_id = request.data.get("car_id")
+        agg = request.data.get("agg")
+        start_date = request.data.get("start_date")
+        end_date = request.data.get("end_date")
+        is_save_bad_data = request.data.get("is_save_bad_data", True)
+
+
+        try:
+            if start_date:
+                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            if end_date:
+                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        except ValueError as e:
+            return Response({"error": f"Неверный формат даты: {e}"}, status=400)
+
+
+        result, status_code = MileageCalculationService.calculate_mileage(
+            car_id=car_id,
+            agg=agg,
+            start_date=start_date,
+            end_date=end_date,
+            is_save_bad_data=is_save_bad_data
         )
 
-        if len(cars) != len(car_ids):
-            found_ids = set(str(car.id) for car in cars)
-            missing_ids = set(car_ids) - found_ids
-            return error_response(
-                f"Some cars not found or don't belong to provider: {missing_ids}",
-                status.HTTP_404_NOT_FOUND
-            )
-
-        task_ids = []
-        for car in cars:
-            task = process_single_car_data_task.delay(
-                car_id=str(car.id),
-                provider_id=str(provider.id),
-                start_date=start_date,
-                end_date=end_date,
-                is_save_bad_data=is_save_bad_data
-            )
-            task_ids.append(task.id)
-
-        return success_response({
-            "task_ids": task_ids,
-            "message": f"Обработка данных запущена для {len(cars)} машин",
-            "total_cars": len(cars)
-        }, status.HTTP_202_ACCEPTED)
+        return Response(result, status=status_code)
 
 
-class MileageTestAPIView(APIView):
+class MotohoursCalculationAPIView(APIView):
     @swagger_auto_schema(
-        operation_description="Расчет mileage для автомобиля за период (синхронно).",
-        request_body=MILEAGE_REQUEST_SCHEMA,
+        operation_description="Расчет моточасов для автомобиля за период с созданием отчета",
+        request_body=MOTOHOURS_REQUEST_SCHEMA,
         responses={
-            200: "Результат в JSON",
+            200: "Успешно",
             400: "Неверные данные",
-            404: "Автомобиль или провайдер не найден",
+            401: "Ошибка аутентификации",
+            404: "Автомобиль не найден",
             500: "Ошибка обработки"
         }
     )
     def post(self, request):
-        serializer = MileageTestSerializer(data=request.data)
+        car_id = request.data.get("car_id")
+        agg = request.data.get("agg")
+        start_date = request.data.get("start_date")
+        end_date = request.data.get("end_date")
+        is_save_bad_data = request.data.get("is_save_bad_data", True)
 
-        if not serializer.is_valid():
-            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
-            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-        data = serializer.validated_data
-        car_id = data.get("car_id")
-        agg = data.get("agg")
-        start_date = data.get("start_date")
-        end_date = data.get("end_date")
 
+        from datetime import datetime
         try:
-            car = Car.objects.prefetch_related('data_providers').get(id=car_id)
-            provider_obj = car.data_providers.first()
-
-            if not provider_obj:
-                return Response({"error": "Нет провайдера данных для этого автомобиля."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            if start_date >= end_date:
-                return Response({"error": "start_date должна быть раньше end_date."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            try:
-                provider = provider_factory(str(int(time.time())), provider_obj.metadata)
-                if not provider:
-                    return Response({"error": "Не удалось создать провайдера"},
-                                    status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-                if not provider.authenticate():
-                    return Response({"error": "Не удалось авторизоваться"}, status=status.HTTP_401_UNAUTHORIZED)
-
-                vehicle_id = car.id_in_provider_system
-
-                parsed_data = provider.get_single_vehicle_data_in_memory(vehicle_id, start_date, end_date)
-
-                if parsed_data is None:
-                    return Response({"error": "Не удалось получить данные для указанного периода."},
-                                    status=status.HTTP_400_BAD_REQUEST)
-
-                mode = MileageModes.standart if agg is None else MileageModes.agg
-                if not parsed_data:
-                    result = make_empty_mileage_result(mode)
-                    return Response({"result": result}, status=status.HTTP_200_OK)
-
-                if parsed_data:
-                    df = pl.DataFrame(parsed_data)
-
-                    agg = 1 if agg is None else agg
-                    result = mileage_test(df.with_columns([
-                        pl.lit(str(car.id)).alias("auto"),
-                        pl.col("timestamp").cast(pl.Datetime),
-                        pl.col("mileage").cast(pl.Float64),
-                    ]), AGG_PERIOD_MINUTES=agg, regime=mode)
-
-                return Response({"result": result}, status=status.HTTP_200_OK)
-
-            except Exception as e:
-                logger.error(f"Ошибка в MileageTestAPIView для car_id={car_id}: {e}", exc_info=True)
-                return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        except Car.DoesNotExist:
-            return Response({"error": "Автомобиль не найден."}, status=status.HTTP_404_NOT_FOUND)
+            if start_date:
+                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            if end_date:
+                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError as e:
-            return Response({"error": f"Неверный формат даты: {e}"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Общая ошибка в MileageTestAPIView: {e}")
-            return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response({"error": f"Неверный формат даты: {e}"}, status=400)
 
 
-class MotohoursTestAPIView(APIView):
-    @swagger_auto_schema(
-        operation_description="Расчет моточасов для автомобиля за период (синхронно).",
-        request_body=MILEAGE_REQUEST_SCHEMA,
-        responses={
-            200: "Результат в JSON",
-            400: "Неверные данные",
-            404: "Автомобиль или провайдер не найден",
-            500: "Ошибка обработки"
-        }
-    )
-    def post(self, request):
-        serializer = MileageTestSerializer(data=request.data)
+        result, status_code = MotohoursCalculationService.calculate_motohours(
+            car_id=car_id,
+            agg=agg,
+            start_date=start_date,
+            end_date=end_date,
+            is_save_bad_data=is_save_bad_data
+        )
 
-        if not serializer.is_valid():
-            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
-            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-
-        data = serializer.validated_data
-        car_id = data.get("car_id")
-        agg = data.get("agg")
-        start_date = data.get("start_date")
-        end_date = data.get("end_date")
-
-        try:
-            car = Car.objects.prefetch_related('data_providers').get(id=car_id)
-            provider_obj = car.data_providers.first()
-
-            if not provider_obj:
-                return Response({"error": "Нет провайдера данных для этого автомобиля."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            if start_date >= end_date:
-                return Response({"error": "start_date должна быть раньше end_date."},
-                                status=status.HTTP_400_BAD_REQUEST)
-
-            try:
-                provider = provider_factory(str(int(time.time())), provider_obj.metadata)
-                if not provider:
-                    return Response({"error": "Не удалось создать провайдера"},
-                                    status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-                if not provider.authenticate():
-                    return Response({"error": "Не удалось авторизоваться"}, status=status.HTTP_401_UNAUTHORIZED)
-
-                vehicle_id = car.id_in_provider_system
-
-                parsed_data = provider.get_single_vehicle_motohours_data_in_memory(vehicle_id, start_date, end_date,
-                                                                                   str(car.id))
-
-                if parsed_data is None:
-                    return Response({"error": "Не удалось получить данные для указанного периода."},
-                                    status=status.HTTP_400_BAD_REQUEST)
-
-                if not parsed_data:
-                    result = {
-                        "motohours_start": None,
-                        "motohours_end": None,
-                        "data": [],
-                        "motohours_fraud": 0,
-                        "motohours": 0
-                    }
-                    return Response({"result": result}, status=status.HTTP_200_OK)
-
-                df = pl.DataFrame(parsed_data)
-
-                if df.is_empty():
-                    result = {
-                        "motohours_start": None,
-                        "motohours_end": None,
-                        "data": [],
-                        "motohours_fraud": 0,
-                        "motohours": 0
-                    }
-                    return Response({"result": result}, status=status.HTTP_200_OK)
-
-                if "motohours" in df.columns:
-                    motohours_non_null_count = df["motohours"].is_not_null().sum()
-                    if motohours_non_null_count == 0:
-                        df = df.drop("motohours")
-                        logger.info(f"Все значения motohours null, используем расчет по ign")
-
-                agg_period = 1 if agg is None else agg
-                result = compute_motohours(df, agg_period)
-
-                if isinstance(result, pl.DataFrame):
-                    result_data = result.to_dicts()
-                else:
-                    if isinstance(result, dict) and 'data' in result and isinstance(result['data'], pl.DataFrame):
-                        result['data'] = result['data'].to_dicts()
-                    result_data = result
-
-                return Response({"result": result_data}, status=status.HTTP_200_OK)
-
-            except Exception as e:
-                logger.error(f"Ошибка в MotohoursTestAPIView для car_id={car_id}: {e}", exc_info=True)
-                return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        except Car.DoesNotExist:
-            return Response({"error": "Автомобиль не найден."}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"error": f"Неверный формат даты: {e}"}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.error(f"Общая ошибка в MotohoursTestAPIView: {e}")
-            return Response({"error": "Внутренняя ошибка сервера."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response(result, status=status_code)
 
 
 class MediaUploadAPIView(APIView):

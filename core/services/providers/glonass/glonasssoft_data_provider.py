@@ -8,26 +8,21 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 
 from core.services.providers.data_provider_base import BaseDataProvider
+from core.services.providers.rate_limited_provider import RateLimitedProvider
 from core.services.providers.rate_limiter import GlobalRateLimiter
 from core.helpers.decorators import retry_on_status
 
 logger = logging.getLogger(__name__)
 
 
-class GlonassSoftDataProvider(BaseDataProvider):
+class GlonassSoftDataProvider(RateLimitedProvider):
     """Провайдер для получения данных terminalMessages по одной машине"""
 
     def __init__(self, metadata: Dict[str, Any], car_id: str):
         super().__init__(metadata, car_id)
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
-        self.rate_limiter = GlobalRateLimiter()
         self.request_count = 0
 
-    def _enforce_rate_limit(self) -> None:
-        """Использует глобальный rate limiter для всех запросов"""
-        self.rate_limiter.wait_for_rate_limit()
-        self.request_count += 1
-        logger.debug(f"Запрос #{self.request_count} к API")
 
     @retry_on_status(retry_delays=[5, 10, 20], status_codes=[400, 429, 500, 502, 503])
     def authenticate(self) -> bool:
@@ -421,9 +416,9 @@ class GlonassSoftDataProvider(BaseDataProvider):
     def prepare_auto_data(car) -> pl.DataFrame:
         """Подготавливает auto DataFrame с дополнительными полями для утечек"""
         try:
-            # Добавляем ign_working и norm_speed как в примере
-            ign_working = True  # Можно добавить логику определения
-            norm_speed = 60.0  # Стандартная скорость
+            ##TODO: Юлик глянь сюда
+            ign_working = True
+            norm_speed = 60.0
 
             auto_data = [
                 {

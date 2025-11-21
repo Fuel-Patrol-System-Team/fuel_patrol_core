@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, Any, Optional
-from core.services.providers.glonass.glonasssoft_vehicles import GlonassSoftVehiclesProvider
+from core.services.providers.glonass.glonasssoft_vehicles_provider import GlonassSoftVehiclesProvider
 from core.services.providers.glonass.glonasssoft_data_provider import GlonassSoftDataProvider
 
 logger = logging.getLogger(__name__)

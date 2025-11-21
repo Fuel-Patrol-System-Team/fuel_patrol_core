@@ -45,3 +45,5 @@ class GlobalRateLimiter:
                 time.sleep(sleep_time)
 
             self._last_request_time = time.time()
+
+global_rate_limiter = GlobalRateLimiter()

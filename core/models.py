@@ -126,10 +126,20 @@ class DataProvider(models.Model):
 
 
 class ReportQuery(models.Model):
+    class ReportType(models.TextChoices):
+        VEHICLES = 'vehicles', 'Синхронизация транспортных средств'
+        MILEAGE = 'mileage', 'Анализ пробега'
+        MOTOHOURS = 'motohours', 'Анализ моточасов'
+        LEAKS = 'leaks', 'Анализ утечек топлива'
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
     provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
-    is_save_bad_data = models.BooleanField(default=False)
+    is_save_bad_data = models.BooleanField(default=True)
+    report_type = models.CharField(
+        max_length=20,
+        choices=ReportType.choices,
+        default=ReportType.LEAKS
+    )
 
     class Meta:
         verbose_name = "Report Query"
@@ -143,9 +153,10 @@ class ReportQueryDetails(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     report_query = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, related_name='report_query_details')
     traceback = models.JSONField(**NULLABLE)
+    result = models.JSONField(**NULLABLE)
     start_time = models.DateTimeField(**NULLABLE)
     end_time = models.DateTimeField(**NULLABLE)
-    time_proceed = models.TimeField(**NULLABLE)
+    time_proceed = models.DurationField(**NULLABLE)
     cars_proceed = models.IntegerField(**NULLABLE)
     cars_skipped = models.IntegerField(**NULLABLE)
 

@@ -5,6 +5,8 @@ import orjson
 import pytz
 import textdistance
 from typing import Dict, Any, Optional, List
+
+from core.services.providers.rate_limited_provider import RateLimitedProvider, VehicleRateLimitedProvider
 from core.services.providers.vehicle_base import BaseProvider
 from core.services.providers.rate_limiter import GlobalRateLimiter
 from core.helpers.decorators import retry_on_status
@@ -12,17 +14,13 @@ from core.helpers.decorators import retry_on_status
 logger = logging.getLogger(__name__)
 
 
-class GlonassSoftVehiclesProvider(BaseProvider):
+class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
     """Провайдер для работы с транспортными средствами GlonassSoft"""
 
     def __init__(self, metadata: Dict[str, Any], report_query_id: str = None):
         super().__init__(metadata, report_query_id)
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
-        self.rate_limiter = GlobalRateLimiter()
 
-    def _enforce_rate_limit(self) -> None:
-        """Использует глобальный rate limiter для всех запросов"""
-        self.rate_limiter.wait_for_rate_limit()
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
     def authenticate(self) -> bool:

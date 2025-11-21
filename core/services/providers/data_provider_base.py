@@ -1,8 +1,10 @@
+import time
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 import polars as pl
 from datetime import datetime
 
+from core.services.providers.rate_limiter import global_rate_limiter
 
 class BaseDataProvider(ABC):
     """Базовый класс для провайдеров данных (terminalMessages)"""
@@ -11,6 +13,14 @@ class BaseDataProvider(ABC):
         self.metadata = metadata
         self.car_id = car_id
         self.auth_token = None
+
+    def _enforce_rate_limit(self) -> None:
+        """Применяет глобальный rate limit"""
+        if global_rate_limiter is None:
+            time.sleep(1.05)
+            return
+
+        global_rate_limiter.wait_for_rate_limit()
 
     @abstractmethod
     def authenticate(self) -> bool:

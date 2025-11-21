@@ -407,3 +407,5 @@ CAR_ACTIVE_STATUS_SCHEMA = {
         404: openapi.Response(description="Автомобиль не найден или не принадлежит организации"),
     }
 }
+
+

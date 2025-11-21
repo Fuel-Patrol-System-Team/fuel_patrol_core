@@ -15,6 +15,7 @@ class BaseProvider(ABC):
         """Аутентификация в API провайдера"""
         pass
 
+
     @abstractmethod
     def get_vehicles(self) -> Optional[List[Dict[str, Any]]]:
         """Получение списка транспортных средств"""
