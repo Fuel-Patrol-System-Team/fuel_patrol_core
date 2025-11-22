@@ -326,6 +326,7 @@ def process_single_car_data_task(
 
             ReportService.create_bad_data_record(car, error_msg, report_query)
             norms_df = None
+            return {"success": False, "car_id": car_id, "error": error_msg}
 
 
         logger.info("ЭТАП 4: Расчет утечек топлива...")
@@ -337,17 +338,6 @@ def process_single_car_data_task(
                 data_df=raw_df,
                 primary_df=primary_df,
                 norma_df=norms_df,
-                is_save_bad_data=is_save_bad_data,
-                is_filter_bad_data=True
-            )
-        else:
-
-            logger.warning("Используются базовые нормы для расчета утечек")
-            leaks_result, intermediate_df = leaks_service.compute_leaks(
-                auto_df=auto_df,
-                data_df=raw_df,
-                primary_df=primary_df,
-                norma_df=None,  ##TODO: Юлик, верно ли? (yshipik) плохая идея в таком случае должна быть ошибка и причина в виде отсутствия норм
                 is_save_bad_data=is_save_bad_data,
                 is_filter_bad_data=True
             )
