@@ -629,7 +629,7 @@ class GlonassSoftProvider:
                             )
                         else:
                             sensors_mapping["motohours"] = f"parameters.{key_part}"
-            if "speed" is not sensors_mapping:
+            if "speed" not in sensors_mapping:
                 sensors_mapping["speed"] = "speed"
             data["input"] = input_value
             data["output"] = output_value

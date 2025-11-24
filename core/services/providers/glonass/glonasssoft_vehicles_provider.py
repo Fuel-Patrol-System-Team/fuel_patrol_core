@@ -6,7 +6,10 @@ import pytz
 import textdistance
 from typing import Dict, Any, Optional, List
 
-from core.services.providers.rate_limited_provider import RateLimitedProvider, VehicleRateLimitedProvider
+from core.services.providers.rate_limited_provider import (
+    RateLimitedProvider,
+    VehicleRateLimitedProvider,
+)
 from core.services.providers.vehicle_base import BaseProvider
 from core.services.providers.rate_limiter import GlobalRateLimiter
 from core.helpers.decorators import retry_on_status
@@ -20,7 +23,6 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
     def __init__(self, metadata: Dict[str, Any], report_query_id: str = None):
         super().__init__(metadata, report_query_id)
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
-
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
     def authenticate(self) -> bool:
@@ -223,7 +225,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     else:
                         sensors_mapping["motohours"] = f"parameters.{key_part}"
 
-        if "speed" is not sensors_mapping:
+        if "speed" not in sensors_mapping:
             sensors_mapping["speed"] = "speed"
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
