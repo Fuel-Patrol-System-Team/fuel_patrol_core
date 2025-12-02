@@ -698,7 +698,6 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
         """Чистый текстовый вывод статуса службы"""
         details = obj.status_details
         if details:
-            # Используем <pre> для сохранения форматирования
             return format_html(
                 '<pre style="font-family: monospace; font-size: 12px; '
                 'background-color: #000000; color: #00ff00; padding: 10px; '
@@ -714,7 +713,6 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
         """Чистый текстовый вывод логов службы"""
         logs = obj.service_logs
         if logs:
-            # Используем <pre> для сохранения форматирования
             return format_html(
                 '<pre style="font-family: monospace; font-size: 11px; '
                 'background-color: #000000; color: #00ff00; padding: 10px; '
@@ -730,7 +728,6 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
         """Чистый текстовый вывод содержимого файла службы"""
         content = obj.service_content
         if content:
-            # Используем <pre> для сохранения форматирования
             return format_html(
                 '<pre style="font-family: monospace; font-size: 12px; '
                 'background-color: #000000; color: #00ff00; padding: 10px; '
@@ -857,7 +854,6 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
 
     actions_block.short_description = "Управление службой"
 
-    # Методы для отдельных действий остаются без изменений
     def _get_unit_service_or_404(self, pk):
         """Получить службу или вернуть 404"""
         try:
@@ -986,182 +982,170 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
+    @admin.action(description="📥 Установить выбранные службы")
+    def install_services(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.install_service()
+            results.append((unit.name, success, message))
 
-@admin.action(description="📥 Установить выбранные службы")
-def install_services(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.install_service()
-        results.append((unit.name, success, message))
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
+        if success_count:
+            messages.success(request, f"Установлено {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при установке: {failed_list}")
 
-    if success_count:
-        messages.success(request, f"Установлено {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при установке: {failed_list}")
+    @admin.action(description="🗑 Удалить выбранные службы")
+    def uninstall_services(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.uninstall_service()
+            results.append((unit.name, success, message))
 
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
-@admin.action(description="🗑 Удалить выбранные службы")
-def uninstall_services(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.uninstall_service()
-        results.append((unit.name, success, message))
+        if success_count:
+            messages.success(request, f"Удалено {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при удалении: {failed_list}")
 
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
+    @admin.action(description="🔄 Перезапустить выбранные службы")
+    def restart_services(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.restart()
+            results.append((unit.name, success, message))
 
-    if success_count:
-        messages.success(request, f"Удалено {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при удалении: {failed_list}")
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
+        if success_count:
+            messages.success(request, f"Перезапущено {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при перезапуске: {failed_list}")
 
-@admin.action(description="🔄 Перезапустить выбранные службы")
-def restart_services(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.restart()
-        results.append((unit.name, success, message))
+    @admin.action(description="⏹ Остановить выбранные службы")
+    def stop_services(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.stop()
+            results.append((unit.name, success, message))
 
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
-    if success_count:
-        messages.success(request, f"Перезапущено {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при перезапуске: {failed_list}")
+        if success_count:
+            messages.success(request, f"Остановлено {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при остановке: {failed_list}")
 
+    @admin.action(description="▶ Запустить выбранные службы")
+    def start_services(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.start()
+            results.append((unit.name, success, message))
 
-@admin.action(description="⏹ Остановить выбранные службы")
-def stop_services(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.stop()
-        results.append((unit.name, success, message))
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
+        if success_count:
+            messages.success(request, f"Запущено {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при запуске: {failed_list}")
 
-    if success_count:
-        messages.success(request, f"Остановлено {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при остановке: {failed_list}")
+    @admin.action(description="📥 Обновить конфигурацию выбранных служб")
+    def reload_services(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.reload()
+            results.append((unit.name, success, message))
 
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
-@admin.action(description="▶ Запустить выбранные службы")
-def start_services(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.start()
-        results.append((unit.name, success, message))
+        if success_count:
+            messages.success(request, f"Обновлено {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при обновлении: {failed_list}")
 
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
+    @admin.action(description="✓ Включить автозагрузку выбранных служб")
+    def enable_autostart(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.enable_autostart()
+            results.append((unit.name, success, message))
 
-    if success_count:
-        messages.success(request, f"Запущено {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при запуске: {failed_list}")
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
+        if success_count:
+            messages.success(request, f"Включена автозагрузка для {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при включении автозагрузки: {failed_list}")
 
-@admin.action(description="📥 Обновить конфигурацию выбранных служб")
-def reload_services(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.reload()
-        results.append((unit.name, success, message))
+    @admin.action(description="✗ Отключить автозагрузку выбранных служб")
+    def disable_autostart(self, request, queryset):
+        results = []
+        for unit in queryset:
+            success, message = unit.disable_autostart()
+            results.append((unit.name, success, message))
 
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
+        success_count = sum(1 for _, success, _ in results if success)
+        failed = [(name, msg) for name, success, msg in results if not success]
 
-    if success_count:
-        messages.success(request, f"Обновлено {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при обновлении: {failed_list}")
+        if success_count:
+            messages.success(request, f"Отключена автозагрузка для {success_count} служб")
+        if failed:
+            failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+            if len(failed) > 3:
+                failed_list += f" и ещё {len(failed) - 3}"
+            messages.error(request, f"Ошибка при отключении автозагрузки: {failed_list}")
 
+    def get_urls(self):
+        from django.urls import path
 
-@admin.action(description="✓ Включить автозагрузку выбранных служб")
-def enable_autostart(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.enable_autostart()
-        results.append((unit.name, success, message))
-
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
-
-    if success_count:
-        messages.success(request, f"Включена автозагрузка для {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при включении автозагрузки: {failed_list}")
-
-
-@admin.action(description="✗ Отключить автозагрузку выбранных служб")
-def disable_autostart(self, request, queryset):
-    results = []
-    for unit in queryset:
-        success, message = unit.disable_autostart()
-        results.append((unit.name, success, message))
-
-    success_count = sum(1 for _, success, _ in results if success)
-    failed = [(name, msg) for name, success, msg in results if not success]
-
-    if success_count:
-        messages.success(request, f"Отключена автозагрузка для {success_count} служб")
-    if failed:
-        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
-        if len(failed) > 3:
-            failed_list += f" и ещё {len(failed) - 3}"
-        messages.error(request, f"Ошибка при отключении автозагрузки: {failed_list}")
-
-
-def get_urls(self):
-    from django.urls import path
-
-    urls = super().get_urls()
-    custom_urls = [
-        path('<uuid:pk>/install/', self.admin_site.admin_view(self.install_service),
-             # install_service (а не install_services)
-             name='core_unitservice_install'),
-        path('<uuid:pk>/uninstall/', self.admin_site.admin_view(self.uninstall_service),  # uninstall_service
-             name='core_unitservice_uninstall'),
-        path('<uuid:pk>/restart/', self.admin_site.admin_view(self.restart_service),  # restart_service
-             name='core_unitservice_restart'),
-        path('<uuid:pk>/stop/', self.admin_site.admin_view(self.stop_service),  # stop_service
-             name='core_unitservice_stop'),
-        path('<uuid:pk>/start/', self.admin_site.admin_view(self.start_service),  # start_service
-             name='core_unitservice_start'),
-        path('<uuid:pk>/reload/', self.admin_site.admin_view(self.reload_service),  # reload_service
-             name='core_unitservice_reload'),
-        path('<uuid:pk>/enable/', self.admin_site.admin_view(self.enable_service),
-             # enable_service (а не enable_autostart)
-             name='core_unitservice_enable'),
-        path('<uuid:pk>/disable/', self.admin_site.admin_view(self.disable_service),
-             # disable_service (а не disable_autostart)
-             name='core_unitservice_disable'),
-    ]
-    return custom_urls + urls
+        urls = super().get_urls()
+        custom_urls = [
+            path('<uuid:pk>/install/', self.admin_site.admin_view(self.install_service),
+                 name='core_unitservice_install'),
+            path('<uuid:pk>/uninstall/', self.admin_site.admin_view(self.uninstall_service),
+                 name='core_unitservice_uninstall'),
+            path('<uuid:pk>/restart/', self.admin_site.admin_view(self.restart_service),
+                 name='core_unitservice_restart'),
+            path('<uuid:pk>/stop/', self.admin_site.admin_view(self.stop_service),
+                 name='core_unitservice_stop'),
+            path('<uuid:pk>/start/', self.admin_site.admin_view(self.start_service),
+                 name='core_unitservice_start'),
+            path('<uuid:pk>/reload/', self.admin_site.admin_view(self.reload_service),
+                 name='core_unitservice_reload'),
+            path('<uuid:pk>/enable/', self.admin_site.admin_view(self.enable_service),
+                 name='core_unitservice_enable'),
+            path('<uuid:pk>/disable/', self.admin_site.admin_view(self.disable_service),
+                 name='core_unitservice_disable'),
+        ]
+        return custom_urls + urls
