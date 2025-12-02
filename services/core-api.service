@@ -1,0 +1,17 @@
+[Unit]
+Description=Fuel Patrol Core API Service
+After=network.target
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/root/dev/fuel_patrol_core
+Environment="PATH=/root/.local/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/local/bin/uv run gunicorn --bind 0.0.0.0:8000 app.wsgi:application
+Restart=always
+RestartSec=3
+StandardOutput=append:/root/dev/fuel_patrol_core/logs/api.log
+StandardError=append:/root/dev/fuel_patrol_core/logs/api_error.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+[Unit]
+Description=Fuel Patrol Core Celery Beat Service
+After=network.target keydb.service
+Wants=keydb.service
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/root/dev/fuel_patrol_core
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/root/dev/fuel_patrol_core/.env
+ExecStart=/usr/local/bin/uv run celery -A app beat --loglevel=info
+Restart=always
+RestartSec=3
+StandardOutput=append:/root/dev/fuel_patrol_core/logs/celery_beat.log
+StandardError=append:/root/dev/fuel_patrol_core/logs/celery_beat_error.log
+
+[Install]
+WantedBy=multi-user.target

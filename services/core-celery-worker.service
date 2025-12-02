@@ -1,0 +1,16 @@
+[Unit]
+Description=Fuel Patrol Core Celery Worker Service
+After=network.target
+
+[Service]
+User=root
+Group=root
+WorkingDirectory=/root/dev/fuel_patrol_core
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/root/dev/fuel_patrol_core"
+ExecStart=/usr/local/bin/uv run celery -A app worker --pool=solo --loglevel=info
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

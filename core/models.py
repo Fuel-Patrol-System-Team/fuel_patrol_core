@@ -1,7 +1,10 @@
 import os
+import subprocess
 import uuid
+from pathlib import Path
 
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models.signals import post_delete
 from django.dispatch import receiver
@@ -131,6 +134,7 @@ class ReportQuery(models.Model):
         MILEAGE = 'mileage', 'Анализ пробега'
         MOTOHOURS = 'motohours', 'Анализ моточасов'
         LEAKS = 'leaks', 'Анализ утечек топлива'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
     provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
@@ -149,6 +153,7 @@ class ReportQuery(models.Model):
 
     def __str__(self):
         return f"Report {self.id}"
+
 
 class ReportQueryDetails(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -210,7 +215,6 @@ class CarReport(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
-
 
 
 class CarBadData(models.Model):
@@ -291,3 +295,287 @@ class SensorsKeyLocalization(models.Model):
 
     def __str__(self):
         return f"{self.key} - {self.language} - {self.localization}"
+
+
+## DEVOPS FEATURES
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+SERVICES_DIR = PROJECT_ROOT / 'services'
+
+class UnitService(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, verbose_name="Название")
+    service = models.CharField(
+        max_length=100,
+        verbose_name="Имя службы systemd",
+        unique=True,
+        help_text="Например: core-api, core-celery-worker"
+    )
+    description = models.TextField(verbose_name="Описание", **NULLABLE)
+    is_active = models.BooleanField(default=True, verbose_name="Активна")
+    service_filename = models.CharField(
+        max_length=255,
+        verbose_name="Имя файла службы",
+        help_text="Имя файла в папке services/ (например: core-api.service)",
+        **NULLABLE
+    )
+    auto_start = models.BooleanField(
+        default=True,
+        verbose_name="Автозагрузка",
+        help_text="Автоматически запускать службу при загрузке системы"
+    )
+
+    class Meta:
+        verbose_name = "Служба Systemd"
+        verbose_name_plural = "Службы Systemd"
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.service})"
+
+    @property
+    def service_file_path(self):
+        """Путь к файлу службы в проекте"""
+        if self.service_filename:
+            return SERVICES_DIR / self.service_filename
+        return SERVICES_DIR / f"{self.service}"
+
+    @property
+    def systemd_file_path(self):
+        """Путь к файлу службы в systemd"""
+        return f"/etc/systemd/system/{self.service}"
+
+    @property
+    def service_file_exists(self):
+        """Проверка существования файла службы в проекте"""
+        return self.service_file_path.exists()
+
+    @property
+    def service_content(self):
+        """Содержимое файла службы"""
+        try:
+            if self.service_file_exists:
+                return self.service_file_path.read_text()
+        except Exception:
+            pass
+        return None
+
+    @property
+    def logs(self):
+        """Получение логов службы"""
+        try:
+            result = subprocess.run(
+                f'systemctl status {self.service} --no-pager',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=3
+            )
+            return result.stdout or result.stderr
+        except subprocess.TimeoutExpired:
+            return "Таймаут при получении статуса"
+        except Exception as e:
+            return f"Ошибка: {str(e)}"
+
+    @property
+    def status(self):
+        """Получение статуса службы"""
+        try:
+            result = subprocess.run(
+                f'systemctl is-active {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            return result.stdout.strip()
+        except Exception:
+            return "unknown"
+
+    @property
+    def is_running(self):
+        """Проверка, запущена ли служба"""
+        return self.status == 'active'
+
+    @property
+    def is_enabled(self):
+        """Проверка, включена ли автозагрузка"""
+        try:
+            result = subprocess.run(
+                f'systemctl is-enabled {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            return result.stdout.strip() == 'enabled'
+        except Exception:
+            return False
+
+    def clean(self):
+        """Валидация"""
+        super().clean()
+
+        if not self.service.endswith('.service'):
+            self.service = f"{self.service}.service"
+
+    def install_service(self):
+        """Установка службы в systemd"""
+        if not self.service_file_exists:
+            return False, f"Файл службы не найден: {self.service_file_path}"
+
+        try:
+            content = self.service_file_path.read_text()
+
+            with open(self.systemd_file_path, 'w') as f:
+                f.write(content)
+
+            subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
+
+            if self.auto_start:
+                subprocess.run(['systemctl', 'enable', self.service],
+                               check=True, timeout=5)
+
+            return True, f"Служба установлена"
+
+        except Exception as e:
+            return False, f"Ошибка: {str(e)}"
+
+    def uninstall_service(self):
+        """Удаление службы из systemd"""
+        try:
+            subprocess.run(['systemctl', 'disable', self.service],
+                           capture_output=True, text=True, timeout=5)
+
+            subprocess.run(['systemctl', 'stop', self.service],
+                           capture_output=True, text=True, timeout=5)
+
+            if os.path.exists(self.systemd_file_path):
+                os.remove(self.systemd_file_path)
+
+            subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
+
+            return True, f"Служба удалена"
+
+        except Exception as e:
+            return False, f"Ошибка: {str(e)}"
+
+    def restart(self):
+        """Перезапуск службы"""
+        try:
+            if not os.path.exists(self.systemd_file_path):
+                success, message = self.install_service()
+                if not success:
+                    return False, f"Не удалось установить: {message}"
+
+            result = subprocess.run(
+                f'systemctl restart {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10
+            )
+            return True, "Служба перезапущена"
+        except subprocess.CalledProcessError as e:
+            return False, e.stderr or "Ошибка перезапуска"
+        except Exception as e:
+            return False, str(e)
+
+    def stop(self):
+        """Остановка службы"""
+        try:
+            result = subprocess.run(
+                f'systemctl stop {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10
+            )
+            return True, "Служба остановлена"
+        except subprocess.CalledProcessError as e:
+            return False, e.stderr or "Ошибка остановки"
+        except Exception as e:
+            return False, str(e)
+
+    def start(self):
+        """Запуск службы"""
+        try:
+            if not os.path.exists(self.systemd_file_path):
+                success, message = self.install_service()
+                if not success:
+                    return False, f"Не удалось установить: {message}"
+
+            result = subprocess.run(
+                f'systemctl start {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=10
+            )
+            return True, "Служба запущена"
+        except subprocess.CalledProcessError as e:
+            return False, e.stderr or "Ошибка запуска"
+        except Exception as e:
+            return False, str(e)
+
+    def reload(self):
+        """Обновление конфигурации службы"""
+        try:
+            if self.service_file_exists:
+                content = self.service_file_path.read_text()
+                with open(self.systemd_file_path, 'w') as f:
+                    f.write(content)
+
+            subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
+
+            if self.is_running:
+                result = subprocess.run(
+                    f'systemctl restart {self.service}',
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=10
+                )
+                return True, "Конфигурация обновлена и служба перезапущена"
+            else:
+                return True, "Конфигурация обновлена"
+
+        except Exception as e:
+            return False, str(e)
+
+    def enable_autostart(self):
+        """Включение автозагрузки"""
+        try:
+            result = subprocess.run(
+                f'systemctl enable {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5
+            )
+            self.auto_start = True
+            self.save()
+            return True, "Автозагрузка включена"
+        except Exception as e:
+            return False, str(e)
+
+    def disable_autostart(self):
+        """Отключение автозагрузки"""
+        try:
+            result = subprocess.run(
+                f'systemctl disable {self.service}',
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5
+            )
+            self.auto_start = False
+            self.save()
+            return True, "Автозагрузка отключена"
+        except Exception as e:
+            return False, str(e)
