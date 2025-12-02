@@ -298,7 +298,7 @@ class SensorsKeyLocalization(models.Model):
 
 
 ## DEVOPS FEATURES
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVICES_DIR = PROJECT_ROOT / 'services'
 
 class UnitService(models.Model):
@@ -322,6 +322,11 @@ class UnitService(models.Model):
         default=True,
         verbose_name="Автозагрузка",
         help_text="Автоматически запускать службу при загрузке системы"
+    )
+    restart_on_failure = models.BooleanField(
+        default=True,
+        verbose_name="Перезапуск при ошибке",
+        help_text="Автоматически перезапускать службу при сбое"
     )
 
     class Meta:
@@ -360,25 +365,8 @@ class UnitService(models.Model):
         return None
 
     @property
-    def logs(self):
-        """Получение логов службы"""
-        try:
-            result = subprocess.run(
-                f'systemctl status {self.service} --no-pager',
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=3
-            )
-            return result.stdout or result.stderr
-        except subprocess.TimeoutExpired:
-            return "Таймаут при получении статуса"
-        except Exception as e:
-            return f"Ошибка: {str(e)}"
-
-    @property
     def status(self):
-        """Получение статуса службы"""
+        """Получение чистого статуса службы"""
         try:
             result = subprocess.run(
                 f'systemctl is-active {self.service}',
@@ -390,6 +378,40 @@ class UnitService(models.Model):
             return result.stdout.strip()
         except Exception:
             return "unknown"
+
+    @property
+    def status_details(self):
+        """Детальный статус службы (как в systemctl status)"""
+        try:
+            result = subprocess.run(
+                f'systemctl status {self.service} --no-pager',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.stdout if result.stdout else result.stderr
+        except subprocess.TimeoutExpired:
+            return "Таймаут при получении статуса"
+        except Exception as e:
+            return f"Ошибка: {str(e)}"
+
+    @property
+    def service_logs(self):
+        """Получение последних логов службы (100 записей)"""
+        try:
+            result = subprocess.run(
+                f'journalctl -u {self.service} -n 100 --no-pager',
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            return result.stdout if result.stdout else result.stderr
+        except subprocess.TimeoutExpired:
+            return "Таймаут при получении логов"
+        except Exception as e:
+            return f"Ошибка: {str(e)}"
 
     @property
     def is_running(self):
@@ -432,8 +454,7 @@ class UnitService(models.Model):
             subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
 
             if self.auto_start:
-                subprocess.run(['systemctl', 'enable', self.service],
-                               check=True, timeout=5)
+                subprocess.run(['systemctl', 'enable', self.service], check=True, timeout=5)
 
             return True, f"Служба установлена"
 

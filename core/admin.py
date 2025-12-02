@@ -21,7 +21,6 @@ from core.models import (
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails, UnitService
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
-from core.widgets.widgets import format_logs_display
 
 admin.site.unregister(PeriodicTask)
 admin.site.unregister(IntervalSchedule)
@@ -123,7 +122,7 @@ class ReportQueryDetailsInline(admin.TabularInline):
     extra = 0
     fields = ('start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
     readonly_fields = (
-    'start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
+        'start_time', 'end_time', 'time_proceed_display', 'cars_proceed', 'cars_skipped', 'traceback_preview')
     verbose_name = "Детали выполнения"
     verbose_name_plural = "Детали выполнения"
     can_delete = False
@@ -185,7 +184,7 @@ class LanguageAdmin(ImportExportMixin, ModelAdmin):
 @admin.register(OrgUser)
 class OrgUserAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
-    'id', 'username', 'organization_display', 'email', 'active_language_display', 'is_active', 'last_login')
+        'id', 'username', 'organization_display', 'email', 'active_language_display', 'is_active', 'last_login')
     list_filter = ('org', 'is_active', 'is_staff', 'active_language')
     search_fields = ('username', 'org__name', 'email')
     ordering = ('username',)
@@ -611,8 +610,8 @@ class ClockedScheduleAdmin(BaseClockedScheduleAdmin, ModelAdmin):
     list_display = ('clocked_time',)
     search_fields = ('clocked_time',)
 
-##DEVOPS FEATURES
 
+##DEVOPS FEATURES
 @admin.register(UnitService)
 class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
@@ -623,9 +622,10 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
         'file_exists_display',
         'actions_display'
     )
-    list_filter = ('is_active', 'auto_start')
+    list_filter = ('is_active', 'auto_start', 'restart_on_failure')
     search_fields = ('name', 'service', 'description')
     ordering = ('name',)
+    list_per_page = 25
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
 
@@ -642,10 +642,11 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
 
     readonly_fields = (
         'status_display',
-        'logs_display',
-        'actions_preview',
-        'file_info_display',
-        'service_content_display'
+        'status_details_display',
+        'service_logs_display',
+        'service_content_display',
+        'actions_block',
+        'file_info_display'
     )
 
     fieldsets = (
@@ -656,109 +657,136 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
             'fields': ('auto_start', 'restart_on_failure'),
             'classes': ('collapse',)
         }),
-        ('Информация о файле', {
+        ('Файл службы', {
             'fields': ('file_info_display', 'service_content_display'),
         }),
+        ('Статус службы', {
+            'fields': ('status_display', 'status_details_display'),
+        }),
+        ('Логи службы (последние 100 записей)', {
+            'fields': ('service_logs_display',),
+            'classes': ('collapse',)
+        }),
         ('Управление', {
-            'fields': ('status_display', 'actions_preview', 'logs_display'),
-            'classes': ('wide',)
+            'fields': ('actions_block',),
         }),
     )
 
     def status_display(self, obj):
-        """Отображение статуса службы с цветом"""
+        """Отображение статуса службы"""
         status = obj.status
         if status == 'active':
-            color = 'green'
-            icon = '🟢'
-            text = 'Активна'
-        elif status == 'inactive':
-            color = 'gray'
-            icon = '⚪'
-            text = 'Неактивна'
-        elif status == 'failed':
-            color = 'red'
-            icon = '🔴'
-            text = 'Ошибка'
-        else:
-            color = 'orange'
-            icon = '🟡'
-            text = status
-
-        return format_html(
-            '<span style="color: {}; font-weight: bold;">{} {}</span>',
-            color, icon, text
-        )
-
-    status_display.short_description = "Статус"
-
-    def autostart_display(self, obj):
-        """Отображение статуса автозагрузки"""
-        if obj.is_enabled:
             return format_html(
-                '<span style="color: green; font-weight: bold;">✓ Включена</span>'
+                '<span style="color: #00ff00; font-weight: bold;">● Активна</span>'
+            )
+        elif status == 'inactive':
+            return format_html(
+                '<span style="color: #cccccc;">○ Неактивна</span>'
+            )
+        elif status == 'failed':
+            return format_html(
+                '<span style="color: #ff0000;">✗ Ошибка</span>'
             )
         else:
             return format_html(
-                '<span style="color: gray;">✗ Выключена</span>'
+                f'<span style="color: #ff9900;">? {status}</span>'
+            )
+
+    status_display.short_description = "Статус"
+
+    def status_details_display(self, obj):
+        """Чистый текстовый вывод статуса службы"""
+        details = obj.status_details
+        if details:
+            # Используем <pre> для сохранения форматирования
+            return format_html(
+                '<pre style="font-family: monospace; font-size: 12px; '
+                'background-color: #000000; color: #00ff00; padding: 10px; '
+                'border-radius: 3px; max-height: 300px; overflow-y: auto; '
+                'line-height: 1.3; white-space: pre;">{}</pre>',
+                details
+            )
+        return "Статус недоступен"
+
+    status_details_display.short_description = "Детали статуса (systemctl status)"
+
+    def service_logs_display(self, obj):
+        """Чистый текстовый вывод логов службы"""
+        logs = obj.service_logs
+        if logs:
+            # Используем <pre> для сохранения форматирования
+            return format_html(
+                '<pre style="font-family: monospace; font-size: 11px; '
+                'background-color: #000000; color: #00ff00; padding: 10px; '
+                'border-radius: 3px; max-height: 500px; overflow-y: auto; '
+                'line-height: 1.2; white-space: pre;">{}</pre>',
+                logs
+            )
+        return "Логи недоступны"
+
+    service_logs_display.short_description = "Логи службы"
+
+    def service_content_display(self, obj):
+        """Чистый текстовый вывод содержимого файла службы"""
+        content = obj.service_content
+        if content:
+            # Используем <pre> для сохранения форматирования
+            return format_html(
+                '<pre style="font-family: monospace; font-size: 12px; '
+                'background-color: #000000; color: #00ff00; padding: 10px; '
+                'border-radius: 3px; max-height: 400px; overflow-y: auto; '
+                'line-height: 1.3; white-space: pre;">{}</pre>',
+                content
+            )
+        return "Файл не найден"
+
+    service_content_display.short_description = "Содержимое файла службы"
+
+    def autostart_display(self, obj):
+        """Простое отображение статуса автозагрузки"""
+        if obj.is_enabled:
+            return format_html(
+                '<span style="color: #00ff00;">● Вкл.</span>'
+            )
+        else:
+            return format_html(
+                '<span style="color: #cccccc;">○ Выкл.</span>'
             )
 
     autostart_display.short_description = "Автозагрузка"
 
     def file_exists_display(self, obj):
-        """Отображение статуса файла"""
+        """Простое отображение статуса файла"""
         if obj.service_file_exists:
             return format_html(
-                '<span style="color: green;">✓ {}</span>',
-                obj.service_filename or obj.service
+                '<span style="color: #00ff00;">✓ Файл</span>'
             )
         else:
             return format_html(
-                '<span style="color: red;">✗ Файл не найден</span>'
+                '<span style="color: #ff0000;">✗ Файл</span>'
             )
 
-    file_exists_display.short_description = "Файл службы"
-
-    def logs_display(self, obj):
-        """Отображение логов службы"""
-        logs = obj.logs
-        return format_logs_display(logs)
-
-    logs_display.short_description = "Логи и статус"
-
-    def service_content_display(self, obj):
-        """Отображение содержимого файла службы"""
-        content = obj.service_content
-        if content:
-            # Подсветка синтаксиса (простая)
-            highlighted = content.replace('[', '<strong style="color: #007acc;">[')
-            highlighted = highlighted.replace(']', ']</strong>')
-            highlighted = highlighted.replace('\n', '<br>')
-
-            return format_html(
-                '<div style="font-family: monospace; font-size: 12px; background: #f8f8f8; padding: 10px; border: 1px solid #ddd; border-radius: 5px; max-height: 300px; overflow-y: auto;">{}</div>',
-                highlighted
-            )
-        return "Содержимое файла недоступно"
-
-    service_content_display.short_description = "Содержимое файла службы"
+    file_exists_display.short_description = "Файл"
 
     def file_info_display(self, obj):
-        """Информация о файлах службы"""
+        """Простая информация о файлах службы"""
         info = []
 
         if obj.service_file_exists:
-            info.append(f"<strong>Файл в проекте:</strong> {obj.service_file_path}")
-            info.append(f"<strong>Размер:</strong> {obj.service_file_path.stat().st_size} байт")
+            size = obj.service_file_path.stat().st_size
+            info.append(
+                f"<strong>Файл в проекте:</strong><br><code style='color: #00ff00;'>{obj.service_file_path}</code><br>Размер: {size} байт")
         else:
-            info.append(f"<span style='color: red;'><strong>Файл не найден:</strong> {obj.service_file_path}</span>")
+            info.append(
+                f"<span style='color: #ff0000;'><strong>Файл не найден:</strong><br><code>{obj.service_file_path}</code></span>")
 
-        info.append(f"<strong>Файл в systemd:</strong> {obj.systemd_file_path}")
+        info.append(
+            f"<br><strong>Файл в systemd:</strong><br><code style='color: #00ff00;'>{obj.systemd_file_path}</code>")
 
         if os.path.exists(obj.systemd_file_path):
-            info.append(f"<span style='color: green;'>✓ Установлен в systemd</span>")
+            info.append("<span style='color: #00ff00;'>● Установлен</span>")
         else:
-            info.append(f"<span style='color: orange;'>⚠ Не установлен в systemd</span>")
+            info.append("<span style='color: #ff9900;'>○ Не установлен</span>")
 
         return format_html('<br>'.join(info))
 
@@ -766,401 +794,374 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
 
     def actions_display(self, obj):
         """Кнопки действий в списке"""
-        install_url = reverse('admin:core_unitservice_install', args=[obj.pk])
-        restart_url = reverse('admin:core_unitservice_restart', args=[obj.pk])
-        stop_url = reverse('admin:core_unitservice_stop', args=[obj.pk])
-        start_url = reverse('admin:core_unitservice_start', args=[obj.pk])
+        actions = [
+            ('install', 'Уст.', '#9C27B0'),
+            ('start', '▶', '#4CAF50'),
+            ('stop', '⏹', '#F44336'),
+            ('restart', '↻', '#2196F3'),
+        ]
 
-        return format_html('''
-            <div style="display: flex; gap: 3px; flex-wrap: wrap;">
-                <a href="{}" class="button" style="background: #9C27B0; color: white; padding: 2px 6px; border-radius: 3px; text-decoration: none; font-size: 11px;">Установить</a>
-                <a href="{}" class="button" style="background: #4CAF50; color: white; padding: 2px 6px; border-radius: 3px; text-decoration: none; font-size: 11px;">Запуск</a>
-                <a href="{}" class="button" style="background: #f44336; color: white; padding: 2px 6px; border-radius: 3px; text-decoration: none; font-size: 11px;">Стоп</a>
-                <a href="{}" class="button" style="background: #2196F3; color: white; padding: 2px 6px; border-radius: 3px; text-decoration: none; font-size: 11px;">Рестарт</a>
-            </div>
-        ''', install_url, start_url, stop_url, restart_url)
+        buttons = []
+        for action, label, color in actions:
+            url = reverse(f'admin:core_unitservice_{action}', args=[obj.pk])
+            buttons.append(
+                f'<a href="{url}" '
+                f'style="display: inline-block; background: {color}; color: white; '
+                f'padding: 3px 6px; margin: 0 1px; border-radius: 2px; '
+                f'text-decoration: none; font-size: 11px; font-weight: bold; '
+                f'min-width: 20px; text-align: center;">{label}</a>'
+            )
+
+        return format_html(''.join(buttons))
 
     actions_display.short_description = "Действия"
 
-    def actions_preview(self, obj):
+    def actions_block(self, obj):
         """Блок действий на странице редактирования"""
-        install_url = reverse('admin:core_unitservice_install', args=[obj.pk])
-        uninstall_url = reverse('admin:core_unitservice_uninstall', args=[obj.pk])
-        restart_url = reverse('admin:core_unitservice_restart', args=[obj.pk])
-        stop_url = reverse('admin:core_unitservice_stop', args=[obj.pk])
-        start_url = reverse('admin:core_unitservice_start', args=[obj.pk])
-        reload_url = reverse('admin:core_unitservice_reload', args=[obj.pk])
-        enable_url = reverse('admin:core_unitservice_enable', args=[obj.pk])
-        disable_url = reverse('admin:core_unitservice_disable', args=[obj.pk])
+        actions = [
+            ('install', '📥 Установить', '#9C27B0'),
+            ('uninstall', '🗑 Удалить', '#607D8B'),
+            ('start', '▶ Запустить', '#4CAF50'),
+            ('stop', '⏹ Остановить', '#F44336'),
+            ('restart', '🔄 Перезапустить', '#2196F3'),
+            ('reload', '📥 Обновить конфиг', '#FF9800'),
+            ('enable', '✓ Вкл. автозагрузку', '#8BC34A'),
+            ('disable', '✗ Выкл. автозагрузку', '#FF5722'),
+        ]
 
-        return format_html('''
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 15px 0;">
-                <a href="{}" class="button" style="background: #9C27B0; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">📥 Установить</a>
-                <a href="{}" class="button" style="background: #607D8B; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">🗑 Удалить</a>
-                <a href="{}" class="button" style="background: #4CAF50; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">▶ Запустить</a>
-                <a href="{}" class="button" style="background: #f44336; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">⏹ Остановить</a>
-                <a href="{}" class="button" style="background: #2196F3; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">🔄 Перезапустить</a>
-                <a href="{}" class="button" style="background: #FF9800; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">📥 Обновить</a>
-                <a href="{}" class="button" style="background: #8BC34A; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">✓ Вкл. автозагрузку</a>
-                <a href="{}" class="button" style="background: #FF5722; color: white; padding: 10px; border-radius: 5px; text-decoration: none; font-weight: bold; text-align: center;">✗ Выкл. автозагрузку</a>
-            </div>
-            <p style="color: #666; font-size: 12px; margin-top: 5px;">
-                Изменения вступают в силу немедленно. Логи обновятся через несколько секунд.
-            </p>
-        ''', install_url, uninstall_url, start_url, stop_url, restart_url, reload_url, enable_url, disable_url)
+        buttons_html = []
+        for action, title, color in actions:
+            url = reverse(f'admin:core_unitservice_{action}', args=[obj.pk])
+            buttons_html.append(
+                f'<a href="{url}" '
+                f'style="display: block; background: {color}; color: white; '
+                f'padding: 10px; border-radius: 4px; text-decoration: none; '
+                f'text-align: center; margin-bottom: 8px; font-weight: bold; '
+                f'transition: opacity 0.2s;" '
+                f'onmouseover="this.style.opacity=\'0.8\'" '
+                f'onmouseout="this.style.opacity=\'1\'">{title}</a>'
+            )
 
-    actions_preview.short_description = "Быстрые действия"
+        grid_html = f'''
+                <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; margin: 15px 0;">
+                    {''.join(buttons_html)}
+                </div>
+                <div style="padding: 10px; background: #222; color: #0f0; border-radius: 3px; font-size: 12px; font-family: monospace;">
+                    $ Действия выполняются немедленно<br>
+                    $ Используйте "Обновить конфиг" после изменения файла<br>
+                    $ Логи обновятся через несколько секунд
+                </div>
+            '''
 
+        return mark_safe(grid_html)
+
+    actions_block.short_description = "Управление службой"
+
+    # Методы для отдельных действий остаются без изменений
+    def _get_unit_service_or_404(self, pk):
+        """Получить службу или вернуть 404"""
+        try:
+            return UnitService.objects.get(pk=pk)
+        except UnitService.DoesNotExist:
+            messages.error(self.request, "Служба не найдена") if self.request else None
+            return None
 
     def install_service(self, request, pk):
         """Установка конкретной службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.install_service()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Служба {unit.name} успешно установлена")
-            else:
-                messages.error(request, f"Ошибка при установке службы {unit.name}: {message}")
+        success, message = unit.install_service()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Служба '{unit.name}' установлена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def uninstall_service(self, request, pk):
         """Удаление конкретной службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.uninstall_service()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Служба {unit.name} успешно удалена")
-            else:
-                messages.error(request, f"Ошибка при удалении службы {unit.name}: {message}")
+        success, message = unit.uninstall_service()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Служба '{unit.name}' удалена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def restart_service(self, request, pk):
         """Перезапуск конкретной службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.restart()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Служба {unit.name} успешно перезапущена")
-            else:
-                messages.error(request, f"Ошибка при перезапуске службы {unit.name}: {message}")
+        success, message = unit.restart()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Служба '{unit.name}' перезапущена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def stop_service(self, request, pk):
         """Остановка конкретной службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.stop()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Служба {unit.name} успешно остановлена")
-            else:
-                messages.error(request, f"Ошибка при остановке службы {unit.name}: {message}")
+        success, message = unit.stop()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Служба '{unit.name}' остановлена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def start_service(self, request, pk):
         """Запуск конкретной службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.start()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Служба {unit.name} успешно запущена")
-            else:
-                messages.error(request, f"Ошибка при запуске службы {unit.name}: {message}")
+        success, message = unit.start()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Служба '{unit.name}' запущена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def reload_service(self, request, pk):
         """Обновление конфигурации службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.reload()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Конфигурация службы {unit.name} успешно обновлена")
-            else:
-                messages.error(request, f"Ошибка при обновлении службы {unit.name}: {message}")
+        success, message = unit.reload()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Конфигурация службы '{unit.name}' обновлена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def enable_service(self, request, pk):
         """Включение автозагрузки службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.enable_autostart()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Автозагрузка службы {unit.name} включена")
-            else:
-                messages.error(request, f"Ошибка при включении автозагрузки {unit.name}: {message}")
+        success, message = unit.enable_autostart()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Автозагрузка службы '{unit.name}' включена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
     def disable_service(self, request, pk):
         """Отключение автозагрузки службы"""
-        try:
-            unit = UnitService.objects.get(pk=pk)
-            success, message = unit.disable_autostart()
+        unit = self._get_unit_service_or_404(pk)
+        if not unit:
+            return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-            if success:
-                messages.success(request, f"Автозагрузка службы {unit.name} отключена")
-            else:
-                messages.error(request, f"Ошибка при отключении автозагрузки {unit.name}: {message}")
+        success, message = unit.disable_autostart()
 
-        except UnitService.DoesNotExist:
-            messages.error(request, "Служба не найдена")
-        except Exception as e:
-            messages.error(request, f"Ошибка: {str(e)}")
+        if success:
+            messages.success(request, f"Автозагрузка службы '{unit.name}' отключена")
+        else:
+            messages.error(request, f"Ошибка: {message}")
 
         return redirect(request.META.get('HTTP_REFERER', 'admin:index'))
 
-    # Массовые действия
 
-    @admin.action(description="Установить выбранные службы")
-    def install_services(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
+@admin.action(description="📥 Установить выбранные службы")
+def install_services(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.install_service()
+        results.append((unit.name, success, message))
 
-        for unit in queryset:
-            try:
-                success, message = unit.install_service()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
 
-        if success_count > 0:
-            messages.success(request, f"Успешно установлено {success_count} служб")
-        if error_count > 0:
-            messages.error(request, f"Ошибка при установке {error_count} служб: {', '.join(errors[:3])}")
+    if success_count:
+        messages.success(request, f"Установлено {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при установке: {failed_list}")
 
-    @admin.action(description="Удалить выбранные службы")
-    def uninstall_services(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
 
-        for unit in queryset:
-            try:
-                success, message = unit.uninstall_service()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
+@admin.action(description="🗑 Удалить выбранные службы")
+def uninstall_services(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.uninstall_service()
+        results.append((unit.name, success, message))
 
-        if success_count > 0:
-            messages.success(request, f"Успешно удалено {success_count} служб")
-        if error_count > 0:
-            messages.error(request, f"Ошибка при удалении {error_count} служб: {', '.join(errors[:3])}")
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
 
-    @admin.action(description="Перезапустить выбранные службы")
-    def restart_services(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
+    if success_count:
+        messages.success(request, f"Удалено {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при удалении: {failed_list}")
 
-        for unit in queryset:
-            try:
-                success, message = unit.restart()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
 
-        if success_count > 0:
-            messages.success(request, f"Успешно перезапущено {success_count} служб")
-        if error_count > 0:
-            messages.error(request, f"Ошибка при перезапуске {error_count} служб: {', '.join(errors[:3])}")
+@admin.action(description="🔄 Перезапустить выбранные службы")
+def restart_services(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.restart()
+        results.append((unit.name, success, message))
 
-    @admin.action(description="Остановить выбранные службы")
-    def stop_services(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
 
-        for unit in queryset:
-            try:
-                success, message = unit.stop()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
+    if success_count:
+        messages.success(request, f"Перезапущено {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при перезапуске: {failed_list}")
 
-        if success_count > 0:
-            messages.success(request, f"Успешно остановлено {success_count} служб")
-        if error_count > 0:
-            messages.error(request, f"Ошибка при остановке {error_count} служб: {', '.join(errors[:3])}")
 
-    @admin.action(description="Запустить выбранные службы")
-    def start_services(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
+@admin.action(description="⏹ Остановить выбранные службы")
+def stop_services(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.stop()
+        results.append((unit.name, success, message))
 
-        for unit in queryset:
-            try:
-                success, message = unit.start()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
 
-        if success_count > 0:
-            messages.success(request, f"Успешно запущено {success_count} служб")
-        if error_count > 0:
-            messages.error(request, f"Ошибка при запуске {error_count} служб: {', '.join(errors[:3])}")
+    if success_count:
+        messages.success(request, f"Остановлено {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при остановке: {failed_list}")
 
-    @admin.action(description="Обновить конфигурацию выбранных служб")
-    def reload_services(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
 
-        for unit in queryset:
-            try:
-                success, message = unit.reload()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
+@admin.action(description="▶ Запустить выбранные службы")
+def start_services(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.start()
+        results.append((unit.name, success, message))
 
-        if success_count > 0:
-            messages.success(request, f"Успешно обновлено {success_count} служб")
-        if error_count > 0:
-            messages.error(request, f"Ошибка при обновлении {error_count} служб: {', '.join(errors[:3])}")
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
 
-    @admin.action(description="Включить автозагрузку выбранных служб")
-    def enable_autostart(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
+    if success_count:
+        messages.success(request, f"Запущено {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при запуске: {failed_list}")
 
-        for unit in queryset:
-            try:
-                success, message = unit.enable_autostart()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
 
-        if success_count > 0:
-            messages.success(request, f"Успешно включена автозагрузка для {success_count} служб")
-        if error_count > 0:
-            messages.error(request,
-                           f"Ошибка при включении автозагрузки для {error_count} служб: {', '.join(errors[:3])}")
+@admin.action(description="📥 Обновить конфигурацию выбранных служб")
+def reload_services(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.reload()
+        results.append((unit.name, success, message))
 
-    @admin.action(description="Отключить автозагрузку выбранных служб")
-    def disable_autostart(self, request, queryset):
-        success_count = 0
-        error_count = 0
-        errors = []
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
 
-        for unit in queryset:
-            try:
-                success, message = unit.disable_autostart()
-                if success:
-                    success_count += 1
-                else:
-                    error_count += 1
-                    errors.append(f"{unit.name}: {message}")
-            except Exception as e:
-                error_count += 1
-                errors.append(f"{unit.name}: {str(e)}")
+    if success_count:
+        messages.success(request, f"Обновлено {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при обновлении: {failed_list}")
 
-        if success_count > 0:
-            messages.success(request, f"Успешно отключена автозагрузка для {success_count} служб")
-        if error_count > 0:
-            messages.error(request,
-                           f"Ошибка при отключении автозагрузки для {error_count} служб: {', '.join(errors[:3])}")
 
-    # URL для отдельных действий
-    def get_urls(self):
-        from django.urls import path
+@admin.action(description="✓ Включить автозагрузку выбранных служб")
+def enable_autostart(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.enable_autostart()
+        results.append((unit.name, success, message))
 
-        urls = super().get_urls()
-        custom_urls = [
-            path('<uuid:pk>/install/', self.admin_site.admin_view(self.install_service),
-                 name='core_unitservice_install'),
-            path('<uuid:pk>/uninstall/', self.admin_site.admin_view(self.uninstall_service),
-                 name='core_unitservice_uninstall'),
-            path('<uuid:pk>/restart/', self.admin_site.admin_view(self.restart_service),
-                 name='core_unitservice_restart'),
-            path('<uuid:pk>/stop/', self.admin_site.admin_view(self.stop_service), name='core_unitservice_stop'),
-            path('<uuid:pk>/start/', self.admin_site.admin_view(self.start_service), name='core_unitservice_start'),
-            path('<uuid:pk>/reload/', self.admin_site.admin_view(self.reload_service), name='core_unitservice_reload'),
-            path('<uuid:pk>/enable/', self.admin_site.admin_view(self.enable_service), name='core_unitservice_enable'),
-            path('<uuid:pk>/disable/', self.admin_site.admin_view(self.disable_service),
-                 name='core_unitservice_disable'),
-        ]
-        return custom_urls + urls
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
+
+    if success_count:
+        messages.success(request, f"Включена автозагрузка для {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при включении автозагрузки: {failed_list}")
+
+
+@admin.action(description="✗ Отключить автозагрузку выбранных служб")
+def disable_autostart(self, request, queryset):
+    results = []
+    for unit in queryset:
+        success, message = unit.disable_autostart()
+        results.append((unit.name, success, message))
+
+    success_count = sum(1 for _, success, _ in results if success)
+    failed = [(name, msg) for name, success, msg in results if not success]
+
+    if success_count:
+        messages.success(request, f"Отключена автозагрузка для {success_count} служб")
+    if failed:
+        failed_list = ", ".join([f"{name}" for name, _ in failed[:3]])
+        if len(failed) > 3:
+            failed_list += f" и ещё {len(failed) - 3}"
+        messages.error(request, f"Ошибка при отключении автозагрузки: {failed_list}")
+
+
+def get_urls(self):
+    from django.urls import path
+
+    urls = super().get_urls()
+    custom_urls = [
+        path('<uuid:pk>/install/', self.admin_site.admin_view(self.install_service),
+             # install_service (а не install_services)
+             name='core_unitservice_install'),
+        path('<uuid:pk>/uninstall/', self.admin_site.admin_view(self.uninstall_service),  # uninstall_service
+             name='core_unitservice_uninstall'),
+        path('<uuid:pk>/restart/', self.admin_site.admin_view(self.restart_service),  # restart_service
+             name='core_unitservice_restart'),
+        path('<uuid:pk>/stop/', self.admin_site.admin_view(self.stop_service),  # stop_service
+             name='core_unitservice_stop'),
+        path('<uuid:pk>/start/', self.admin_site.admin_view(self.start_service),  # start_service
+             name='core_unitservice_start'),
+        path('<uuid:pk>/reload/', self.admin_site.admin_view(self.reload_service),  # reload_service
+             name='core_unitservice_reload'),
+        path('<uuid:pk>/enable/', self.admin_site.admin_view(self.enable_service),
+             # enable_service (а не enable_autostart)
+             name='core_unitservice_enable'),
+        path('<uuid:pk>/disable/', self.admin_site.admin_view(self.disable_service),
+             # disable_service (а не disable_autostart)
+             name='core_unitservice_disable'),
+    ]
+    return custom_urls + urls
