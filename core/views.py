@@ -14,7 +14,7 @@ from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
 from rest_framework.status import HTTP_201_CREATED, HTTP_200_OK
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.generics import ListAPIView, RetrieveAPIView, get_object_or_404
 from rest_framework.parsers import MultiPartParser
 from rest_framework import status
 import logging
@@ -39,7 +39,7 @@ from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA
+    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task
 from .serializers import (
@@ -48,7 +48,8 @@ from .serializers import (
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
-    DataProviderSerializer, CarBadDataOutputSerializer, SensorsKeyOutputSerializer, LanguageSerializer
+    DataProviderSerializer, CarBadDataOutputSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
+    CarBadDataSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, attach_media_response, user_response, \
@@ -244,7 +245,6 @@ class VehicleSyncAPIView(APIView):
     def post(self, request):
         provider_name = request.data.get('provider_name')
 
-
         if not provider_name:
             return Response({"error": "Provider name is required"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -256,7 +256,6 @@ class VehicleSyncAPIView(APIView):
             provider = DataProvider.objects.get(name=provider_name, org_id=request.user.org)
         except DataProvider.DoesNotExist:
             return Response({"error": f"Provider {provider_name} not found"}, status=status.HTTP_404_NOT_FOUND)
-
 
         try:
             task = sync_vehicles_task.delay(
@@ -297,7 +296,6 @@ class CarDataRequestAPIView(APIView):
         end_date = request.data.get('end_date')
         is_save_bad_data = request.data.get('is_save_bad_data', False)
 
-
         if not provider_name:
             return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
 
@@ -311,7 +309,6 @@ class CarDataRequestAPIView(APIView):
             provider = DataProvider.objects.get(name=provider_name)
         except DataProvider.DoesNotExist:
             return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
-
 
         try:
             cars = Car.objects.filter(id__in=car_ids)
@@ -328,20 +325,17 @@ class CarDataRequestAPIView(APIView):
             logger.error(f"Error checking cars existence: {e}")
             return error_response("Error validating car IDs", status.HTTP_400_BAD_REQUEST)
 
-
         task_group = []
         report_query_ids = []
         car_names = {}
 
         try:
             for car in cars:
-
                 report_query, report_details = ReportService.create_report(
                     provider_id=str(provider.id),
                     report_type=ReportQuery.ReportType.LEAKS,
                     is_save_bad_data=is_save_bad_data
                 )
-
 
                 task = process_single_car_data_task.s(
                     car_id=str(car.id),
@@ -354,7 +348,6 @@ class CarDataRequestAPIView(APIView):
                 task_group.append(task)
                 report_query_ids.append(str(report_query.id))
                 car_names[str(car.id)] = car.name
-
 
             job = group(task_group)
             result = job.apply_async()
@@ -372,7 +365,6 @@ class CarDataRequestAPIView(APIView):
 
         except Exception as e:
             logger.error(f"Ошибка запуска задач обработки: {e}")
-
 
             for report_query_id in report_query_ids:
                 try:
@@ -408,7 +400,6 @@ class MileageCalculationAPIView(APIView):
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
-
         try:
             if start_date:
                 start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
@@ -416,7 +407,6 @@ class MileageCalculationAPIView(APIView):
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
-
 
         result, status_code = MileageCalculationService.calculate_mileage(
             car_id=car_id,
@@ -448,7 +438,6 @@ class MotohoursCalculationAPIView(APIView):
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
-
         from datetime import datetime
         try:
             if start_date:
@@ -457,7 +446,6 @@ class MotohoursCalculationAPIView(APIView):
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
-
 
         result, status_code = MotohoursCalculationService.calculate_motohours(
             car_id=car_id,
@@ -825,6 +813,56 @@ class CarSensorsValuesAPIView(ListAPIView):
             search_query=search_query
         )
 
+
+class CarBadDataAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**BAD_DATA_SCHEMA)
+    def get(self, request, car_id=None):
+        """
+        Получение записей о проблемных данных автомобилей.
+        """
+        org = request.user.org
+
+        # Получаем базовый queryset
+        queryset = CarBadData.objects.filter(
+            car_id__data_providers__org_id=org.id
+        ).distinct().order_by('-datetime')
+
+        # Фильтрация по машине, если указан car_id
+        if car_id:
+            car = get_object_or_404(
+                Car,
+                id=car_id,
+                data_providers__org_id=org.id
+            )
+            queryset = queryset.filter(car_id=car)
+
+        # Фильтрация по датам
+        start_date = request.query_params.get('start_date')
+        end_date = request.query_params.get('end_date')
+
+        if start_date:
+            queryset = queryset.filter(datetime__date__gte=start_date)
+        if end_date:
+            queryset = queryset.filter(datetime__date__lte=end_date)
+
+        # Поиск по причине
+        search_query = request.query_params.get('search', None)
+        if search_query:
+            queryset = queryset.filter(reason__icontains=search_query)
+
+        # Применяем пагинацию
+        paginator = StandardResultsSetPagination()
+        page = paginator.paginate_queryset(queryset, request)
+
+        if page is not None:
+            serializer = CarBadDataSerializer(page, many=True)
+            return paginator.get_paginated_response(serializer.data)
+
+        # Если пагинация не применяется, возвращаем все данные
+        serializer = CarBadDataSerializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class LanguageListAPIView(ListAPIView):
     """

@@ -88,7 +88,7 @@ class ReportQueryOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReportQuery
         fields = [
-            'id', 'status', 'provider_name'
+            'id', 'status', 'provider_name','created_at'
         ]
 
     def get_provider_name(self, obj):
@@ -292,3 +292,19 @@ class MileageTestSerializer(serializers.Serializer):
     end_date = serializers.DateTimeField(required=True, help_text="Конец промежутка")
     agg = serializers.IntegerField(required=False, help_text="Агрегация (в минутах)")
 
+
+class CarBadDataSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car_id.name', read_only=True)
+    car_id_display = serializers.UUIDField(source='car_id.id', read_only=True)
+
+    class Meta:
+        model = CarBadData
+        fields = [
+            'id',
+            'car_id',
+            'car_id_display',
+            'car_name',
+            'reason',
+            'datetime',
+        ]
+        read_only_fields = fields

@@ -135,6 +135,7 @@ class ReportQuery(models.Model):
     status = models.CharField(max_length=50, **NULLABLE)
     provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
     is_save_bad_data = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
     report_type = models.CharField(
         max_length=20,
         choices=ReportType.choices,

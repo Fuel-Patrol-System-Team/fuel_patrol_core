@@ -408,4 +408,91 @@ CAR_ACTIVE_STATUS_SCHEMA = {
     }
 }
 
+BAD_DATA_SCHEMA = {
+    "tags": ["car-bad-data"],
+    "operation_description": """
+    Получение записей о проблемных данных автомобилей.
+
+    Возможности фильтрации:
+    - По конкретной машине (если указан car_id в URL)
+    - По датам (start_date, end_date)
+    - Поиск по причине (search)
+    """,
+    "manual_parameters": [
+        openapi.Parameter(
+            "car_id",
+            openapi.IN_PATH,
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_UUID,
+            description="UUID автомобиля (только для запросов по конкретной машине)"
+        ),
+        openapi.Parameter(
+            "start_date",
+            openapi.IN_QUERY,
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATE,
+            description="Начальная дата для фильтрации (формат: YYYY-MM-DD)"
+        ),
+        openapi.Parameter(
+            "end_date",
+            openapi.IN_QUERY,
+            type=openapi.TYPE_STRING,
+            format=openapi.FORMAT_DATE,
+            description="Конечная дата для фильтрации (формат: YYYY-MM-DD)"
+        ),
+        openapi.Parameter(
+            "search",
+            openapi.IN_QUERY,
+            type=openapi.TYPE_STRING,
+            required=False,
+            description="Поиск по тексту причины"
+        ),
+        openapi.Parameter(
+            "page",
+            openapi.IN_QUERY,
+            type=openapi.TYPE_INTEGER,
+            description="Номер страницы для пагинации"
+        ),
+        openapi.Parameter(
+            "page_size",
+            openapi.IN_QUERY,
+            type=openapi.TYPE_INTEGER,
+            description="Количество записей на странице"
+        ),
+    ],
+    "responses": {
+        200: openapi.Response(
+            description="Успешный запрос",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'count': openapi.Schema(type=openapi.TYPE_INTEGER, description='Общее количество записей'),
+                    'next': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_URI,
+                                           description='Следующая страница', nullable=True),
+                    'previous': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_URI,
+                                               description='Предыдущая страница', nullable=True),
+                    'results': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(
+                            type=openapi.TYPE_OBJECT,
+                            properties={
+                                'id': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
+                                'car_id': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_UUID),
+                                'car_name': openapi.Schema(type=openapi.TYPE_STRING),
+                                'car_description': openapi.Schema(type=openapi.TYPE_STRING),
+                                'car_is_active': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                                'reason': openapi.Schema(type=openapi.TYPE_STRING),
+                                'datetime': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME),
+                            }
+                        )
+                    ),
+                }
+            )
+        ),
+        400: "Некорректный запрос",
+        403: "Доступ запрещен",
+        404: "Автомобиль не найден или не принадлежит организации",
+    }
+}
+
 
