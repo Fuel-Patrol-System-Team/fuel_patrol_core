@@ -1,18 +1,15 @@
-import time
 from datetime import datetime
 
-import polars as pl
-import pytz
 from celery import group
-from django.db.models import Count, OuterRef, Subquery, Value
-from django.db.models.functions import Coalesce
+
+from django.db.models import Count
 from django.shortcuts import render
-from django.utils import timezone
+
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework.filters import SearchFilter
 from rest_framework.response import Response
-from rest_framework.status import HTTP_201_CREATED, HTTP_200_OK
+
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView, get_object_or_404
 from rest_framework.parsers import MultiPartParser
@@ -29,11 +26,10 @@ from core.helpers.cars import get_car_or_error, fetch_car_metrics, filter_leaks_
 from .helpers.data_provider import create_provider_data_request, validate_provider_request, validate_provider_cars, \
     create_data_provider
 from .helpers.media import create_media_instance, validate_media_upload, process_media_task
-from .helpers.mileage_test import MileageModes, make_empty_mileage_result, mileage_test
-from .helpers.motohours import compute_motohours_total, compute_motohours
+
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, SensorsKey, SensorsKeyLocalization, Language, ReportQueryDetails
+    CarBadData, Language
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -61,7 +57,6 @@ from .services.providers.glonass.glonassoft_motohours_provider import GlonassSof
 from .services.providers.mileage_calculation_service import MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
 from .services.providers.report_service import ReportService
-from .services.providers.vehicle_sync_service import VehicleSyncService
 
 logger = logging.getLogger(__name__)
 
@@ -760,22 +755,6 @@ class CarLeaksAPIView(ListAPIView):
         ).select_related('car_id').order_by('-datetime')
 
 
-class CarBadDataListByCarAPIView(ListAPIView):
-    permission_classes = [IsOrgMember]
-    serializer_class = CarBadDataOutputSerializer
-    pagination_class = StandardResultsSetPagination
-    filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['datetime']
-    search_fields = ['reason']
-
-    def get_queryset(self):
-        car_id = self.kwargs['car_id']
-        return CarBadData.objects.filter(
-            car_id=car_id,
-            car_id__data_providers__org_id=self.request.user.org.id
-        ).select_related('car_id').order_by('-datetime')
-
-
 class SensorsKeyListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
@@ -824,12 +803,10 @@ class CarBadDataAPIView(APIView):
         """
         org = request.user.org
 
-        # Получаем базовый queryset
         queryset = CarBadData.objects.filter(
             car_id__data_providers__org_id=org.id
         ).distinct().order_by('-datetime')
 
-        # Фильтрация по машине, если указан car_id
         if car_id:
             car = get_object_or_404(
                 Car,
@@ -838,7 +815,6 @@ class CarBadDataAPIView(APIView):
             )
             queryset = queryset.filter(car_id=car)
 
-        # Фильтрация по датам
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
 
@@ -847,12 +823,10 @@ class CarBadDataAPIView(APIView):
         if end_date:
             queryset = queryset.filter(datetime__date__lte=end_date)
 
-        # Поиск по причине
         search_query = request.query_params.get('search', None)
         if search_query:
             queryset = queryset.filter(reason__icontains=search_query)
 
-        # Применяем пагинацию
         paginator = StandardResultsSetPagination()
         page = paginator.paginate_queryset(queryset, request)
 
@@ -860,9 +834,9 @@ class CarBadDataAPIView(APIView):
             serializer = CarBadDataSerializer(page, many=True)
             return paginator.get_paginated_response(serializer.data)
 
-        # Если пагинация не применяется, возвращаем все данные
         serializer = CarBadDataSerializer(queryset, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class LanguageListAPIView(ListAPIView):
     """

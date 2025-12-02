@@ -8,7 +8,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, \
     CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
     DailyLeaksSumAPIView, DailyLeaksCountAPIView, CarMetricsAPIView, DataProviderListAPIView, DataProviderDetailAPIView, \
-    ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, CarBadDataListByCarAPIView, \
+    ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, \
     CarActiveStatusAPIView, MileageCalculationAPIView, SensorsKeyListAPIView, LanguageListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView
@@ -42,6 +42,7 @@ urlpatterns = [
     path('cars', CarListAPIView.as_view(), name='car-list'),
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
+    path('cars/<uuid:car_id>/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
     path('report-queries', ReportQueryListAPIView.as_view(), name='report-query-list'),
@@ -56,7 +57,6 @@ urlpatterns = [
     path('dataprovider/<uuid:pk>', DataProviderDetailAPIView.as_view(), name='dataprovider-detail'),
     path('dataprovider/create', DataProviderCreateAPIView.as_view(), name='data-provider-create'),
     path('provider-data-request', ProviderDataRequestAPIView.as_view(), name='provider-data-request'),
-    path('cars/<uuid:car_id>/bad-data', CarBadDataListByCarAPIView.as_view(), name='car-bad-data-list'),
     path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status'),
     # path('sensors', SensorsMappingListByCardAPIView.as_view(), name='sensors'), ##TODO: Переписать
 
@@ -70,5 +70,5 @@ urlpatterns = [
 
     path('parsing/terminal-messages', CarDataRequestAPIView.as_view(), name='parsing-terminal-messages'),
 
-    path('languages', LanguageListAPIView.as_view(), name='languages-list'),
+    path('languages', LanguageListAPIView.as_view(), name='languages-list')
 ]
