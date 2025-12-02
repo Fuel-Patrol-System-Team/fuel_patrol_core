@@ -793,50 +793,93 @@ class CarSensorsValuesAPIView(ListAPIView):
         )
 
 
-class CarBadDataAPIView(APIView):
+class CarBadDataAPIView(ListAPIView):
+    """
+    API для получения проблемных данных автомобилей.
+    Поддерживает фильтрацию через query parameters.
+    """
     permission_classes = [IsOrgMember]
+    pagination_class = StandardResultsSetPagination
+    serializer_class = CarBadDataSerializer
 
     @swagger_auto_schema(**BAD_DATA_SCHEMA)
-    def get(self, request, car_id=None):
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_queryset(self):
         """
-        Получение записей о проблемных данных автомобилей.
+        Получение и фильтрация queryset на основе query parameters
         """
-        org = request.user.org
+        org = self.request.user.org
 
         queryset = CarBadData.objects.filter(
             car_id__data_providers__org_id=org.id
         ).distinct().order_by('-datetime')
 
+        car_id = self.request.query_params.get('car_id')
         if car_id:
-            car = get_object_or_404(
-                Car,
-                id=car_id,
-                data_providers__org_id=org.id
-            )
-            queryset = queryset.filter(car_id=car)
+            try:
+                car = Car.objects.get(
+                    id=car_id,
+                    data_providers__org_id=org.id
+                )
+                queryset = queryset.filter(car_id=car)
+            except (Car.DoesNotExist, ValueError):
+                return CarBadData.objects.none()
 
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
 
         if start_date:
             queryset = queryset.filter(datetime__date__gte=start_date)
         if end_date:
             queryset = queryset.filter(datetime__date__lte=end_date)
 
-        search_query = request.query_params.get('search', None)
+        search_query = self.request.query_params.get('search')
         if search_query:
             queryset = queryset.filter(reason__icontains=search_query)
 
-        paginator = StandardResultsSetPagination()
-        page = paginator.paginate_queryset(queryset, request)
+        return queryset
 
-        if page is not None:
-            serializer = CarBadDataSerializer(page, many=True)
-            return paginator.get_paginated_response(serializer.data)
+    def list(self, request, *args, **kwargs):
+        """
+        Переопределяем метод list для обработки ошибок
+        """
+        try:
+            queryset = self.filter_queryset(self.get_queryset())
 
-        serializer = CarBadDataSerializer(queryset, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+            car_id = self.request.query_params.get('car_id')
+            if car_id and not queryset.exists():
+                try:
+                    Car.objects.get(id=car_id)
+                    return Response(
+                        {"error": "Автомобиль не принадлежит вашей организации"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                except Car.DoesNotExist:
+                    return Response(
+                        {"error": "Автомобиль не найден"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                except ValueError:
+                    return Response(
+                        {"error": "Неверный формат UUID автомобиля"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
 
+            page = self.paginate_queryset(queryset)
+            if page is not None:
+                serializer = self.get_serializer(page, many=True)
+                return self.get_paginated_response(serializer.data)
+
+            serializer = self.get_serializer(queryset, many=True)
+            return Response(serializer.data)
+
+        except Exception as e:
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 class LanguageListAPIView(ListAPIView):
     """

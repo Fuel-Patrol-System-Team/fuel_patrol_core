@@ -414,23 +414,31 @@ BAD_DATA_SCHEMA = {
     Получение записей о проблемных данных автомобилей.
 
     Возможности фильтрации:
-    - По конкретной машине (если указан car_id в URL)
+    - По конкретной машине (car_id параметр)
     - По датам (start_date, end_date)
     - Поиск по причине (search)
+
+    Примеры запросов:
+    - Все записи организации: GET /cars/bad-data/
+    - Записи по машине: GET /cars/bad-data/?car_id=uuid
+    - С фильтрацией по датам: GET /cars/bad-data/?start_date=2024-01-01&end_date=2024-01-31
+    - С поиском: GET /cars/bad-data/?search=утечка
     """,
     "manual_parameters": [
         openapi.Parameter(
             "car_id",
-            openapi.IN_PATH,
+            openapi.IN_QUERY,
             type=openapi.TYPE_STRING,
             format=openapi.FORMAT_UUID,
-            description="UUID автомобиля (только для запросов по конкретной машине)"
+            required=False,
+            description="UUID автомобиля для фильтрации"
         ),
         openapi.Parameter(
             "start_date",
             openapi.IN_QUERY,
             type=openapi.TYPE_STRING,
             format=openapi.FORMAT_DATE,
+            required=False,
             description="Начальная дата для фильтрации (формат: YYYY-MM-DD)"
         ),
         openapi.Parameter(
@@ -438,6 +446,7 @@ BAD_DATA_SCHEMA = {
             openapi.IN_QUERY,
             type=openapi.TYPE_STRING,
             format=openapi.FORMAT_DATE,
+            required=False,
             description="Конечная дата для фильтрации (формат: YYYY-MM-DD)"
         ),
         openapi.Parameter(
@@ -451,12 +460,14 @@ BAD_DATA_SCHEMA = {
             "page",
             openapi.IN_QUERY,
             type=openapi.TYPE_INTEGER,
+            required=False,
             description="Номер страницы для пагинации"
         ),
         openapi.Parameter(
             "page_size",
             openapi.IN_QUERY,
             type=openapi.TYPE_INTEGER,
+            required=False,
             description="Количество записей на странице"
         ),
     ],
@@ -489,10 +500,25 @@ BAD_DATA_SCHEMA = {
                 }
             )
         ),
-        400: "Некорректный запрос",
+        400: openapi.Response(
+            description="Некорректный запрос",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
         403: "Доступ запрещен",
-        404: "Автомобиль не найден или не принадлежит организации",
+        404: openapi.Response(
+            description="Автомобиль не найден или не принадлежит организации",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING)
+                }
+            )
+        ),
     }
 }
-
 

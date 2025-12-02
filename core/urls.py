@@ -42,7 +42,6 @@ urlpatterns = [
     path('cars', CarListAPIView.as_view(), name='car-list'),
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
-    path('cars/<uuid:car_id>/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
     path('report-queries', ReportQueryListAPIView.as_view(), name='report-query-list'),
