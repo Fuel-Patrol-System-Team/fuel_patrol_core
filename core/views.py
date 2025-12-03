@@ -276,7 +276,7 @@ class VehicleSyncAPIView(APIView):
 
 class CarDataRequestAPIView(APIView):
     @swagger_auto_schema(
-        operation_description="Создаёт заявку на получение и обработку данных по конкретным машинам",
+        operation_description="Создаёт заявку на получение и обработку данных по конкретным машинам или по всем машинам провайдера",
         request_body=CAR_DATA_REQUEST_SCHEMA,
         responses={
             202: "Задачи обработки запущены",
@@ -287,6 +287,7 @@ class CarDataRequestAPIView(APIView):
     def post(self, request):
         provider_name = request.data.get('provider_name')
         car_ids = request.data.get('car_ids', [])
+        parse_all = request.data.get('parse_all', False)
         start_date = request.data.get('start_date')
         end_date = request.data.get('end_date')
         is_save_bad_data = request.data.get('is_save_bad_data', False)
@@ -294,11 +295,15 @@ class CarDataRequestAPIView(APIView):
         if not provider_name:
             return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
 
-        if not car_ids:
-            return error_response("Car IDs list is required and cannot be empty", status.HTTP_400_BAD_REQUEST)
-
         if not start_date or not end_date:
             return error_response("Start date and end date are required", status.HTTP_400_BAD_REQUEST)
+
+        if not parse_all and not car_ids:
+            return error_response("Either car_ids list or parse_all=True is required", status.HTTP_400_BAD_REQUEST)
+
+        if parse_all:
+            car_ids = []
+            logger.info(f"parse_all flag is True, will process all cars for provider {provider_name}")
 
         try:
             provider = DataProvider.objects.get(name=provider_name)
@@ -306,15 +311,24 @@ class CarDataRequestAPIView(APIView):
             return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
 
         try:
-            cars = Car.objects.filter(id__in=car_ids)
-            found_car_ids = set(str(car.id) for car in cars)
-            missing_car_ids = set(car_ids) - found_car_ids
+            if parse_all:
+                cars = Car.objects.filter(provider=provider)
+                if not cars.exists():
+                    return error_response(
+                        f"No cars found for provider {provider_name}",
+                        status.HTTP_404_NOT_FOUND
+                    )
+                car_ids = [str(car.id) for car in cars]
+            else:
+                cars = Car.objects.filter(id__in=car_ids, provider=provider)
+                found_car_ids = set(str(car.id) for car in cars)
+                missing_car_ids = set(car_ids) - found_car_ids
 
-            if missing_car_ids:
-                return error_response(
-                    f"Some cars not found: {list(missing_car_ids)}",
-                    status.HTTP_404_NOT_FOUND
-                )
+                if missing_car_ids:
+                    return error_response(
+                        f"Some cars not found: {list(missing_car_ids)}",
+                        status.HTTP_404_NOT_FOUND
+                    )
 
         except Exception as e:
             logger.error(f"Error checking cars existence: {e}")
@@ -354,6 +368,7 @@ class CarDataRequestAPIView(APIView):
                 "car_names": car_names,
                 "message": f"Обработка данных для {len(car_ids)} машин запущена",
                 "provider_name": provider_name,
+                "parse_all_mode": parse_all,
                 "status_endpoint": f"/api/tasks/{result.id}/status/",
                 "individual_status_endpoint": "/api/tasks/{task_id}/status/"
             }, status.HTTP_202_ACCEPTED)

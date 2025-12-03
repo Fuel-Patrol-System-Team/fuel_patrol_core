@@ -34,7 +34,6 @@ PROVIDER_DATA_REQUEST_SCHEMA = openapi.Schema(
     required=["provider_name"]
 )
 
-
 CAR_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
@@ -46,8 +45,14 @@ CAR_DATA_REQUEST_SCHEMA = openapi.Schema(
         "car_ids": openapi.Schema(
             type=openapi.TYPE_ARRAY,
             items=openapi.Schema(type=openapi.TYPE_STRING),
-            description="Список ID машин для обработки",
+            description="Список ID машин для обработки. Можно не передавать, если parse_all=True",
             example=["car-uuid-1", "car-uuid-2"]
+        ),
+        "parse_all": openapi.Schema(
+            type=openapi.TYPE_BOOLEAN,
+            description="Если True, обрабатывает все машины провайдера (car_ids игнорируются). По умолчанию False",
+            example=False,
+            default=False
         ),
         "start_date": openapi.Schema(
             type=openapi.TYPE_STRING,
@@ -68,7 +73,7 @@ CAR_DATA_REQUEST_SCHEMA = openapi.Schema(
             default=False
         )
     },
-    required=["provider_name", "car_ids", "start_date", "end_date"]
+    required=["provider_name", "start_date", "end_date"]
 )
 
 VEHICLE_SYNC_SCHEMA = openapi.Schema(
