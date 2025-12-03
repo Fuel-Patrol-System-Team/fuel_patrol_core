@@ -301,44 +301,55 @@ class CarDataRequestAPIView(APIView):
         if not parse_all and not car_ids:
             return error_response("Either car_ids list or parse_all=True is required", status.HTTP_400_BAD_REQUEST)
 
-        if parse_all:
-            car_ids = []
-            logger.info(f"parse_all flag is True, will process all cars for provider {provider_name}")
-
         try:
             provider = DataProvider.objects.get(name=provider_name)
         except DataProvider.DoesNotExist:
             return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
 
+        cars = None
         try:
             if parse_all:
-                cars = Car.objects.filter(provider=provider)
+                logger.info(f"parse_all flag is True, fetching all cars for provider {provider_name}")
+                cars = Car.objects.filter(data_providers=provider)
+                car_ids = [str(car.id) for car in cars]
+
                 if not cars.exists():
+                    logger.warning(f"No cars found for provider {provider_name}")
                     return error_response(
                         f"No cars found for provider {provider_name}",
                         status.HTTP_404_NOT_FOUND
                     )
-                car_ids = [str(car.id) for car in cars]
+                logger.info(f"Found {len(cars)} cars for provider {provider_name}")
             else:
-                cars = Car.objects.filter(id__in=car_ids, provider=provider)
+                logger.info(f"Processing specific cars: {car_ids}")
+                cars = Car.objects.filter(
+                    id__in=car_ids,
+                    data_providers=provider
+                ).distinct()
                 found_car_ids = set(str(car.id) for car in cars)
                 missing_car_ids = set(car_ids) - found_car_ids
 
                 if missing_car_ids:
+                    logger.warning(f"Missing car IDs: {missing_car_ids}")
                     return error_response(
-                        f"Some cars not found: {list(missing_car_ids)}",
+                        f"Some cars not found or not associated with provider {provider_name}: {list(missing_car_ids)}",
                         status.HTTP_404_NOT_FOUND
                     )
 
         except Exception as e:
-            logger.error(f"Error checking cars existence: {e}")
-            return error_response("Error validating car IDs", status.HTTP_400_BAD_REQUEST)
+            logger.error(f"Error checking cars existence: {e}", exc_info=True)
+            return error_response(f"Error validating car IDs: {str(e)}", status.HTTP_400_BAD_REQUEST)
+
+        if cars is None:
+            logger.error("Cars queryset is None unexpectedly")
+            return error_response("Unexpected error while fetching cars", status.HTTP_400_BAD_REQUEST)
 
         task_group = []
         report_query_ids = []
         car_names = {}
 
         try:
+            logger.info(f"Starting processing for {len(cars)} cars")
             for car in cars:
                 report_query, report_details = ReportService.create_report(
                     provider_id=str(provider.id),
@@ -360,21 +371,28 @@ class CarDataRequestAPIView(APIView):
 
             job = group(task_group)
             result = job.apply_async()
+            logger.info(f"Successfully started task group {result.id} for {len(cars)} cars")
 
-            return success_response({
+            response_data = {
                 "task_group_id": result.id,
                 "report_query_ids": report_query_ids,
                 "total_cars": len(car_ids),
                 "car_names": car_names,
                 "message": f"Обработка данных для {len(car_ids)} машин запущена",
                 "provider_name": provider_name,
-                "parse_all_mode": parse_all,
                 "status_endpoint": f"/api/tasks/{result.id}/status/",
                 "individual_status_endpoint": "/api/tasks/{task_id}/status/"
-            }, status.HTTP_202_ACCEPTED)
+            }
+
+            if parse_all:
+                response_data["parse_all_mode"] = True
+                response_data[
+                    "message"] = f"Обработка данных для всех ({len(car_ids)}) машин провайдера {provider_name} запущена"
+
+            return success_response(response_data, status.HTTP_202_ACCEPTED)
 
         except Exception as e:
-            logger.error(f"Ошибка запуска задач обработки: {e}")
+            logger.error(f"Ошибка запуска задач обработки: {e}", exc_info=True)
 
             for report_query_id in report_query_ids:
                 try:
@@ -383,10 +401,10 @@ class CarDataRequestAPIView(APIView):
                         report_query, f"Failed to start processing task: {str(e)}"
                     )
                 except Exception:
-                    pass
+                    logger.error(f"Failed to complete report error for {report_query_id}")
 
             return error_response(
-                "Failed to start processing tasks",
+                f"Failed to start processing tasks: {str(e)}",
                 status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
