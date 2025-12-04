@@ -64,9 +64,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -133,15 +133,15 @@ USE_TZ = True
 # ======================
 # STATIC & MEDIA FILES
 # ======================
-STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'static'
+STATIC_URL = '/static/'
+STATIC_ROOT = '/var/www/fuel.noosoft.ru/static/'
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 )
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+MEDIA_ROOT = '/var/www/fuel.noosoft.ru/media/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ======================
