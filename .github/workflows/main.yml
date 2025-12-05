@@ -1,0 +1,36 @@
+name: Deploy via SSH
+
+on:
+  push:
+    branches: [ dev ]   # or master or any branch you need
+
+jobs:
+  deploy:
+    if: github.repository == 'Fuel-Patrol-System-Team/fuel_patrol_client'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          echo -e "Host remote\n\tHostName ${{ secrets.SSH_HOST }}\n\tUser ${{ secrets.SSH_USER }}\n\tIdentityFile ~/.ssh/id_rsa\n\tStrictHostKeyChecking no" >> ~/.ssh/config
+
+      - name: Run remote commands
+        run: |
+          ssh remote << 'EOF'
+          cd /root/dev/fuel_patrol_core/
+          source ./.venv/bin/activate
+          uv sync
+          git pull
+          uv run python3 manage.py makemigrations
+          uv run python3 manage.py migrate
+          systemctl restart core-api.service
+          systemctl restart core-celery-worker.service
+          
+
+          EOF
