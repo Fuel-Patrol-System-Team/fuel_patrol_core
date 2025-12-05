@@ -1,6 +1,5 @@
 import logging
 import pathlib
-from turtle import speed
 import polars as pl
 from datetime import datetime
 from typing import Dict, Optional, Any
