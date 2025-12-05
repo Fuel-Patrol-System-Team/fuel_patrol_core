@@ -6,7 +6,6 @@ on:
 
 jobs:
   deploy:
-    if: github.repository == 'Fuel-Patrol-System-Team/fuel_patrol_client'
     runs-on: ubuntu-latest
 
     steps:
