@@ -1,5 +1,6 @@
 import logging
 import pathlib
+from turtle import speed
 import polars as pl
 from datetime import datetime
 from typing import Dict, Optional, Any
@@ -1458,6 +1459,7 @@ def save_leak_results(self, results, report_query_id):
                         datetime=pd.to_datetime(row["timestamp"], errors="coerce"),
                         volume=float(row["leak"]) if pd.notna(row["leak"]) else 0,
                         status=bool(row["is_leak"]),
+                        speed=float(row["pos_s"]),
                     )
                     logger.debug(f"Сохранён отчёт для {car_id}")
                 except Exception as e:

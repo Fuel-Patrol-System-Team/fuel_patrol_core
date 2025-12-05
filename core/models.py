@@ -12,10 +12,7 @@ from django.utils import timezone
 
 from core.services.notifications.tg_bot import logger
 
-NULLABLE = {
-    "blank": True,
-    "null": True
-}
+NULLABLE = {"blank": True, "null": True}
 
 
 class Organization(models.Model):
@@ -27,7 +24,7 @@ class Organization(models.Model):
     class Meta:
         verbose_name = "Organization"
         verbose_name_plural = "Organizations"
-        ordering = ['name']
+        ordering = ["name"]
 
     def __str__(self):
         return self.name
@@ -35,14 +32,14 @@ class Organization(models.Model):
 
 class Language(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    code = models.CharField(max_length=5, default='ru')
-    name = models.CharField(max_length=100, default='Русский')
+    code = models.CharField(max_length=5, default="ru")
+    name = models.CharField(max_length=100, default="Русский")
     description = models.TextField(**NULLABLE)
 
     class Meta:
         verbose_name = "Language"
         verbose_name_plural = "Languages"
-        ordering = ['code']
+        ordering = ["code"]
 
     def __str__(self):
         return self.name
@@ -51,7 +48,9 @@ class Language(models.Model):
 class OrgUser(AbstractUser):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     username = models.CharField(max_length=150, unique=True)
-    org = models.ForeignKey(Organization, on_delete=models.SET_NULL, **NULLABLE, related_name='users')
+    org = models.ForeignKey(
+        Organization, on_delete=models.SET_NULL, **NULLABLE, related_name="users"
+    )
     password = models.CharField(max_length=128)
     email = models.EmailField(max_length=254, **NULLABLE)
     first_name = models.CharField(max_length=30, **NULLABLE)
@@ -66,7 +65,7 @@ class OrgUser(AbstractUser):
     class Meta:
         verbose_name = "Org User"
         verbose_name_plural = "Org Users"
-        ordering = ['username']
+        ordering = ["username"]
 
     def __str__(self):
         return self.username
@@ -88,7 +87,7 @@ class Car(models.Model):
     class Meta:
         verbose_name = "Car"
         verbose_name_plural = "Cars"
-        ordering = ['name']
+        ordering = ["name"]
 
     def __str__(self):
         return self.name
@@ -96,7 +95,9 @@ class Car(models.Model):
 
 class CarConsumption(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='consumptions')
+    car_id = models.ForeignKey(
+        Car, on_delete=models.CASCADE, related_name="consumptions"
+    )
     winter_volume = models.FloatField(**NULLABLE)
     summer_volume = models.FloatField(**NULLABLE)
     speed_etalon = models.FloatField(default=60.0)
@@ -106,7 +107,7 @@ class CarConsumption(models.Model):
     class Meta:
         verbose_name = "Car Consumption"
         verbose_name_plural = "Car Consumptions"
-        ordering = ['car_id']
+        ordering = ["car_id"]
 
     def __str__(self):
         return f"{self.car_id.name} Consumption"
@@ -116,13 +117,15 @@ class DataProvider(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     metadata = models.JSONField(**NULLABLE)
-    org_id = models.ForeignKey(Organization, on_delete=models.CASCADE, related_name='organization', **NULLABLE)
-    cars = models.ManyToManyField(Car, related_name='data_providers', blank=True)
+    org_id = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="organization", **NULLABLE
+    )
+    cars = models.ManyToManyField(Car, related_name="data_providers", blank=True)
 
     class Meta:
         verbose_name = "Data Provider"
         verbose_name_plural = "Data Providers"
-        ordering = ['name']
+        ordering = ["name"]
 
     def __str__(self):
         return self.name
@@ -130,26 +133,26 @@ class DataProvider(models.Model):
 
 class ReportQuery(models.Model):
     class ReportType(models.TextChoices):
-        VEHICLES = 'vehicles', 'Синхронизация транспортных средств'
-        MILEAGE = 'mileage', 'Анализ пробега'
-        MOTOHOURS = 'motohours', 'Анализ моточасов'
-        LEAKS = 'leaks', 'Анализ утечек топлива'
+        VEHICLES = "vehicles", "Синхронизация транспортных средств"
+        MILEAGE = "mileage", "Анализ пробега"
+        MOTOHOURS = "motohours", "Анализ моточасов"
+        LEAKS = "leaks", "Анализ утечек топлива"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
-    provider_id = models.ForeignKey(DataProvider, on_delete=models.CASCADE, related_name='report_queries')
+    provider_id = models.ForeignKey(
+        DataProvider, on_delete=models.CASCADE, related_name="report_queries"
+    )
     is_save_bad_data = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
     report_type = models.CharField(
-        max_length=20,
-        choices=ReportType.choices,
-        default=ReportType.LEAKS
+        max_length=20, choices=ReportType.choices, default=ReportType.LEAKS
     )
 
     class Meta:
         verbose_name = "Report Query"
         verbose_name_plural = "Report Queries"
-        ordering = ['-id']
+        ordering = ["-id"]
 
     def __str__(self):
         return f"Report {self.id}"
@@ -157,7 +160,9 @@ class ReportQuery(models.Model):
 
 class ReportQueryDetails(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    report_query = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, related_name='report_query_details')
+    report_query = models.OneToOneField(
+        ReportQuery, on_delete=models.CASCADE, related_name="report_query_details"
+    )
     traceback = models.JSONField(**NULLABLE)
     result = models.JSONField(**NULLABLE)
     start_time = models.DateTimeField(**NULLABLE)
@@ -169,7 +174,7 @@ class ReportQueryDetails(models.Model):
     class Meta:
         verbose_name = "Report Query Details"
         verbose_name_plural = "Report Query Details"
-        ordering = ['-id']
+        ordering = ["-id"]
 
     def __str__(self):
         return f"Report {self.report_query} Details {self.id}"
@@ -178,23 +183,26 @@ class ReportQueryDetails(models.Model):
 class Media(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     media_type = models.CharField(max_length=255, **NULLABLE)
-    file = models.FileField(**NULLABLE, upload_to='')
+    file = models.FileField(**NULLABLE, upload_to="")
     size = models.BigIntegerField(default=0, **NULLABLE)
     filename = models.CharField(max_length=255)
     type = models.CharField(max_length=255, **NULLABLE)
-    report_query_id = models.OneToOneField(ReportQuery, on_delete=models.CASCADE, **NULLABLE, related_name='media')
+    report_query_id = models.OneToOneField(
+        ReportQuery, on_delete=models.CASCADE, **NULLABLE, related_name="media"
+    )
     file_hash = models.CharField(max_length=64, unique=True, **NULLABLE)
 
     class Meta:
         verbose_name = "Media"
         verbose_name_plural = "Media Files"
-        ordering = ['filename']
+        ordering = ["filename"]
 
     def __str__(self):
         return self.filename
 
     def save(self, *args, **kwargs):
         from core.helpers.media_utils import calculate_file_hash
+
         if self.file:
             self.size = self.file.size
             self.file_hash = calculate_file_hash(self.file)
@@ -203,15 +211,16 @@ class Media(models.Model):
 
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='reports')
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="reports")
     datetime = models.DateTimeField()
+    speed = models.FloatField(null=True)
     volume = models.IntegerField()
     status = models.BooleanField()
 
     class Meta:
         verbose_name = "Car Report"
         verbose_name_plural = "Car Reports"
-        ordering = ['-datetime']
+        ordering = ["-datetime"]
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
@@ -219,14 +228,14 @@ class CarReport(models.Model):
 
 class CarBadData(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='bad_data')
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="bad_data")
     reason = models.TextField()
     datetime = models.DateTimeField(default=timezone.now)
 
     class Meta:
         verbose_name = "Car Bad Data"
         verbose_name_plural = "Car Bad Data`s"
-        ordering = ['-id']
+        ordering = ["-id"]
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime} - {self.reason}"
@@ -237,12 +246,12 @@ class Driver(models.Model):
     fullname = models.CharField(max_length=255)
     address = models.CharField(max_length=255)
     phone = models.CharField(max_length=255)
-    car_id = models.ManyToManyField(Car, blank=True, related_name='drivers')
+    car_id = models.ManyToManyField(Car, blank=True, related_name="drivers")
 
     class Meta:
         verbose_name = "Driver"
         verbose_name_plural = "Drivers"
-        ordering = ['fullname']
+        ordering = ["fullname"]
 
     def __str__(self):
         return self.fullname
@@ -269,14 +278,14 @@ class SensorsKey(models.Model):
 
 class SensorsValues(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name='values')
+    key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name="values")
     value = models.CharField(max_length=255)
-    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name='values')
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="values")
 
     class Meta:
         verbose_name = "SensorsValues"
         verbose_name_plural = "SensorsValues"
-        ordering = ['key']
+        ordering = ["key"]
 
     def __str__(self):
         return f"{self.key} - {self.value}"
@@ -284,14 +293,18 @@ class SensorsValues(models.Model):
 
 class SensorsKeyLocalization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name='locations')
-    language = models.ForeignKey(Language, on_delete=models.CASCADE, related_name='locations')
+    key = models.ForeignKey(
+        SensorsKey, on_delete=models.CASCADE, related_name="locations"
+    )
+    language = models.ForeignKey(
+        Language, on_delete=models.CASCADE, related_name="locations"
+    )
     localization = models.CharField(max_length=255)
 
     class Meta:
         verbose_name = "SensorsKeyLocalization"
         verbose_name_plural = "SensorsKeyLocalizations"
-        ordering = ['key']
+        ordering = ["key"]
 
     def __str__(self):
         return f"{self.key} - {self.language} - {self.localization}"
@@ -299,7 +312,8 @@ class SensorsKeyLocalization(models.Model):
 
 ## DEVOPS FEATURES
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SERVICES_DIR = PROJECT_ROOT / 'services'
+SERVICES_DIR = PROJECT_ROOT / "services"
+
 
 class UnitService(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -308,7 +322,7 @@ class UnitService(models.Model):
         max_length=100,
         verbose_name="Имя службы systemd",
         unique=True,
-        help_text="Например: core-api, core-celery-worker"
+        help_text="Например: core-api, core-celery-worker",
     )
     description = models.TextField(verbose_name="Описание", **NULLABLE)
     is_active = models.BooleanField(default=True, verbose_name="Активна")
@@ -316,23 +330,23 @@ class UnitService(models.Model):
         max_length=255,
         verbose_name="Имя файла службы",
         help_text="Имя файла в папке services/ (например: core-api.service)",
-        **NULLABLE
+        **NULLABLE,
     )
     auto_start = models.BooleanField(
         default=True,
         verbose_name="Автозагрузка",
-        help_text="Автоматически запускать службу при загрузке системы"
+        help_text="Автоматически запускать службу при загрузке системы",
     )
     restart_on_failure = models.BooleanField(
         default=True,
         verbose_name="Перезапуск при ошибке",
-        help_text="Автоматически перезапускать службу при сбое"
+        help_text="Автоматически перезапускать службу при сбое",
     )
 
     class Meta:
         verbose_name = "Служба Systemd"
         verbose_name_plural = "Службы Systemd"
-        ordering = ['name']
+        ordering = ["name"]
 
     def __str__(self):
         return f"{self.name} ({self.service})"
@@ -369,11 +383,11 @@ class UnitService(models.Model):
         """Получение чистого статуса службы"""
         try:
             result = subprocess.run(
-                f'systemctl is-active {self.service}',
+                f"systemctl is-active {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=2
+                timeout=2,
             )
             return result.stdout.strip()
         except Exception:
@@ -384,11 +398,11 @@ class UnitService(models.Model):
         """Детальный статус службы (как в systemctl status)"""
         try:
             result = subprocess.run(
-                f'systemctl status {self.service} --no-pager',
+                f"systemctl status {self.service} --no-pager",
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=5
+                timeout=5,
             )
             return result.stdout if result.stdout else result.stderr
         except subprocess.TimeoutExpired:
@@ -401,11 +415,11 @@ class UnitService(models.Model):
         """Получение последних логов службы (100 записей)"""
         try:
             result = subprocess.run(
-                f'journalctl -u {self.service} -n 100 --no-pager',
+                f"journalctl -u {self.service} -n 100 --no-pager",
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
             )
             return result.stdout if result.stdout else result.stderr
         except subprocess.TimeoutExpired:
@@ -416,20 +430,20 @@ class UnitService(models.Model):
     @property
     def is_running(self):
         """Проверка, запущена ли служба"""
-        return self.status == 'active'
+        return self.status == "active"
 
     @property
     def is_enabled(self):
         """Проверка, включена ли автозагрузка"""
         try:
             result = subprocess.run(
-                f'systemctl is-enabled {self.service}',
+                f"systemctl is-enabled {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
-                timeout=2
+                timeout=2,
             )
-            return result.stdout.strip() == 'enabled'
+            return result.stdout.strip() == "enabled"
         except Exception:
             return False
 
@@ -437,7 +451,7 @@ class UnitService(models.Model):
         """Валидация"""
         super().clean()
 
-        if not self.service.endswith('.service'):
+        if not self.service.endswith(".service"):
             self.service = f"{self.service}.service"
 
     def install_service(self):
@@ -448,13 +462,15 @@ class UnitService(models.Model):
         try:
             content = self.service_file_path.read_text()
 
-            with open(self.systemd_file_path, 'w') as f:
+            with open(self.systemd_file_path, "w") as f:
                 f.write(content)
 
-            subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
+            subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=5)
 
             if self.auto_start:
-                subprocess.run(['systemctl', 'enable', self.service], check=True, timeout=5)
+                subprocess.run(
+                    ["systemctl", "enable", self.service], check=True, timeout=5
+                )
 
             return True, f"Служба установлена"
 
@@ -464,16 +480,24 @@ class UnitService(models.Model):
     def uninstall_service(self):
         """Удаление службы из systemd"""
         try:
-            subprocess.run(['systemctl', 'disable', self.service],
-                           capture_output=True, text=True, timeout=5)
+            subprocess.run(
+                ["systemctl", "disable", self.service],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
 
-            subprocess.run(['systemctl', 'stop', self.service],
-                           capture_output=True, text=True, timeout=5)
+            subprocess.run(
+                ["systemctl", "stop", self.service],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
 
             if os.path.exists(self.systemd_file_path):
                 os.remove(self.systemd_file_path)
 
-            subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
+            subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=5)
 
             return True, f"Служба удалена"
 
@@ -489,12 +513,12 @@ class UnitService(models.Model):
                     return False, f"Не удалось установить: {message}"
 
             result = subprocess.run(
-                f'systemctl restart {self.service}',
+                f"systemctl restart {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=10
+                timeout=10,
             )
             return True, "Служба перезапущена"
         except subprocess.CalledProcessError as e:
@@ -506,12 +530,12 @@ class UnitService(models.Model):
         """Остановка службы"""
         try:
             result = subprocess.run(
-                f'systemctl stop {self.service}',
+                f"systemctl stop {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=10
+                timeout=10,
             )
             return True, "Служба остановлена"
         except subprocess.CalledProcessError as e:
@@ -528,12 +552,12 @@ class UnitService(models.Model):
                     return False, f"Не удалось установить: {message}"
 
             result = subprocess.run(
-                f'systemctl start {self.service}',
+                f"systemctl start {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=10
+                timeout=10,
             )
             return True, "Служба запущена"
         except subprocess.CalledProcessError as e:
@@ -546,19 +570,19 @@ class UnitService(models.Model):
         try:
             if self.service_file_exists:
                 content = self.service_file_path.read_text()
-                with open(self.systemd_file_path, 'w') as f:
+                with open(self.systemd_file_path, "w") as f:
                     f.write(content)
 
-            subprocess.run(['systemctl', 'daemon-reload'], check=True, timeout=5)
+            subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=5)
 
             if self.is_running:
                 result = subprocess.run(
-                    f'systemctl restart {self.service}',
+                    f"systemctl restart {self.service}",
                     shell=True,
                     capture_output=True,
                     text=True,
                     check=True,
-                    timeout=10
+                    timeout=10,
                 )
                 return True, "Конфигурация обновлена и служба перезапущена"
             else:
@@ -571,12 +595,12 @@ class UnitService(models.Model):
         """Включение автозагрузки"""
         try:
             result = subprocess.run(
-                f'systemctl enable {self.service}',
+                f"systemctl enable {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=5
+                timeout=5,
             )
             self.auto_start = True
             self.save()
@@ -588,12 +612,12 @@ class UnitService(models.Model):
         """Отключение автозагрузки"""
         try:
             result = subprocess.run(
-                f'systemctl disable {self.service}',
+                f"systemctl disable {self.service}",
                 shell=True,
                 capture_output=True,
                 text=True,
                 check=True,
-                timeout=5
+                timeout=5,
             )
             self.auto_start = False
             self.save()

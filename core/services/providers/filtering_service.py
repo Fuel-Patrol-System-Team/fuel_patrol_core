@@ -20,6 +20,8 @@ class FilteringService(BaseFilteringService):
 
         filtered_df, _ = self.filtering_count(filtered_df, COUNT_VALUE=5)
 
+        filtered_df, _ = self.filtering_ptime(filtered_df, )
+
 
         filtered_df, _ = self.filtering_special_required(filtered_df)
 
@@ -42,6 +44,10 @@ class FilteringService(BaseFilteringService):
         """Фильтрация по низкой скорости"""
         result_df = result_df.with_columns((pl.col("pos_s") <= LOW_SPEED_FACTOR).alias("low_speed"))
         filtered_df = result_df.filter(pl.col("low_speed") & pl.col("is_leak"))
+        return filtered_df, result_df
+
+    def filtering_ptime(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        filtered_df = result_df.filter(pl.col("ptime") > 10)
         return filtered_df, result_df
 
     def filtering_spent_fuel_std(self, result_df: pl.DataFrame, SIGMAS: float = 3.5) -> Tuple[

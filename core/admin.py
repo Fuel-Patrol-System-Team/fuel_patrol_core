@@ -42,8 +42,8 @@ class MediaInline(admin.TabularInline):
 class CarReportInline(admin.TabularInline):
     model = CarReport
     extra = 0
-    fields = ('datetime', 'volume', 'status')
-    readonly_fields = ('datetime', 'volume', 'status')
+    fields = ('datetime', 'speed', 'volume', 'status')
+    readonly_fields = ('datetime', 'speed', 'volume', 'status')
     verbose_name = "Отчет об автомобиле"
     verbose_name_plural = "Отчеты об автомобилях"
     can_delete = False
@@ -287,7 +287,7 @@ class CarConsumptionAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(CarReport)
 class CarReportAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'car_display', 'datetime', 'volume', 'status')
+    list_display = ('id', 'car_display', 'speed', 'datetime', 'volume', 'status')
     list_filter = ('datetime', 'status')
     search_fields = ('car_id__name',)
     ordering = ('-datetime',)

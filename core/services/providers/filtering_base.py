@@ -33,6 +33,11 @@ class BaseFilteringService(ABC):
         pass
 
     @abstractmethod
+    def filtering_ptime(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """Фильтрация по ptime(сколько времени были данные)"""
+        pass
+
+    @abstractmethod
     def filtering_standing_hard(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Жесткая фильтрация стоянок"""
         pass

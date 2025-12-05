@@ -273,6 +273,9 @@ class LeaksService(BaseLeaksCalculator):
             .alias("dtime"),
             pl.col("rpm").fill_null(0),
         )
+        df = df.with_columns(
+            pl.when(pl.col("dtime") > 5 * 60).then(0).otherwise(pl.col("dtime")).alias("ptime")
+        )
         logger.debug("Рассчитан dtime")
 
         df = df.with_columns(
@@ -425,6 +428,7 @@ class LeaksService(BaseLeaksCalculator):
                 pl.col("count").sum(),
                 pl.col("ign").max().alias("ign_max"),
                 pl.col("ign").sum(),
+                pl.sum("ptime")
             ]
         )
         grouped_count = len(df)
@@ -531,6 +535,7 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
                 pl.sum("ign"),
+                pl.sum("ptime")
             ]
         )
         grouped_count = len(anti_bug)
@@ -581,6 +586,7 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
                 pl.sum("ign"),
+                pl.sum("ptime")
             ]
         )
         final_count = len(result)

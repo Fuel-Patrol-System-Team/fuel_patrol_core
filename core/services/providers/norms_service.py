@@ -110,7 +110,7 @@ class NormsService:
             primary_dict: Dict[str, Dict[str, float]],
             ANTI_BUG_TIME_SECONDS: int = 10,
             PRE_PERIOD_TIME: int = 3,
-            PERIOD_2_MIN: int = 30,
+            PERIOD_2_MIN: int = 60, 
             VOLTAGE_LIMIT: float = 0.16,
             REFUELING_LIMIT: int = 4000,
             FUEL_JUMP_BARRIER_PERC: float = 0.05,

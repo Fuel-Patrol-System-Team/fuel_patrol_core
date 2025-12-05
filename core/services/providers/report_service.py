@@ -7,7 +7,14 @@ from django.db import transaction
 from datetime import timedelta
 import polars as pl
 
-from core.models import ReportQuery, ReportQueryDetails, CarBadData, Car, CarReport, CarConsumption
+from core.models import (
+    ReportQuery,
+    ReportQueryDetails,
+    CarBadData,
+    Car,
+    CarReport,
+    CarConsumption,
+)
 from core.services.providers.json_serializer import serialize_for_json
 
 logger = logging.getLogger(__name__)
@@ -19,9 +26,7 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def create_report(
-            provider_id: str,
-            report_type: str,
-            is_save_bad_data: bool = True
+        provider_id: str, report_type: str, is_save_bad_data: bool = True
     ) -> Tuple[ReportQuery, ReportQueryDetails]:
         """
         Создает новую заявку на отчет с деталями
@@ -32,13 +37,11 @@ class ReportService:
                 provider_id_id=provider_id,
                 report_type=report_type,
                 is_save_bad_data=is_save_bad_data,
-                status='created'
+                status="created",
             )
 
-
             report_details = ReportQueryDetails.objects.create(
-                report_query=report_query,
-                start_time=timezone.now()
+                report_query=report_query, start_time=timezone.now()
             )
 
             logger.info(f"Создан отчет {report_query.id} типа {report_type}")
@@ -51,10 +54,10 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def complete_report_success(
-            report_query: ReportQuery,
-            result_data: Dict[str, Any],
-            cars_proceed: int = 1,
-            cars_skipped: int = 0
+        report_query: ReportQuery,
+        result_data: Dict[str, Any],
+        cars_proceed: int = 1,
+        cars_skipped: int = 0,
     ) -> None:
         """
         Завершает отчет успешно
@@ -63,19 +66,15 @@ class ReportService:
             end_time = timezone.now()
             start_time = report_query.report_query_details.start_time
 
-
             if start_time:
                 time_proceed = end_time - start_time
             else:
                 time_proceed = timedelta(0)
 
-
             serialized_result = serialize_for_json(result_data)
 
-
-            report_query.status = 'completed'
+            report_query.status = "completed"
             report_query.save()
-
 
             report_details = report_query.report_query_details
             report_details.result = serialized_result
@@ -94,11 +93,11 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def complete_report_error(
-            report_query: ReportQuery,
-            error_message: str,
-            exception: Optional[Exception] = None,
-            cars_proceed: int = 0,
-            cars_skipped: int = 1
+        report_query: ReportQuery,
+        error_message: str,
+        exception: Optional[Exception] = None,
+        cars_proceed: int = 0,
+        cars_skipped: int = 1,
     ) -> None:
         """
         Завершает отчет с ошибкой
@@ -107,32 +106,29 @@ class ReportService:
             end_time = timezone.now()
             start_time = report_query.report_query_details.start_time
 
-
             if start_time:
                 time_proceed = end_time - start_time
             else:
                 time_proceed = timedelta(0)
 
-
             traceback_data = {
                 "error": error_message,
-                "timestamp": timezone.now().isoformat()
+                "timestamp": timezone.now().isoformat(),
             }
 
             if exception:
-                traceback_data.update({
-                    "exception_type": type(exception).__name__,
-                    "exception_message": str(exception),
-                    "traceback": traceback.format_exc()
-                })
-
+                traceback_data.update(
+                    {
+                        "exception_type": type(exception).__name__,
+                        "exception_message": str(exception),
+                        "traceback": traceback.format_exc(),
+                    }
+                )
 
             serialized_traceback = serialize_for_json(traceback_data)
 
-
-            report_query.status = 'error'
+            report_query.status = "error"
             report_query.save()
-
 
             report_details = report_query.report_query_details
             report_details.traceback = serialized_traceback
@@ -142,18 +138,20 @@ class ReportService:
             report_details.cars_skipped = cars_skipped
             report_details.save()
 
-            logger.error(f"Отчет {report_query.id} завершен с ошибкой за {time_proceed}: {error_message}")
+            logger.error(
+                f"Отчет {report_query.id} завершен с ошибкой за {time_proceed}: {error_message}"
+            )
 
         except Exception as e:
-            logger.error(f"Ошибка при завершении отчета с ошибкой {report_query.id}: {e}")
+            logger.error(
+                f"Ошибка при завершении отчета с ошибкой {report_query.id}: {e}"
+            )
             raise
 
     @staticmethod
     @transaction.atomic
     def create_bad_data_record(
-            car: Car,
-            reason: str,
-            report_query: Optional[ReportQuery] = None
+        car: Car, reason: str, report_query: Optional[ReportQuery] = None
     ) -> None:
         """
         Создает запись о некорректных данных
@@ -163,9 +161,7 @@ class ReportService:
                 return
 
             CarBadData.objects.create(
-                car_id=car,
-                reason=reason,
-                datetime=timezone.now()
+                car_id=car, reason=reason, datetime=timezone.now()
             )
 
             logger.warning(f"Создана запись CarBadData для {car.name}: {reason}")
@@ -185,13 +181,14 @@ class ReportService:
 
         try:
 
-            leaks_records = leaks_df.filter(
-                pl.col("is_leak") == True
-            ).select([
-                "auto", "timestamp", "leak", "is_leak"
-            ]).to_dicts()
+            leaks_records = (
+                leaks_df.filter(pl.col("is_leak") == True)
+                .to_dicts()
+            )
 
-            logger.info(f"Найдено {len(leaks_records)} записей с утечками для сохранения в CarReport")
+            logger.info(
+                f"Найдено {len(leaks_records)} записей с утечками для сохранения в CarReport"
+            )
 
             if not leaks_records:
                 logger.warning("Нет записей с is_leak=True для сохранения")
@@ -204,11 +201,13 @@ class ReportService:
                 try:
                     car_id = record["auto"]
                     timestamp = record["timestamp"]
+                    speed = record["pos_s"]
                     leak_volume = record["leak"]
                     is_leak = record["is_leak"]
 
                     logger.debug(
-                        f"Обработка записи: car_id={car_id}, timestamp={timestamp}, leak={leak_volume}, is_leak={is_leak}")
+                        f"Обработка записи: car_id={car_id}, timestamp={timestamp}, leak={leak_volume}, is_leak={is_leak}"
+                    )
 
                     car = Car.objects.get(id=car_id)
 
@@ -216,15 +215,17 @@ class ReportService:
                         car_id=car,
                         datetime=timestamp,
                         volume=int(leak_volume),
-                        status=bool(is_leak)
+                        speed=float(speed),
+                        status=bool(is_leak),
                     )
                     car_reports.append(car_report)
-
 
                     if len(car_reports) >= 100:
                         CarReport.objects.bulk_create(car_reports)
                         saved_count += len(car_reports)
-                        logger.info(f"Сохранено {len(car_reports)} записей CarReport (батч)")
+                        logger.info(
+                            f"Сохранено {len(car_reports)} записей CarReport (батч)"
+                        )
                         car_reports = []
 
                 except Car.DoesNotExist:
@@ -234,11 +235,12 @@ class ReportService:
                     logger.error(f"Ошибка создания CarReport для {record['auto']}: {e}")
                     continue
 
-
             if car_reports:
                 CarReport.objects.bulk_create(car_reports)
                 saved_count += len(car_reports)
-                logger.info(f"Сохранено {len(car_reports)} записей CarReport (финальный батч)")
+                logger.info(
+                    f"Сохранено {len(car_reports)} записей CarReport (финальный батч)"
+                )
 
             logger.info(f"Всего сохранено {saved_count} записей в CarReport")
             return saved_count
@@ -271,10 +273,9 @@ class ReportService:
                         summer_volume=row.get("norma_rasx_summer"),
                         speed_etalon=row.get("speed_etalon", 60.0),
                         max_fuel=row.get("max_fuel", 2000.0),
-                        valid_period=row.get("period")
+                        valid_period=row.get("period"),
                     )
                     consumption_records.append(consumption)
-
 
                     if len(consumption_records) >= 50:
                         CarConsumption.objects.bulk_create(consumption_records)
@@ -283,12 +284,15 @@ class ReportService:
                         logger.debug(f"Сохранено {saved_count} записей CarConsumption")
 
                 except Car.DoesNotExist:
-                    logger.warning(f"Машина {row['sl_avto']} не найдена для CarConsumption")
+                    logger.warning(
+                        f"Машина {row['sl_avto']} не найдена для CarConsumption"
+                    )
                     continue
                 except Exception as e:
-                    logger.error(f"Ошибка создания CarConsumption для {row['sl_avto']}: {e}")
+                    logger.error(
+                        f"Ошибка создания CarConsumption для {row['sl_avto']}: {e}"
+                    )
                     continue
-
 
             if consumption_records:
                 CarConsumption.objects.bulk_create(consumption_records)
