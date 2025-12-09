@@ -35,9 +35,9 @@ from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA
+    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA
 )
-from app.tasks import sync_vehicles_task, process_single_car_data_task
+from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
     MileageTestSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -54,6 +54,7 @@ from core.helpers.permissions import IsOrgMember
 from .services.data_providers.utils import provider_factory
 from .services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
 from .services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
+from .services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
 from .services.providers.mileage_calculation_service import MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
 from .services.providers.report_service import ReportService
@@ -913,6 +914,66 @@ class CarBadDataAPIView(ListAPIView):
                 {"error": str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+
+class StartTerminalMessagesParsingView(APIView):
+    """
+    View для запуска парсинга terminalMessages
+    """
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**PARSE_RAW_DATA_SCHEMA)
+    def post(self, request):
+        try:
+            provider_name = request.data.get('provider_name')
+            start_date_str = request.data.get('start_date')
+            end_date_str = request.data.get('end_date')
+            is_raw_data = request.data.get('is_raw_data')
+
+            if not all([provider_name, start_date_str, end_date_str]):
+                return Response(
+                    {'error': 'Требуются параметры: provider_name, start_date, end_date'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+
+                if start_date >= end_date:
+                    return Response(
+                        {'error': 'start_date должен быть раньше end_date'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            except ValueError:
+                return Response(
+                    {'error': 'Неверный формат даты. Используйте YYYY-MM-DD'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            task = parse_terminal_messages_task.delay(
+                provider_name=provider_name,
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+                is_raw_data=is_raw_data
+            )
+
+            return Response({
+                'status': 'success',
+                'message': 'Задача парсинга terminalMessages запущена',
+                'task_id': task.id,
+                'provider_name': provider_name,
+                'start_date': start_date_str,
+                'end_date': end_date_str
+            }, status=status.HTTP_202_ACCEPTED)
+
+        except Exception as e:
+            return Response(
+                {'error': f'Ошибка запуска задачи: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
 
 class LanguageListAPIView(ListAPIView):
     """
