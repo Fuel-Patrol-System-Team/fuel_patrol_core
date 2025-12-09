@@ -11,7 +11,8 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     ProviderDataRequestAPIView, CarLeaksAPIView, DataProviderCreateAPIView, \
     CarActiveStatusAPIView, MileageCalculationAPIView, SensorsKeyListAPIView, LanguageListAPIView, \
     CustomTokenObtainPairView, \
-    CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView
+    CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
+    StartTerminalMessagesParsingView
 
 urlpatterns = [
 
@@ -68,6 +69,12 @@ urlpatterns = [
     path('parsing/cars', VehicleSyncAPIView.as_view(), name='parsing-cars'),
 
     path('parsing/terminal-messages', CarDataRequestAPIView.as_view(), name='parsing-terminal-messages'),
+
+    path(
+        'parsing/parse-terminal-messages',
+        StartTerminalMessagesParsingView.as_view(),
+        name='parse_terminal_messages'
+    ),
 
     path('languages', LanguageListAPIView.as_view(), name='languages-list')
 ]

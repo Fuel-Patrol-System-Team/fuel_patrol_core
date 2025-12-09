@@ -4,6 +4,7 @@ import polars as pl
 from datetime import datetime
 from typing import Dict, Optional, Any
 
+import pytz
 from celery import chord, shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 import pandas as pd
@@ -61,6 +62,7 @@ from core.services.providers.glonass.glonassoft_mileage_provider import (
 from core.services.providers.glonass.glonassoft_motohours_provider import (
     GlonassSoftMotohoursProvider,
 )
+from core.services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
 from core.services.providers.glonass.glonasssoft_data_provider import (
     GlonassSoftDataProvider,
 )
@@ -1778,3 +1780,44 @@ def parse_merged_data(self, report_query_id):
                 f"Ошибка в parse_merged_data для {report_query_id}: {e}",
             )
         raise self.retry(exc=e)
+
+
+@shared_task(bind=True)
+def parse_terminal_messages_task(
+        self,
+        provider_name: str,
+        start_date_str: str,
+        end_date_str: str,
+        is_raw_data: bool = True
+):
+    """
+    Celery задача для парсинга terminalMessages
+    """
+    try:
+        # Преобразуем строки в datetime
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+
+        parser = GlonassSoftTerminalMessagesParser(
+            provider_name=provider_name,
+            start_date=start_date,
+            end_date=end_date,
+            is_raw_data=is_raw_data
+        )
+
+        result = parser.parse_all_cars(max_workers=3)
+
+        self.update_state(
+            state='SUCCESS',
+            meta=result
+        )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинга terminalMessages: {e}", exc_info=True)
+        self.update_state(
+            state='FAILURE',
+            meta={'error': str(e)}
+        )
+        raise
