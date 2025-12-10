@@ -74,6 +74,7 @@ class OrgUser(AbstractUser):
 class Car(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     id_in_provider_system = models.IntegerField(default=0)
+    car_unit = models.ForeignKey("CarUnit", on_delete=models.SET_NULL, **NULLABLE)
     name = models.CharField(max_length=255)
     description = models.TextField()
     engine_type = models.FloatField(default=0.0)
@@ -92,6 +93,17 @@ class Car(models.Model):
     def __str__(self):
         return self.name
 
+class CarUnit(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = "Car Unit"
+        verbose_name_plural = "Car Units"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
 
 class CarConsumption(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -129,6 +141,7 @@ class DataProvider(models.Model):
 
     def __str__(self):
         return self.name
+
 
 
 class ReportQuery(models.Model):

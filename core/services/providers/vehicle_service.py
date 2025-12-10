@@ -1,7 +1,7 @@
 import logging
 from typing import Dict, Any, Tuple, List, Optional
 from django.db import transaction
-from core.models import Car, DataProvider, SensorsValues, SensorsKey
+from core.models import Car, DataProvider, SensorsValues, SensorsKey, CarUnit
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,15 @@ class VehicleService:
         critical_errors = []
 
         try:
+            car_unit_id = vehicle_data.get("car_unit_id")
+            car_unit = None
+
+            if car_unit_id:
+                try:
+                    car_unit = CarUnit.objects.get(id=car_unit_id)
+                    logger.debug(f"Найден CarUnit по ID: {car_unit_id} ({car_unit.name})")
+                except CarUnit.DoesNotExist:
+                    logger.warning(f"CarUnit с ID {car_unit_id} не найден, связь не установлена")
 
             custom_fields = {
                 field["name"]: field["value"]
@@ -41,6 +50,7 @@ class VehicleService:
                 id=vehicle_guid,
                 defaults={
                     "id_in_provider_system": vehicle_id,
+                    "car_unit": car_unit,
                     "name": vehicle_data.get("name", ""),
                     "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                     "engine_type": engine_type,
@@ -56,7 +66,11 @@ class VehicleService:
             sensors_mapping = vehicle_data.get("sensorsMapping", {})
             VehicleService._save_sensors_mapping(car, sensors_mapping)
 
-            logger.info(f"Сохранены данные для vehicleId={vehicle_id}. Сенсоров: {len(sensors_mapping)}")
+            logger.info(
+                f"Сохранены данные для vehicleId={vehicle_id}. "
+                f"Сенсоров: {len(sensors_mapping)}. "
+                f"CarUnit: {car_unit.name if car_unit else 'не указан'}"
+            )
 
             return car, created, critical_errors
 

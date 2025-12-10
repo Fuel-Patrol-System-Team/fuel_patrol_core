@@ -18,7 +18,7 @@ from django_celery_beat.admin import (
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
     Media, ReportQuery, DataProvider, CarBadData, Language,
-    SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails, UnitService
+    SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails, UnitService, CarUnit
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -264,6 +264,66 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
             f'Активировано {updated} машин(ы)',
             messages.SUCCESS
         )
+
+
+@admin.register(CarUnit)
+class CarUnitAdmin(ImportExportMixin, ModelAdmin):
+    list_display = (
+        'id',
+        'name',
+        'cars_count_display',
+        'created_at_display',
+        'updated_at_display'
+    )
+
+    list_filter = ('name',)
+    search_fields = ('name',)
+    ordering = ('name',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+
+    fields = ('name',)
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        return queryset.prefetch_related('car_set')
+
+    def cars_count_display(self, obj):
+
+        count = obj.car_set.count()
+        if count > 0:
+            url = (
+                    reverse('admin:core_car_changelist')
+                    + f'?car_unit__id__exact={obj.id}'
+            )
+            return mark_safe(f'<a href="{url}">{count} машина(ы)</a>')
+        return "0 машин"
+
+    cars_count_display.short_description = "Количество машин"
+    cars_count_display.admin_order_field = 'car_count'
+
+    def created_at_display(self, obj):
+        """Форматированное отображение даты создания"""
+        if obj.car_set.exists():
+            first_car = obj.car_set.earliest('created_at')
+            return first_car.created_at.strftime('%Y-%m-%d %H:%M')
+        return "Нет данных"
+
+    created_at_display.short_description = "Первая машина создана"
+
+    def updated_at_display(self, obj):
+        """Форматированное отображение даты обновления"""
+        if obj.car_set.exists():
+            last_car = obj.car_set.latest('last_processed_date')
+            if last_car.last_processed_date:
+                return last_car.last_processed_date.strftime('%Y-%m-%d %H:%M')
+        return "Нет данных"
+
+    updated_at_display.short_description = "Последняя обработка"
+
+    actions = [
+        'export_selected'
+    ]
 
 
 @admin.register(CarConsumption)

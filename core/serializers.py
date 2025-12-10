@@ -14,6 +14,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
+    CarUnit,
 )
 
 
@@ -25,6 +26,7 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
 
 class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
+    car_unit = serializers.SerializerMethodField()
 
     class Meta:
         model = Car
@@ -32,6 +34,7 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "id",
             "id_in_provider_system",
             "name",
+            "car_unit",
             "description",
             "engine_type",
             "input",
@@ -40,8 +43,19 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "last_processed_date",
             "is_tarrified",
             "is_active",
-            "sensors",  # добавляем поле с датчиками
+            "sensors",
         ]
+
+    def get_car_unit(self, obj):
+        if hasattr(self.context, 'car_unit_info'):
+            return self.context['car_unit_info']
+
+        if obj.car_unit:
+            return {
+                'id': str(obj.car_unit.id),
+                'name': obj.car_unit.name
+            }
+        return None
 
     def get_sensors(self, obj):
         language_code = self.context.get("language_code", "ru")
@@ -84,6 +98,10 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
         model = CarReport
         fields = ["id", "car_id", "speed", "datetime", "volume", "status"]
 
+class CarUnitSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CarUnit
+        fields = "__all__"
 
 class CarConsumptionOutputSerializer(serializers.ModelSerializer):
     car_id = CarOutputSerializer(read_only=True)

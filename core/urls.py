@@ -12,7 +12,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     CarActiveStatusAPIView, MileageCalculationAPIView, SensorsKeyListAPIView, LanguageListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
-    StartTerminalMessagesParsingView
+    StartTerminalMessagesParsingView, CarUnitListAPIView
 
 urlpatterns = [
 
@@ -42,6 +42,7 @@ urlpatterns = [
     path('org-users/<uuid:pk>', OrgUserDetailAPIView.as_view(), name='orguser-detail'),
     path('cars', CarListAPIView.as_view(), name='car-list'),
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
+    path('cars/car-units',CarUnitListAPIView.as_view(),name='car-units'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),

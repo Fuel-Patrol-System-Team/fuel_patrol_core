@@ -29,7 +29,7 @@ from .helpers.media import create_media_instance, validate_media_upload, process
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language
+    CarBadData, Language, CarUnit
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -45,7 +45,7 @@ from .serializers import (
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
     DataProviderSerializer, CarBadDataOutputSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
-    CarBadDataSerializer
+    CarBadDataSerializer, CarUnitSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, attach_media_response, user_response, \
@@ -277,17 +277,18 @@ class VehicleSyncAPIView(APIView):
 
 class CarDataRequestAPIView(APIView):
     @swagger_auto_schema(
-        operation_description="Создаёт заявку на получение и обработку данных по конкретным машинам или по всем машинам провайдера",
+        operation_description="Создаёт заявку на получение и обработку данных по конкретным машинам, по юнитам или по всем машинам провайдера",
         request_body=CAR_DATA_REQUEST_SCHEMA,
         responses={
             202: "Задачи обработки запущены",
             400: "Неверные данные",
-            404: "Провайдер или машины не найдены"
+            404: "Провайдер, машины или юниты не найдены"
         }
     )
     def post(self, request):
         provider_name = request.data.get('provider_name')
         car_ids = request.data.get('car_ids', [])
+        unit_ids = request.data.get('unit_ids', [])  # Новый параметр
         parse_all = request.data.get('parse_all', False)
         start_date = request.data.get('start_date')
         end_date = request.data.get('end_date')
@@ -299,8 +300,24 @@ class CarDataRequestAPIView(APIView):
         if not start_date or not end_date:
             return error_response("Start date and end date are required", status.HTTP_400_BAD_REQUEST)
 
-        if not parse_all and not car_ids:
-            return error_response("Either car_ids list or parse_all=True is required", status.HTTP_400_BAD_REQUEST)
+        # Проверка: должен быть выбран один из режимов
+        selected_modes = sum([
+            bool(parse_all),
+            bool(car_ids),
+            bool(unit_ids)
+        ])
+
+        if selected_modes == 0:
+            return error_response(
+                "One of the following must be specified: parse_all=True, car_ids list, or unit_ids list",
+                status.HTTP_400_BAD_REQUEST
+            )
+
+        if selected_modes > 1:
+            return error_response(
+                "Only one mode can be selected: parse_all, car_ids, or unit_ids",
+                status.HTTP_400_BAD_REQUEST
+            )
 
         try:
             provider = DataProvider.objects.get(name=provider_name)
@@ -308,11 +325,14 @@ class CarDataRequestAPIView(APIView):
             return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
 
         cars = None
+        mode_info = ""
+
         try:
             if parse_all:
                 logger.info(f"parse_all flag is True, fetching all cars for provider {provider_name}")
                 cars = Car.objects.filter(data_providers=provider)
                 car_ids = [str(car.id) for car in cars]
+                mode_info = f"parse_all mode - {len(cars)} cars"
 
                 if not cars.exists():
                     logger.warning(f"No cars found for provider {provider_name}")
@@ -321,7 +341,43 @@ class CarDataRequestAPIView(APIView):
                         status.HTTP_404_NOT_FOUND
                     )
                 logger.info(f"Found {len(cars)} cars for provider {provider_name}")
-            else:
+
+            elif unit_ids:
+                logger.info(f"Processing cars by unit_ids: {unit_ids}")
+
+                try:
+                    car_units = CarUnit.objects.filter(id__in=unit_ids)
+                    found_unit_ids = set(str(unit.id) for unit in car_units)
+                    missing_unit_ids = set(unit_ids) - found_unit_ids
+
+                    if missing_unit_ids:
+                        logger.warning(f"Missing unit IDs: {missing_unit_ids}")
+                        return error_response(
+                            f"Some units not found: {list(missing_unit_ids)}",
+                            status.HTTP_404_NOT_FOUND
+                        )
+                except Exception as e:
+                    logger.error(f"Error fetching car units: {e}")
+                    return error_response(f"Error validating unit IDs: {str(e)}", status.HTTP_400_BAD_REQUEST)
+
+                cars = Car.objects.filter(
+                    data_providers=provider,
+                    car_unit__in=car_units
+                ).distinct()
+
+                car_ids = [str(car.id) for car in cars]
+                mode_info = f"unit_ids mode - {len(car_units)} units, {len(cars)} cars"
+
+                if not cars.exists():
+                    logger.warning(f"No cars found for units {unit_ids} in provider {provider_name}")
+                    return error_response(
+                        f"No cars found for specified units in provider {provider_name}",
+                        status.HTTP_404_NOT_FOUND
+                    )
+
+                logger.info(f"Found {len(cars)} cars for {len(car_units)} units")
+
+            else:  # car_ids mode
                 logger.info(f"Processing specific cars: {car_ids}")
                 cars = Car.objects.filter(
                     id__in=car_ids,
@@ -329,6 +385,7 @@ class CarDataRequestAPIView(APIView):
                 ).distinct()
                 found_car_ids = set(str(car.id) for car in cars)
                 missing_car_ids = set(car_ids) - found_car_ids
+                mode_info = f"car_ids mode - {len(found_car_ids)} cars"
 
                 if missing_car_ids:
                     logger.warning(f"Missing car IDs: {missing_car_ids}")
@@ -339,7 +396,7 @@ class CarDataRequestAPIView(APIView):
 
         except Exception as e:
             logger.error(f"Error checking cars existence: {e}", exc_info=True)
-            return error_response(f"Error validating car IDs: {str(e)}", status.HTTP_400_BAD_REQUEST)
+            return error_response(f"Error validating input IDs: {str(e)}", status.HTTP_400_BAD_REQUEST)
 
         if cars is None:
             logger.error("Cars queryset is None unexpectedly")
@@ -348,9 +405,23 @@ class CarDataRequestAPIView(APIView):
         task_group = []
         report_query_ids = []
         car_names = {}
+        unit_info = {}
 
         try:
-            logger.info(f"Starting processing for {len(cars)} cars")
+            logger.info(f"Starting processing for {len(cars)} cars ({mode_info})")
+
+            if unit_ids:
+                for car in cars:
+                    if car.car_unit:
+                        unit_id = str(car.car_unit.id)
+                        unit_name = car.car_unit.name
+                        if unit_id not in unit_info:
+                            unit_info[unit_id] = {
+                                'name': unit_name,
+                                'car_count': 0
+                            }
+                        unit_info[unit_id]['car_count'] += 1
+
             for car in cars:
                 report_query, report_details = ReportService.create_report(
                     provider_id=str(provider.id),
@@ -381,6 +452,7 @@ class CarDataRequestAPIView(APIView):
                 "car_names": car_names,
                 "message": f"Обработка данных для {len(car_ids)} машин запущена",
                 "provider_name": provider_name,
+                "mode": mode_info.split(' - ')[0],  # parse_all, unit_ids или car_ids
                 "status_endpoint": f"/api/tasks/{result.id}/status/",
                 "individual_status_endpoint": "/api/tasks/{task_id}/status/"
             }
@@ -389,6 +461,15 @@ class CarDataRequestAPIView(APIView):
                 response_data["parse_all_mode"] = True
                 response_data[
                     "message"] = f"Обработка данных для всех ({len(car_ids)}) машин провайдера {provider_name} запущена"
+
+            elif unit_ids:
+                response_data["unit_ids"] = unit_ids
+                response_data["units_info"] = unit_info
+                response_data[
+                    "message"] = f"Обработка данных для {len(car_ids)} машин из {len(unit_info)} юнитов запущена"
+
+            else:
+                response_data["car_ids"] = car_ids
 
             return success_response(response_data, status.HTTP_202_ACCEPTED)
 
@@ -579,14 +660,13 @@ class OrgUserDetailAPIView(RetrieveAPIView):
     queryset = OrgUser.objects.all()
     lookup_field = 'pk'
 
-
 class CarListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['name', 'is_active', 'is_tarrified']
-    search_fields = ['name', 'description']
+    search_fields = ['name', 'description','car_unit__name']
 
     def get_queryset(self):
         result = Car.objects.filter(
@@ -609,8 +689,38 @@ class CarDetailAPIView(RetrieveAPIView):
         context = super().get_serializer_context()
         user_language = getattr(self.request.user, 'active_language', None)
         context['language_code'] = user_language.code if user_language else 'ru'
+
+        car_id = self.kwargs.get('pk')
+        try:
+            car = Car.objects.get(id=car_id)
+            if car.car_unit:
+                context['car_unit_info'] = {
+                    'id': str(car.car_unit.id),
+                    'name': car.car_unit.name
+                }
+        except Car.DoesNotExist:
+            pass
+
         return context
 
+class CarUnitListAPIView(ListAPIView):
+    """
+    API для получения списка всех подразделений (CarUnit) организации
+    """
+    permission_classes = [IsOrgMember]
+    serializer_class = CarUnitSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['name']
+    search_fields = ['name']
+
+    def get_queryset(self):
+        """
+        Возвращает только CarUnit'ы, которые связаны с машинами организации пользователя
+        """
+        return CarUnit.objects.filter(
+            car__data_providers__org_id=self.request.user.org.id
+        ).distinct().order_by('name')
 
 class CarConsumptionListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]

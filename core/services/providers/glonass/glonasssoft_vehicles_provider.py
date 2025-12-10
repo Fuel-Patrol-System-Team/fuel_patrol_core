@@ -6,12 +6,12 @@ import pytz
 import textdistance
 from typing import Dict, Any, Optional, List
 
+from core.models import CarUnit
 from core.services.providers.rate_limited_provider import (
     RateLimitedProvider,
     VehicleRateLimitedProvider,
 )
-from core.services.providers.vehicle_base import BaseProvider
-from core.services.providers.rate_limiter import GlobalRateLimiter
+
 from core.helpers.decorators import retry_on_status
 
 logger = logging.getLogger(__name__)
@@ -126,10 +126,26 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             return None
 
     def _enrich_with_sensors_mapping(
-        self, vehicle_data: Dict[str, Any]
+            self, vehicle_data: Dict[str, Any]
     ) -> Dict[str, Any]:
         input_value, output_value = None, None
         sensors_mapping = {}
+
+        unit_name = vehicle_data.get("unitName")
+        car_unit = None
+
+        if unit_name:
+            car_unit, created = CarUnit.objects.get_or_create(
+                name=unit_name
+            )
+            if created:
+                logger.info(f"Создан новый CarUnit: {unit_name}")
+            else:
+                logger.debug(f"Найден существующий CarUnit: {unit_name}")
+
+        if car_unit:
+            vehicle_data["car_unit_id"] = str(car_unit.id)
+        vehicle_data["unit_name"] = unit_name
 
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
@@ -181,8 +197,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping["rpm"] = f"parameters.{key_part}"
 
             elif (
-                sensor_type == "MileageSensor"
-                or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
+                    sensor_type == "MileageSensor"
+                    or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
             ):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
@@ -213,8 +229,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         key_part = "ign"
                     sensors_mapping["ign"] = f"parameters.{key_part}"
             elif (
-                sensor_type == "Motohours"
-                or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
+                    sensor_type == "Motohours"
+                    or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
             ):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
