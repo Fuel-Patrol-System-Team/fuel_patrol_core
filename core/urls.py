@@ -12,7 +12,7 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     CarActiveStatusAPIView, MileageCalculationAPIView, SensorsKeyListAPIView, LanguageListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
-    StartTerminalMessagesParsingView, CarUnitListAPIView
+    StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView
 
 urlpatterns = [
 
@@ -42,10 +42,14 @@ urlpatterns = [
     path('org-users/<uuid:pk>', OrgUserDetailAPIView.as_view(), name='orguser-detail'),
     path('cars', CarListAPIView.as_view(), name='car-list'),
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
-    path('cars/car-units',CarUnitListAPIView.as_view(),name='car-units'),
+    path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
+
+    path('user-car-lists', UserCarListListView.as_view(), name='user-car-list-list'),
+    path('user-car-lists/<uuid:pk>', UserCarListDetailView.as_view(), name='user-car-list-detail'),
+
     path('report-queries', ReportQueryListAPIView.as_view(), name='report-query-list'),
     path('report-queries/<uuid:pk>', ReportQueryDetailAPIView.as_view(), name='report-query-detail'),
     path('media', MediaListAPIView.as_view(), name='media-list'),

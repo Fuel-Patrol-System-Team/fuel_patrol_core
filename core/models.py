@@ -84,6 +84,7 @@ class Car(models.Model):
     last_processed_date = models.DateTimeField(**NULLABLE)
     is_tarrified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
+    list_id = models.ForeignKey("UserCarList", on_delete=models.SET_NULL, **NULLABLE)
 
     class Meta:
         verbose_name = "Car"
@@ -104,6 +105,12 @@ class CarUnit(models.Model):
 
     def __str__(self):
         return self.name
+
+class UserCarList(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    user = models.ForeignKey(OrgUser, on_delete=models.SET_NULL, **NULLABLE)
+
 
 class CarConsumption(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

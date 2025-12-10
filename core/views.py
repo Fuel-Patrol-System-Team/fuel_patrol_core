@@ -8,10 +8,12 @@ from django.shortcuts import render
 from django_filters.rest_framework import DjangoFilterBackend
 
 from rest_framework.filters import SearchFilter
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView, RetrieveAPIView, get_object_or_404
+from rest_framework.generics import ListAPIView, RetrieveAPIView, get_object_or_404, RetrieveUpdateDestroyAPIView, \
+    ListCreateAPIView
 from rest_framework.parsers import MultiPartParser
 from rest_framework import status
 import logging
@@ -29,7 +31,7 @@ from .helpers.media import create_media_instance, validate_media_upload, process
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language, CarUnit
+    CarBadData, Language, CarUnit, UserCarList
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -45,7 +47,8 @@ from .serializers import (
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
     DataProviderSerializer, CarBadDataOutputSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
-    CarBadDataSerializer, CarUnitSerializer
+    CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
+    UserCarListSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, attach_media_response, user_response, \
@@ -811,6 +814,63 @@ class CarReportDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id=self.request.user.org
         )
 
+
+class UserCarListListView(ListCreateAPIView):
+    permission_classes = [IsOrgMember]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['name']
+    search_fields = ['name']
+
+    def get_queryset(self):
+        """Возвращает только списки текущего пользователя"""
+        return UserCarList.objects.filter(user=self.request.user).order_by('name')
+
+    def get_serializer_class(self):
+        """Используем разные сериализаторы для GET и POST"""
+        if self.request.method == 'GET':
+            return UserCarListSerializer
+        return UserCarListCreateUpdateSerializer
+
+    def perform_create(self, serializer):
+        """Автоматически устанавливаем текущего пользователя"""
+        serializer.save(user=self.request.user)
+
+
+class UserCarListDetailView(RetrieveUpdateDestroyAPIView):
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'pk'
+
+    def get_queryset(self):
+        """Только списки текущего пользователя"""
+        return UserCarList.objects.filter(user=self.request.user)
+
+    def get_serializer_class(self):
+        """Используем разные сериализаторы в зависимости от метода"""
+        if self.request.method == 'GET':
+            return UserCarListDetailSerializer
+        return UserCarListCreateUpdateSerializer
+
+    def retrieve(self, request, *args, **kwargs):
+        """Переопределяем retrieve чтобы добавить статистику"""
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+
+        data = serializer.data
+        car_count = Car.objects.filter(list_id=instance).count()
+        data['stats'] = {
+            'car_count': car_count,
+            'active_cars': Car.objects.filter(list_id=instance, is_active=True).count(),
+            'tarrified_cars': Car.objects.filter(list_id=instance, is_tarrified=True).count()
+        }
+
+        return Response(data)
+
+    def perform_destroy(self, instance):
+        """При удалении списка убираем связь у всех машин"""
+        Car.objects.filter(list_id=instance).update(list_id=None)
+
+        instance.delete()
 
 class DriverListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]

@@ -14,7 +14,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
-    CarUnit,
+    CarUnit, UserCarList,
 )
 
 
@@ -382,3 +382,73 @@ class CarBadDataSerializer(serializers.ModelSerializer):
             "datetime",
         ]
         read_only_fields = fields
+
+class UserCarListSerializer(serializers.ModelSerializer):
+    """Сериализатор для списков машин пользователя (без вложенных машин)"""
+
+    class Meta:
+        model = UserCarList
+        fields = ['id', 'name', 'user']
+        read_only_fields = ['id', 'user']
+
+
+class UserCarListDetailSerializer(serializers.ModelSerializer):
+    """Сериализатор для детального просмотра списка машин (с вложенными машинами)"""
+    cars = CarOutputSerializer(many=True, read_only=True, source='car_set')
+
+    class Meta:
+        model = UserCarList
+        fields = ['id', 'name', 'user', 'cars']
+        read_only_fields = ['id', 'user', 'cars']
+
+
+class UserCarListCreateUpdateSerializer(serializers.ModelSerializer):
+    """Сериализатор для создания и обновления списков машин"""
+    car_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=False,
+        help_text="Список ID машин для добавления в список"
+    )
+
+    class Meta:
+        model = UserCarList
+        fields = ['id', 'name', 'car_ids']
+        read_only_fields = ['id']
+
+    def create(self, validated_data):
+        car_ids = validated_data.pop('car_ids', [])
+        user = self.context['request'].user
+
+        car_list = UserCarList.objects.create(
+            name=validated_data['name'],
+            user=user
+        )
+
+        if car_ids:
+            cars = Car.objects.filter(
+                id__in=car_ids,
+                data_providers__org_id=user.org.id
+            )
+            cars.update(list_id=car_list)
+
+        return car_list
+
+    def update(self, instance, validated_data):
+        car_ids = validated_data.pop('car_ids', None)
+
+        if 'name' in validated_data:
+            instance.name = validated_data['name']
+
+        if car_ids is not None:
+            Car.objects.filter(list_id=instance).update(list_id=None)
+
+            if car_ids:
+                cars = Car.objects.filter(
+                    id__in=car_ids,
+                    data_providers__org_id=instance.user.org.id
+                )
+                cars.update(list_id=instance)
+
+        instance.save()
+        return instance
