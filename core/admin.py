@@ -1,5 +1,7 @@
 import os
 
+##TODO: NRyabcev: Сделай норм, а не вот эта хуета
+
 from django.contrib import admin, messages
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -18,7 +20,7 @@ from django_celery_beat.admin import (
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
     Media, ReportQuery, DataProvider, CarBadData, Language,
-    SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails, UnitService, CarUnit
+    SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails, UnitService, CarUnit, UserCarList, CarPrimary
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -264,67 +266,6 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
             f'Активировано {updated} машин(ы)',
             messages.SUCCESS
         )
-
-
-@admin.register(CarUnit)
-class CarUnitAdmin(ImportExportMixin, ModelAdmin):
-    list_display = (
-        'id',
-        'name',
-        'cars_count_display',
-        'created_at_display',
-        'updated_at_display'
-    )
-
-    list_filter = ('name',)
-    search_fields = ('name',)
-    ordering = ('name',)
-    export_form_class = UnfoldExportForm
-    import_form_class = UnfoldImportForm
-
-    fields = ('name',)
-
-    def get_queryset(self, request):
-        queryset = super().get_queryset(request)
-        return queryset.prefetch_related('car_set')
-
-    def cars_count_display(self, obj):
-
-        count = obj.car_set.count()
-        if count > 0:
-            url = (
-                    reverse('admin:core_car_changelist')
-                    + f'?car_unit__id__exact={obj.id}'
-            )
-            return mark_safe(f'<a href="{url}">{count} машина(ы)</a>')
-        return "0 машин"
-
-    cars_count_display.short_description = "Количество машин"
-    cars_count_display.admin_order_field = 'car_count'
-
-    def created_at_display(self, obj):
-        """Форматированное отображение даты создания"""
-        if obj.car_set.exists():
-            first_car = obj.car_set.earliest('created_at')
-            return first_car.created_at.strftime('%Y-%m-%d %H:%M')
-        return "Нет данных"
-
-    created_at_display.short_description = "Первая машина создана"
-
-    def updated_at_display(self, obj):
-        """Форматированное отображение даты обновления"""
-        if obj.car_set.exists():
-            last_car = obj.car_set.latest('last_processed_date')
-            if last_car.last_processed_date:
-                return last_car.last_processed_date.strftime('%Y-%m-%d %H:%M')
-        return "Нет данных"
-
-    updated_at_display.short_description = "Последняя обработка"
-
-    actions = [
-        'export_selected'
-    ]
-
 
 @admin.register(CarConsumption)
 class CarConsumptionAdmin(ImportExportMixin, ModelAdmin):
@@ -669,6 +610,493 @@ class SolarScheduleAdmin(ModelAdmin):
 class ClockedScheduleAdmin(BaseClockedScheduleAdmin, ModelAdmin):
     list_display = ('clocked_time',)
     search_fields = ('clocked_time',)
+
+
+@admin.register(UserCarList)
+class UserCarListAdmin(ImportExportMixin, ModelAdmin):
+    list_display = (
+        'id',
+        'name',
+        'user_display',
+        'cars_count_display',
+        'created_at_display'
+    )
+    list_filter = ('name', 'user')
+    search_fields = ('name', 'user__username')
+    ordering = ('name',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+
+    fields = ('name', 'user')
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        # Добавляем аннотацию количества машин
+        from django.db.models import Count
+        return queryset.annotate(
+            cars_count=Count('car', distinct=True)
+        )
+
+    def user_display(self, obj):
+        """Отображение пользователя со ссылкой"""
+        if obj.user:
+            url = reverse("admin:core_orguser_change", args=[obj.user.id])
+            return mark_safe(f'<a href="{url}">{obj.user.username}</a>')
+        return "Не указан"
+
+    user_display.short_description = "Пользователь"
+    user_display.admin_order_field = 'user__username'
+
+    def cars_count_display(self, obj):
+        """Отображение количества машин со ссылкой на фильтр"""
+        count = obj.car_set.count() if hasattr(obj, 'car_set') else 0
+        if count > 0:
+            url = (
+                    reverse('admin:core_car_changelist')
+                    + f'?list_id__id__exact={obj.id}'
+            )
+            return mark_safe(f'<a href="{url}">{count} машина(ы)</a>')
+        return "0 машин"
+
+    cars_count_display.short_description = "Количество машин"
+    cars_count_display.admin_order_field = 'cars_count'
+
+    def created_at_display(self, obj):
+        """Отображение даты создания первой машины в списке"""
+        if hasattr(obj, 'car_set') and obj.car_set.exists():
+            first_car = obj.car_set.earliest('created_at')
+            return first_car.created_at.strftime('%Y-%m-%d %H:%M')
+        return "Нет машин в списке"
+
+    created_at_display.short_description = "Первая машина добавлена"
+
+    actions = [
+        'export_selected',
+        'delete_empty_lists'
+    ]
+
+    @admin.action(description='🗑️ Удалить пустые списки машин')
+    def delete_empty_lists(self, request, queryset):
+        """Удаление списков машин, в которых нет машин"""
+        empty_lists = []
+        for car_list in queryset:
+            if not car_list.car_set.exists():
+                empty_lists.append(car_list.name)
+                car_list.delete()
+
+        if empty_lists:
+            self.message_user(
+                request,
+                f'Удалено {len(empty_lists)} пустых списков: {", ".join(empty_lists[:5])}'
+                + ("..." if len(empty_lists) > 5 else ""),
+                messages.SUCCESS
+            )
+        else:
+            self.message_user(
+                request,
+                'Пустые списки не найдены',
+                messages.INFO
+            )
+
+    def get_inlines(self, request, obj=None):
+        """Показываем inline только при редактировании существующего объекта"""
+        if obj:
+            return [UserCarListCarInline]
+        return []
+
+
+class UserCarListCarInline(admin.TabularInline):
+    """Inline для отображения машин в списке"""
+    model = Car
+    extra = 0
+    fields = (
+        'name',
+        'id_in_provider_system',
+        'car_unit_display',
+        'is_active_display',
+        'is_tarrified_display',
+        'created_at'
+    )
+    readonly_fields = (
+        'name',
+        'id_in_provider_system',
+        'car_unit_display',
+        'is_active_display',
+        'is_tarrified_display',
+        'created_at'
+    )
+    verbose_name = "Машина в списке"
+    verbose_name_plural = "Машины в списке"
+    can_delete = False
+    show_change_link = True
+
+
+    def car_unit_display(self, obj):
+        """Отображение юнита машины"""
+        if obj.car_unit:
+            return obj.car_unit.name
+        return "Не указан"
+
+    car_unit_display.short_description = "Подразделение"
+
+    def is_active_display(self, obj):
+        """Иконка активности"""
+        if obj.is_active:
+            return format_html('<span style="color: #00ff00;">● Активна</span>')
+        return format_html('<span style="color: #cccccc;">○ Неактивна</span>')
+
+    is_active_display.short_description = "Статус"
+
+    def is_tarrified_display(self, obj):
+        """Иконка тарирования"""
+        if obj.is_tarrified:
+            return format_html('<span style="color: #00ff00;">✓ Тарирована</span>')
+        return format_html('<span style="color: #cccccc;">✗ Не тарирована</span>')
+
+    is_tarrified_display.short_description = "Тарирование"
+
+    def has_add_permission(self, request, obj):
+        """Запрещаем добавление через inline"""
+        return False
+
+
+@admin.register(CarPrimary)
+class CarPrimaryAdmin(ImportExportMixin, ModelAdmin):
+    list_display = (
+        'id',
+        'car_display',
+        'created_at',
+        'data_preview',
+        'has_data_display'
+    )
+    list_filter = ('created_at',)
+    search_fields = ('car__name', 'car__id_in_provider_system')
+    ordering = ('-created_at',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    readonly_fields = ('id', 'car_display', 'created_at', 'data_preview_full')
+
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('id', 'car_display', 'created_at')
+        }),
+        ('JSON данные', {
+            'fields': ('primary',),
+            'classes': ('collapse',)
+        }),
+        ('Предпросмотр данных', {
+            'fields': ('data_preview_full',),
+            'classes': ('wide',)
+        }),
+    )
+
+    def car_display(self, obj):
+        """Отображение машины со ссылкой"""
+        if obj.car:
+            url = reverse("admin:core_car_change", args=[obj.car.id])
+            return mark_safe(f'<a href="{url}">{obj.car.name}</a>')
+        return "Не указана"
+
+    car_display.short_description = "Автомобиль"
+    car_display.admin_order_field = 'car__name'
+
+    def data_preview(self, obj):
+        """Краткий предпросмотр JSON данных в списке"""
+        if obj.primary:
+            import json
+            data_str = json.dumps(obj.primary, ensure_ascii=False)
+            if len(data_str) > 100:
+                return data_str[:97] + '...'
+            return data_str
+        return "Нет данных"
+
+    data_preview.short_description = "Данные (предпросмотр)"
+
+    def data_preview_full(self, obj):
+        """Полный предпросмотр JSON данных на странице редактирования"""
+        if obj.primary:
+            import json
+            data_str = json.dumps(obj.primary, ensure_ascii=False, indent=2)
+            return format_html(
+                '<pre style="font-family: monospace; font-size: 12px; '
+                'background-color: #000000; color: #00ff00; padding: 15px; '
+                'border-radius: 3px; max-height: 500px; overflow-y: auto; '
+                'line-height: 1.3; white-space: pre;">{}</pre>',
+                data_str
+            )
+        return "Нет данных"
+
+    data_preview_full.short_description = "Данные (полный просмотр)"
+
+    def has_data_display(self, obj):
+        """Иконка наличия данных"""
+        if obj.primary:
+            return format_html('<span style="color: #00ff00;">✓ Есть данные</span>')
+        return format_html('<span style="color: #cccccc;">✗ Нет данных</span>')
+
+    has_data_display.short_description = "Наличие данных"
+    has_data_display.boolean = True
+
+    actions = [
+        'export_selected',
+        'delete_empty_primary_data'
+    ]
+
+    @admin.action(description='🗑️ Удалить записи без данных')
+    def delete_empty_primary_data(self, request, queryset):
+        """Удаление записей с пустыми JSON данными"""
+        empty_records = queryset.filter(primary__isnull=True) | queryset.filter(primary={})
+        count = empty_records.count()
+
+        if count > 0:
+            empty_records.delete()
+            self.message_user(
+                request,
+                f'Удалено {count} записей без данных',
+                messages.SUCCESS
+            )
+        else:
+            self.message_user(
+                request,
+                'Записей без данных не найдено',
+                messages.INFO
+            )
+
+    def has_add_permission(self, request):
+        """Запрещаем добавление через админку (данные создаются автоматически)"""
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        """Разрешаем редактирование только поля primary"""
+        return True
+
+    def get_readonly_fields(self, request, obj=None):
+        """Делаем все поля кроме primary readonly"""
+        if obj:
+            return ['id', 'car_display', 'created_at', 'data_preview_full']
+        return self.readonly_fields
+
+
+@admin.register(CarUnit)
+class CarUnitAdmin(ImportExportMixin, ModelAdmin):
+    """Обновленный класс для CarUnit"""
+    list_display = (
+        'id',
+        'name',
+        'cars_count_display',
+        'active_cars_display',
+        'created_at_display',
+        'updated_at_display'
+    )
+    list_filter = ('name',)
+    search_fields = ('name',)
+    ordering = ('name',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+
+    fields = ('name', 'description_display')
+
+    readonly_fields = ('description_display',)
+
+    def get_queryset(self, request):
+        queryset = super().get_queryset(request)
+        # Добавляем аннотации для оптимизации
+        from django.db.models import Count, Q
+        return queryset.annotate(
+            total_cars=Count('car', distinct=True),
+            active_cars=Count('car', filter=Q(car__is_active=True), distinct=True)
+        )
+
+    def cars_count_display(self, obj):
+        """Отображение общего количества машин со ссылкой"""
+        count = obj.total_cars if hasattr(obj, 'total_cars') else obj.car_set.count()
+        if count > 0:
+            url = (
+                    reverse('admin:core_car_changelist')
+                    + f'?car_unit__id__exact={obj.id}'
+            )
+            return mark_safe(f'<a href="{url}">{count} машина(ы)</a>')
+        return "0 машин"
+
+    cars_count_display.short_description = "Всего машин"
+    cars_count_display.admin_order_field = 'total_cars'
+
+    def active_cars_display(self, obj):
+        """Отображение количества активных машин"""
+        count = obj.active_cars if hasattr(obj, 'active_cars') else obj.car_set.filter(is_active=True).count()
+        if count > 0:
+            url = (
+                    reverse('admin:core_car_changelist')
+                    + f'?car_unit__id__exact={obj.id}&is_active__exact=1'
+            )
+            return mark_safe(f'<a href="{url}" style="color: #00ff00;">{count} активных</a>')
+        return "0 активных"
+
+    active_cars_display.short_description = "Активных машин"
+    active_cars_display.admin_order_field = 'active_cars'
+
+    def created_at_display(self, obj):
+        """Дата добавления первой машины"""
+        if hasattr(obj, 'car_set') and obj.car_set.exists():
+            first_car = obj.car_set.earliest('created_at')
+            return first_car.created_at.strftime('%Y-%m-%d')
+        return "Нет данных"
+
+    created_at_display.short_description = "Первая машина"
+
+    def updated_at_display(self, obj):
+        """Дата последней обработки"""
+        if hasattr(obj, 'car_set') and obj.car_set.exists():
+            last_car = obj.car_set.order_by('-last_processed_date').first()
+            if last_car and last_car.last_processed_date:
+                return last_car.last_processed_date.strftime('%Y-%m-%d %H:%M')
+        return "Нет данных"
+
+    updated_at_display.short_description = "Последняя обработка"
+
+    def description_display(self, obj):
+        """Описание с статистикой"""
+        total = obj.total_cars if hasattr(obj, 'total_cars') else obj.car_set.count()
+        active = obj.active_cars if hasattr(obj, 'active_cars') else obj.car_set.filter(is_active=True).count()
+
+        stats = f"""
+        <div style="padding: 10px; background-color: #f5f5f5; border-radius: 4px;">
+            <strong>Статистика подразделения:</strong><br>
+            • Всего машин: {total}<br>
+            • Активных: {active}<br>
+            • Неактивных: {total - active}
+        </div>
+        """
+        return mark_safe(stats)
+
+    description_display.short_description = "Статистика"
+
+    actions = [
+        'export_selected',
+        'merge_car_units',
+        'delete_empty_units'
+    ]
+
+    @admin.action(description='🔀 Объединить выбранные подразделения')
+    def merge_car_units(self, request, queryset):
+        """Объединение нескольких подразделений в одно"""
+        if queryset.count() < 2:
+            self.message_user(
+                request,
+                'Для объединения нужно выбрать минимум 2 подразделения',
+                messages.WARNING
+            )
+            return
+
+        # Выбираем основное подразделение (первое по алфавиту)
+        main_unit = queryset.order_by('name').first()
+        other_units = queryset.exclude(id=main_unit.id)
+
+        # Переносим все машины в основное подразделение
+        moved_count = 0
+        for unit in other_units:
+            cars_to_move = unit.car_set.all()
+            moved_count += cars_to_move.count()
+            cars_to_move.update(car_unit=main_unit)
+
+        # Удаляем пустые подразделения
+        other_units.delete()
+
+        self.message_user(
+            request,
+            f'Объединено {queryset.count()} подразделений в "{main_unit.name}". '
+            f'Перемещено {moved_count} машин.',
+            messages.SUCCESS
+        )
+
+    @admin.action(description='🗑️ Удалить пустые подразделения')
+    def delete_empty_units(self, request, queryset):
+        """Удаление подразделений без машин"""
+        empty_units = []
+        for unit in queryset:
+            if not unit.car_set.exists():
+                empty_units.append(unit.name)
+                unit.delete()
+
+        if empty_units:
+            self.message_user(
+                request,
+                f'Удалено {len(empty_units)} пустых подразделений: {", ".join(empty_units[:5])}'
+                + ("..." if len(empty_units) > 5 else ""),
+                messages.SUCCESS
+            )
+        else:
+            self.message_user(
+                request,
+                'Пустых подразделений не найдено',
+                messages.INFO
+            )
+
+    def get_inlines(self, request, obj=None):
+        """Показываем inline с машинами при редактировании"""
+        if obj:
+            return [CarUnitCarInline]
+        return []
+
+
+class CarUnitCarInline(admin.TabularInline):
+    """Inline для отображения машин в подразделении"""
+    model = Car
+    extra = 0
+    fields = (
+        'name',
+        'id_in_provider_system',
+        'is_active_display',
+        'is_tarrified_display',
+        'last_processed_date',
+        'user_car_list_display'
+    )
+    readonly_fields = (
+        'name',
+        'id_in_provider_system',
+        'is_active_display',
+        'is_tarrified_display',
+        'last_processed_date',
+        'user_car_list_display'
+    )
+    verbose_name = "Машина в подразделении"
+    verbose_name_plural = "Машины в подразделении"
+    can_delete = False
+    show_change_link = True
+
+    def get_queryset(self, request):
+        """Только машины принадлежащие этому подразделению"""
+        qs = super().get_queryset(request)
+        return qs.filter(car_unit=self.parent_object.id)
+
+    def is_active_display(self, obj):
+        """Иконка активности"""
+        if obj.is_active:
+            return format_html('<span style="color: #00ff00;">● Активна</span>')
+        return format_html('<span style="color: #cccccc;">○ Неактивна</span>')
+
+    is_active_display.short_description = "Статус"
+
+    def is_tarrified_display(self, obj):
+        """Иконка тарирования"""
+        if obj.is_tarrified:
+            return format_html('<span style="color: #00ff00;">✓ Тарирована</span>')
+        return format_html('<span style="color: #cccccc;">✗ Не тарирована</span>')
+
+    is_tarrified_display.short_description = "Тарирование"
+
+    def user_car_list_display(self, obj):
+        """Отображение списка пользователя"""
+        if obj.list_id:
+            url = reverse("admin:core_usercarlist_change", args=[obj.list_id.id])
+            return mark_safe(f'<a href="{url}">{obj.list_id.name}</a>')
+        return "Не в списке"
+
+    user_car_list_display.short_description = "Список пользователя"
+
+    def has_add_permission(self, request, obj):
+        """Запрещаем добавление через inline"""
+        return False
 
 
 ##DEVOPS FEATURES
@@ -1209,3 +1637,5 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
                  name='core_unitservice_disable'),
         ]
         return custom_urls + urls
+
+

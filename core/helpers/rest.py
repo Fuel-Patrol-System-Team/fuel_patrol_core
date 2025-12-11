@@ -588,3 +588,67 @@ PARSE_RAW_DATA_SCHEMA = {
         )
     }
 }
+
+CAR_SENSORS_RAW_DATA_SCHEMA = {
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['car_id', 'start_date', 'end_date'],
+        properties={
+            'car_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='uuid',
+                description='ID машины (UUID)'
+            ),
+            'start_date': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='date',
+                description='Дата начала в формате YYYY-MM-DD'
+            ),
+            'end_date': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='date',
+                description='Дата окончания в формате YYYY-MM-DD'
+            ),
+            'mode': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                enum=['mileage', 'fuel', 'motohours'],
+                default='mileage',
+                description='Режим парсинга: mileage (пробег), fuel (топливо), motohours (моточасы)'
+            )
+        }
+    ),
+    'responses': {
+        200: openapi.Response(
+            description='Данные успешно получены',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'car_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid'),
+                    'car_name': openapi.Schema(type=openapi.TYPE_STRING),
+                    'mode': openapi.Schema(type=openapi.TYPE_STRING),
+                    'mode_name': openapi.Schema(type=openapi.TYPE_STRING),
+                    'start_date': openapi.Schema(type=openapi.TYPE_STRING),
+                    'end_date': openapi.Schema(type=openapi.TYPE_STRING),
+                    'result': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT)
+                    ),
+                    'statistics': openapi.Schema(type=openapi.TYPE_OBJECT),
+                    'fields': openapi.Schema(type=openapi.TYPE_OBJECT)
+                }
+            )
+        ),
+        400: openapi.Response(
+            description='Неверные параметры запроса',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'success': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    'errors': openapi.Schema(type=openapi.TYPE_OBJECT)
+                }
+            )
+        )
+    }
+}

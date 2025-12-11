@@ -111,6 +111,12 @@ class UserCarList(models.Model):
     name = models.CharField(max_length=255)
     user = models.ForeignKey(OrgUser, on_delete=models.SET_NULL, **NULLABLE)
 
+class CarPrimary(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car = models.OneToOneField(Car, on_delete=models.SET_NULL, **NULLABLE)
+    primary = models.JSONField(**NULLABLE)
+    created_at = models.DateTimeField(default=timezone.now)
+
 
 class CarConsumption(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

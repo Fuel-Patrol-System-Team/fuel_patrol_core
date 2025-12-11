@@ -1,5 +1,7 @@
 from datetime import datetime
+from typing import Dict
 
+import pytz
 from celery import group
 
 from django.db.models import Count
@@ -37,7 +39,8 @@ from core.helpers.rest import (
     MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA
+    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
+    CAR_SENSORS_RAW_DATA_SCHEMA
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
@@ -55,6 +58,7 @@ from core.helpers.responses import error_response, user_registered_response, att
     success_response
 from core.helpers.permissions import IsOrgMember
 from .services.data_providers.utils import provider_factory
+from .services.providers.car_sensors_raw_parser import CarSensorsRawParser
 from .services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
 from .services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
 from .services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
@@ -291,7 +295,7 @@ class CarDataRequestAPIView(APIView):
     def post(self, request):
         provider_name = request.data.get('provider_name')
         car_ids = request.data.get('car_ids', [])
-        unit_ids = request.data.get('unit_ids', [])  # Новый параметр
+        unit_ids = request.data.get('unit_ids', [])
         parse_all = request.data.get('parse_all', False)
         start_date = request.data.get('start_date')
         end_date = request.data.get('end_date')
@@ -303,7 +307,6 @@ class CarDataRequestAPIView(APIView):
         if not start_date or not end_date:
             return error_response("Start date and end date are required", status.HTTP_400_BAD_REQUEST)
 
-        # Проверка: должен быть выбран один из режимов
         selected_modes = sum([
             bool(parse_all),
             bool(car_ids),
@@ -380,7 +383,7 @@ class CarDataRequestAPIView(APIView):
 
                 logger.info(f"Found {len(cars)} cars for {len(car_units)} units")
 
-            else:  # car_ids mode
+            else:
                 logger.info(f"Processing specific cars: {car_ids}")
                 cars = Car.objects.filter(
                     id__in=car_ids,
@@ -455,7 +458,7 @@ class CarDataRequestAPIView(APIView):
                 "car_names": car_names,
                 "message": f"Обработка данных для {len(car_ids)} машин запущена",
                 "provider_name": provider_name,
-                "mode": mode_info.split(' - ')[0],  # parse_all, unit_ids или car_ids
+                "mode": mode_info.split(' - ')[0],
                 "status_endpoint": f"/api/tasks/{result.id}/status/",
                 "individual_status_endpoint": "/api/tasks/{task_id}/status/"
             }
@@ -663,13 +666,14 @@ class OrgUserDetailAPIView(RetrieveAPIView):
     queryset = OrgUser.objects.all()
     lookup_field = 'pk'
 
+
 class CarListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['name', 'is_active', 'is_tarrified']
-    search_fields = ['name', 'description','car_unit__name']
+    search_fields = ['name', 'description', 'car_unit__name']
 
     def get_queryset(self):
         result = Car.objects.filter(
@@ -706,6 +710,7 @@ class CarDetailAPIView(RetrieveAPIView):
 
         return context
 
+
 class CarUnitListAPIView(ListAPIView):
     """
     API для получения списка всех подразделений (CarUnit) организации
@@ -724,6 +729,7 @@ class CarUnitListAPIView(ListAPIView):
         return CarUnit.objects.filter(
             car__data_providers__org_id=self.request.user.org.id
         ).distinct().order_by('name')
+
 
 class CarConsumptionListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -871,6 +877,7 @@ class UserCarListDetailView(RetrieveUpdateDestroyAPIView):
         Car.objects.filter(list_id=instance).update(list_id=None)
 
         instance.delete()
+
 
 class DriverListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -1152,6 +1159,169 @@ class LanguageListAPIView(ListAPIView):
     queryset = Language.objects.all()
     serializer_class = LanguageSerializer
     pagination_class = None
+
+
+class CarSensorsRawDataAPIView(APIView):
+    """
+    API для получения сырых данных по машине для построения графиков
+    Поддерживает 3 режима:
+    1. Пробег (mileage): timestamp, mileage, pos_s, ign, rpm
+    2. Топливо (fuel): timestamp, calc_sensors_fuel_level, pos_s, rpm
+    3. Моточасы (motohours): timestamp, motohours, pos_s, rpm, ign
+    """
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Получение сырых данных по машине для графиков",
+        operation_description="""
+            Получение сырых данных по машине для построения графиков.
+
+            **Режимы работы:**
+            1. **mileage** - данные о пробеге: timestamp, mileage, pos_s, ign, rpm
+            2. **fuel** - данные о топливе: timestamp, calc_sensors_fuel_level, pos_s, rpm
+            3. **motohours** - данные о моточасах: timestamp, motohours, pos_s, rpm, ign
+
+            **Ограничения:**
+            - Максимальный период: 90 дней
+            - Rate limit: 1 запрос в секунду к API провайдера
+            """,
+        request_body=CAR_SENSORS_RAW_DATA_SCHEMA['request_body'],
+        responses=CAR_SENSORS_RAW_DATA_SCHEMA['responses']
+    )
+    def post(self, request):
+        try:
+            car_id = request.data.get('car_id')
+            start_date_str = request.data.get('start_date')
+            end_date_str = request.data.get('end_date')
+            mode = request.data.get('mode', 'mileage')
+
+            if not all([car_id, start_date_str, end_date_str]):
+                return error_response(
+                    "Требуются параметры: car_id, start_date, end_date",
+                    status.HTTP_400_BAD_REQUEST
+                )
+
+            if mode not in ['mileage', 'fuel', 'motohours']:
+                return error_response(
+                    "Недопустимый режим. Допустимые: mileage, fuel, motohours",
+                    status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+                end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+
+                if start_date >= end_date:
+                    return error_response(
+                        "start_date должен быть раньше end_date",
+                        status.HTTP_400_BAD_REQUEST
+                    )
+
+                max_days = 90
+                if (end_date - start_date).days > max_days:
+                    return error_response(
+                        f"Период не должен превышать {max_days} дней",
+                        status.HTTP_400_BAD_REQUEST
+                    )
+
+            except ValueError:
+                return error_response(
+                    "Неверный формат даты. Используйте YYYY-MM-DD",
+                    status.HTTP_400_BAD_REQUEST
+                )
+
+            try:
+                from core.models import Car
+                car = Car.objects.get(
+                    id=car_id,
+                    data_providers__org_id=request.user.org.id
+                )
+            except Car.DoesNotExist:
+                return error_response(
+                    "Машина не найдена или не принадлежит вашей организации",
+                    status.HTTP_404_NOT_FOUND
+                )
+
+            try:
+                parser = CarSensorsRawParser(
+                    car_id=car_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    mode=mode
+                )
+
+                result = parser.parse_raw_data()
+
+                total_messages = parser.total_messages
+                processed_messages = parser.processed_messages
+
+                mode_names = {
+                    'mileage': 'Пробег',
+                    'fuel': 'Топливо',
+                    'motohours': 'Моточасы'
+                }
+
+                response_data = {
+                    "success": True,
+                    "car_id": car_id,
+                    "car_name": car.name,
+                    "mode": mode,
+                    "mode_name": mode_names.get(mode, mode),
+                    "start_date": start_date_str,
+                    "end_date": end_date_str,
+                    "result": result,
+                    "statistics": {
+                        "total_messages": total_messages,
+                        "processed_messages": processed_messages,
+                        "skipped_messages": total_messages - processed_messages,
+                        "period_days": (end_date - start_date).days
+                    },
+                    "fields": self._get_fields_for_mode(mode)
+                }
+
+                return success_response(response_data, status.HTTP_200_OK)
+
+            except ValueError as e:
+                return error_response(str(e), status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                logger.error(f"Ошибка парсинга данных для машины {car_id}: {e}", exc_info=True)
+                return error_response(
+                    f"Ошибка получения данных: {str(e)}",
+                    status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+
+        except Exception as e:
+            logger.error(f"Неожиданная ошибка в CarSensorsRawDataAPIView: {e}", exc_info=True)
+            return error_response(
+                "Внутренняя ошибка сервера",
+                status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    def _get_fields_for_mode(self, mode: str) -> Dict[str, str]:
+        """Возвращает описание полей для каждого режима"""
+        fields = {
+            'mileage': {
+                "timestamp": "Временная метка (ISO 8601)",
+                "mileage": "Пробег (км или мили)",
+                "pos_s": "Скорость",
+                "ign": "Зажигание (0 - выключено, 1 - включено)",
+                "rpm": "Обороты двигателя (об/мин)"
+            },
+            'fuel': {
+                "timestamp": "Временная метка (ISO 8601)",
+                "calc_sensors_fuel_level": "Уровень топлива",
+                "pos_s": "Скорость",
+                "rpm": "Обороты двигателя (об/мин)"
+            },
+            'motohours': {
+                "timestamp": "Временная метка (ISO 8601)",
+                "motohours": "Моточасы",
+                "pos_s": "Скорость",
+                "rpm": "Обороты двигателя (об/мин)",
+                "ign": "Зажигание (0 - выключено, 1 - включено)"
+            }
+        }
+        return fields.get(mode, {})
 
 
 ##TODO: YShipik - кастомные руты с куками для токенов

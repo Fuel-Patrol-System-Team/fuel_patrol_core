@@ -12,7 +12,8 @@ from core.views import MediaUploadAPIView, OrganizationListAPIView, \
     CarActiveStatusAPIView, MileageCalculationAPIView, SensorsKeyListAPIView, LanguageListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
-    StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView
+    StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
+    CarSensorsRawDataAPIView
 
 urlpatterns = [
 
@@ -46,6 +47,7 @@ urlpatterns = [
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
+    path('parsing/car-sensors-raw-data-charts', CarSensorsRawDataAPIView.as_view(), name='car-sensors-raw-data'),
 
     path('user-car-lists', UserCarListListView.as_view(), name='user-car-list-list'),
     path('user-car-lists/<uuid:pk>', UserCarListDetailView.as_view(), name='user-car-list-detail'),

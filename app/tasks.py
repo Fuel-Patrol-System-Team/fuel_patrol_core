@@ -259,7 +259,6 @@ def sync_vehicles_task(self, provider_id: str, organization_id: str):
             ReportService.complete_report_error(report_query, error_msg, e)
         return {"success": False, "error": error_msg}
 
-
 @shared_task(
     bind=True,
     name="process_single_car_data_task",
@@ -340,6 +339,13 @@ def process_single_car_data_task(
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
             return {"success": False, "car_id": car_id, "error": error_msg}
 
+        logger.info("ЭТАП 2.1: Сохранение первичных показателей в БД...")
+        primary_saved = CarDataService.save_primary_to_db(car, primary_df, start_dt, end_dt)
+        if primary_saved:
+            logger.info(f"Первичные показатели сохранены для машины {car_id}")
+        else:
+            logger.warning(f"Не удалось сохранить первичные показатели для машины {car_id}")
+
         logger.info("ЭТАП 3: Расчет норм расхода топлива...")
         norms_df = NormsService.calculate_norms_single(raw_df, primary_df, auto_df)
         if norms_df is not None:
@@ -348,7 +354,7 @@ def process_single_car_data_task(
 
             end_number = norms_df.shape[0]
             if end_number < init_number:
-                error_msg = f"Машина {car_id} была отброшена - недостаточно данных для расчета норм"
+                error_msg = f"Машина {car_id} была отбросена - недостаточно данных для расчета норм"
                 ReportService.create_bad_data_record(car, error_msg, report_query)
                 logger.error(error_msg)
                 return {"success": False, "car_id": car_id, "error": error_msg}
@@ -390,6 +396,7 @@ def process_single_car_data_task(
         logger.info("ЭТАП 6: Сохранение результатов в БД...")
         saved_reports = 0
         saved_consumptions = 0
+        saved_primary = 0
 
         if norms_df is not None and not norms_df.is_empty():
             saved_consumptions = ReportService.save_car_consumption_batch(norms_df)
@@ -423,6 +430,7 @@ def process_single_car_data_task(
                     len(raw_df) if raw_df is not None and not raw_df.is_empty() else 0
                 ),
                 "primary_rows": primary_rows,
+                "primary_saved": primary_saved,
                 "norms_rows": norms_rows,
                 "leaks_rows": leaks_rows,
                 "saved_reports": saved_reports,
@@ -462,7 +470,6 @@ def process_single_car_data_task(
                 report_query, error_msg, exception=e, cars_skipped=1
             )
         return {"success": False, "car_id": car_id, "error": error_msg}
-
 
 @shared_task(bind=True, soft_time_limit=600, priority=5, rate_limit="1/s")
 def calculate_norms_task(self, report_query_id: str):
@@ -1794,7 +1801,6 @@ def parse_terminal_messages_task(
     Celery задача для парсинга terminalMessages
     """
     try:
-        # Преобразуем строки в datetime
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
 

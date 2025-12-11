@@ -1,10 +1,12 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 import polars as pl
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 from pathlib import Path
 from django.conf import settings
+
+from core.models import CarPrimary, Car
 
 logger = logging.getLogger(__name__)
 
@@ -173,3 +175,42 @@ class CarDataService:
         except Exception as e:
             logger.error(f"Ошибка подготовки auto данных: {e}")
             raise
+
+
+    @staticmethod
+    def save_primary_to_db(car: Car, primary_df: pl.DataFrame, start_date: datetime = None,
+                           end_date: datetime = None) -> bool:
+        """
+        Сохраняет первичные показатели в модель CarPrimary
+        """
+        try:
+            if primary_df is None or primary_df.is_empty():
+                logger.warning(f"Нет данных primary для сохранения для машины {car.id}")
+                return False
+
+            primary_data = []
+            for row in primary_df.to_dicts():
+                row_with_meta = {
+                    **row,
+                    "period_start": start_date.isoformat() if start_date else None,
+                    "period_end": end_date.isoformat() if end_date else None,
+                }
+                primary_data.append(row_with_meta)
+
+            car_primary, created = CarPrimary.objects.update_or_create(
+                car=car,
+                defaults={
+                    'primary': primary_data,
+                }
+            )
+
+            if created:
+                logger.info(f"Создана новая запись CarPrimary для машины {car.id}")
+            else:
+                logger.info(f"Обновлена существующая запись CarPrimary для машины {car.id}")
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Ошибка сохранения primary данных для машины {car.id}: {e}")
+            return False
