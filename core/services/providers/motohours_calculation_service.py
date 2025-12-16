@@ -99,8 +99,8 @@ class MotohoursCalculationService:
                 return {"result": result}, 200
 
             try:
-                agg_period = 1 if agg is None else agg
-                result = compute_motohours(df, agg_period)
+                agg_period = 0 if agg is None else agg
+                result = compute_motohours(df, agg)
             except Exception as calc_error:
                 error_msg = f"Ошибка при расчете моточасов: {str(calc_error)}"
                 logger.error(f"Ошибка расчета моточасов для car_id={car_id}: {calc_error}", exc_info=True)

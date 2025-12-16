@@ -87,20 +87,17 @@ class GlonassSoftMotohoursProvider(RateLimitedProvider):
             return None
 
 
-        df = pl.DataFrame(parsed_data)
+        df = pl.DataFrame(parsed_data,schema={
+            "timestamp": pl.String,
+            "motohours": pl.Float64,
+            "ign": pl.Int8,
+            "auto": pl.Categorical,
+        })
+        df = df.with_columns(
+            pl.col("timestamp").cast(pl.Datetime)
+        )
         if df.is_empty():
             return df
-
-        df = df.with_columns([
-            pl.col("timestamp").str.strptime(
-                pl.Datetime,
-                format="%Y-%m-%dT%H:%M:%S%z",
-                strict=False
-            ).alias("timestamp"),
-            pl.col("motohours").cast(pl.Float64),
-            pl.col("ign").cast(pl.Int8),
-            pl.col("auto").cast(pl.Categorical)
-        ])
 
         logger.info(f"Создан DataFrame motohours: {df.shape}")
         return df

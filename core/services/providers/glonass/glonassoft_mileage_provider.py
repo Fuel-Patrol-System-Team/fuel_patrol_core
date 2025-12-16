@@ -87,7 +87,7 @@ class GlonassSoftMileageProvider(RateLimitedProvider):
         df = pl.DataFrame(parsed_data)
         if df.is_empty():
             return df
-
+        # TODO: должно приводить к ошибкам, если сервер ни разу не отдал mileage в сыром JSON
         df = df.with_columns([
             pl.col("timestamp").str.strptime(
                 pl.Datetime,
