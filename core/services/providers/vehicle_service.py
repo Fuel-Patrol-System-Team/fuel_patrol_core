@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, List
 from django.db import transaction
 from core.models import Car, DataProvider, SensorsValues, SensorsKey, CarUnit
 

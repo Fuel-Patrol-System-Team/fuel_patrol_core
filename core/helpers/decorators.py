@@ -5,8 +5,6 @@ from functools import wraps
 
 logger = logging.getLogger(__name__)
 
-
-# TODO: check
 def retry_on_status(max_retries=3, retry_delays=None, status_codes=None):
     if retry_delays is None:
         retry_delays = [5, 10, 20]

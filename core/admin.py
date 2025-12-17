@@ -19,7 +19,7 @@ from django_celery_beat.admin import (
 )
 from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
-    Media, ReportQuery, DataProvider, CarBadData, Language,
+    ReportQuery, DataProvider, CarBadData, Language,
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails, UnitService, CarUnit, UserCarList, CarPrimary
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
@@ -30,15 +30,6 @@ admin.site.unregister(CrontabSchedule)
 admin.site.unregister(SolarSchedule)
 admin.site.unregister(ClockedSchedule)
 
-
-class MediaInline(admin.TabularInline):
-    model = Media
-    extra = 0
-    fields = ('filename', 'media_type', 'size', 'type', 'file_hash')
-    readonly_fields = ('filename', 'media_type', 'size', 'type', 'file_hash')
-    verbose_name = "Медиафайл"
-    verbose_name_plural = "Медиафайлы"
-    can_delete = True
 
 
 class CarReportInline(admin.TabularInline):
@@ -342,24 +333,6 @@ class DriverAdmin(ImportExportMixin, ModelAdmin):
     cars_display.short_description = "Автомобили"
 
 
-@admin.register(Media)
-class MediaAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('id', 'filename', 'report_query_display', 'media_type', 'size', 'type', 'file_hash')
-    list_filter = ('type',)
-    search_fields = ('filename',)
-    ordering = ('filename',)
-    export_form_class = UnfoldExportForm
-    import_form_class = UnfoldImportForm
-    actions = ['export_selected']
-
-    def report_query_display(self, obj):
-        if obj.report_query_id:
-            url = reverse("admin:core_reportquery_change", args=[obj.report_query_id.id])
-            return mark_safe(f'<a href="{url}">{obj.report_query_id}</a>')
-        return "Не указан"
-
-    report_query_display.short_description = "Запрос отчета"
-
 
 @admin.register(ReportQuery)
 class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
@@ -367,7 +340,6 @@ class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
     list_filter = ('status',)
     search_fields = ('provider_id__name',)
     ordering = ('-id',)
-    inlines = [MediaInline]
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
     actions = ['export_selected', 'mark_as_completed', 'mark_as_error']

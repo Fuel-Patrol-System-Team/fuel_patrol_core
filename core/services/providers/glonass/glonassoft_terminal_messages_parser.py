@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, List, cast
@@ -14,31 +15,11 @@ import requests
 from django.conf import settings
 from django.utils import timezone
 
+from core.helpers.decorators import retry_on_status
 from core.models import Car, DataProvider, SensorsValues
 from core.services.providers.rate_limiter import global_rate_limiter
 
 logger = logging.getLogger(__name__)
-
-
-def retry_with_backoff(func):
-    """Декоратор для повторных попыток с экспоненциальной задержкой"""
-
-    def wrapper(*args, **kwargs):
-        delays = [5, 10, 15, 30, 60]
-        last_exception = None
-
-        for delay in delays:
-            try:
-                return func(*args, **kwargs)
-            except requests.exceptions.RequestException as e:
-                last_exception = e
-                logger.warning(f"Ошибка запроса. Повтор через {delay} сек: {e}")
-                time.sleep(delay)
-
-        if last_exception:
-            raise last_exception
-
-    return wrapper
 
 
 class GlonassSoftTerminalMessagesParser:
@@ -91,7 +72,7 @@ class GlonassSoftTerminalMessagesParser:
         """Соблюдение rate limit (1 запрос в секунду)"""
         global_rate_limiter.wait_for_rate_limit()
 
-    @retry_with_backoff
+    @retry_on_status(retry_delays=[10, 20, 30], status_codes=[400, 429])
     def authenticate(self) -> bool:
         """Аутентификация в GlonassSoft API"""
         self._enforce_rate_limit()
@@ -289,7 +270,7 @@ class GlonassSoftTerminalMessagesParser:
 
         return all_messages
 
-    @retry_with_backoff
+    @retry_on_status(retry_delays=[10, 20, 30], status_codes=[400, 429])
     def _fetch_messages_for_period(
             self,
             vehicle_id: int,
@@ -360,11 +341,15 @@ class GlonassSoftTerminalMessagesParser:
                     writer.writerow(row)
 
             file_size = os.path.getsize(file_path) / 1024 ** 2
-            logger.info(f"Сохранен RAW файл {filename} ({len(messages)} записей, {file_size:.2f} MB)")
+
+            logger.info(f"Сохранен RAW файл: {file_path} ({len(messages)} записей, {file_size:.2f} MB)")
+
+            self._archive_csv_file(file_path)
+
             return True
 
         except Exception as e:
-            logger.error(f"Ошибка сохранения RAW CSV для {car.id_in_provider_system}: {e}")
+            logger.error(f"Ошибка сохранения RAW CSV для {car.id_in_provider_system} в {file_path}: {e}")
             return False
 
     def _save_to_csv_mapped(self, car: Car, messages: List[Dict[str, Any]]) -> bool:
@@ -411,10 +396,13 @@ class GlonassSoftTerminalMessagesParser:
                         skipped_count += 1
 
             file_size = os.path.getsize(file_path) / 1024 ** 2
+
             logger.info(
-                f"Сохранен MAPPED файл {filename} ({processed_count} записей, "
+                f"Сохранен MAPPED файл: {file_path} ({processed_count} записей, "
                 f"пропущено {skipped_count}, {file_size:.2f} MB)"
             )
+
+            self._archive_csv_file(file_path)
 
             if skipped_count > 0:
                 logger.info(f"Пропущено {skipped_count} сообщений из {len(messages)} для {car.name}")
@@ -422,7 +410,7 @@ class GlonassSoftTerminalMessagesParser:
             return True
 
         except Exception as e:
-            logger.error(f"Ошибка сохранения MAPPED CSV для {car.id_in_provider_system}: {e}")
+            logger.error(f"Ошибка сохранения MAPPED CSV для {car.id_in_provider_system} в {file_path}: {e}")
             return False
 
     def _extract_mapped_data(
@@ -477,3 +465,32 @@ class GlonassSoftTerminalMessagesParser:
         except Exception as e:
             logger.debug(f"Ошибка обработки сообщения: {e}")
             return None
+
+    def _archive_csv_file(self, csv_file_path: Path) -> None:
+        """
+        Архивирует CSV файл в ZIP архив и удаляет исходный файл
+
+        Args:
+            csv_file_path: Путь к CSV файлу для архивации
+        """
+        try:
+            zip_file_path = csv_file_path.with_suffix('.csv.zip')
+
+            with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as zipf:
+                zipf.write(csv_file_path, arcname=csv_file_path.name)
+
+            csv_size = os.path.getsize(csv_file_path) / 1024 ** 2
+            zip_size = os.path.getsize(zip_file_path) / 1024 ** 2
+
+
+            os.remove(csv_file_path)
+
+            compression_ratio = ((csv_size - zip_size) / csv_size) * 100 if csv_size > 0 else 0
+            logger.info(
+                f"Файл {csv_file_path.name} заархивирован в {zip_file_path.name}. "
+                f"Размер: {csv_size:.2f} MB -> {zip_size:.2f} MB "
+                f"(сжатие: {compression_ratio:.1f}%)"
+            )
+
+        except Exception as e:
+            logger.error(f"Ошибка при архивации файла {csv_file_path}: {e}")

@@ -2,7 +2,7 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from core.helpers.mileage_test import MileageModes, make_empty_mileage_result, mileage_test
+from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
 from core.services.providers.report_service import ReportService
@@ -63,7 +63,8 @@ class MileageCalculationService:
                 ReportService.create_bad_data_record(
                     car,
                     "Нет данных mileage за указанный период",
-                    report_query
+                    report_query,
+                    start_date, end_date
                 )
 
 

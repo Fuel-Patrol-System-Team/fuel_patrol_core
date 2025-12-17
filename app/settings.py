@@ -15,7 +15,7 @@ from pathlib import Path
 import warnings
 
 import redis
-from django.conf.global_settings import APPEND_SLASH
+from django.conf.global_settings import APPEND_SLASH, STATIC_ROOT
 from django.urls import reverse_lazy
 from dotenv import load_dotenv
 from influxdb_client import WriteOptions
@@ -134,14 +134,14 @@ USE_TZ = True
 # STATIC & MEDIA FILES
 # ======================
 STATIC_URL = '/static/'
-STATIC_ROOT = '/var/www/fuel.noosoft.ru/static/'
+STATIC_ROOT = os.getenv('STATIC_ROOT')
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 STATICFILES_FINDERS = (
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',
 )
 MEDIA_URL = '/media/'
-MEDIA_ROOT = '/var/www/fuel.noosoft.ru/media/'
+MEDIA_ROOT = os.getenv('MEDIA_ROOT')
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # ======================
@@ -303,10 +303,6 @@ UNFOLD = {
                     "link": reverse_lazy("admin:core_reportquery_changelist"),
                 },
                 {
-                    "title": "Медиафайлы",
-                    "link": reverse_lazy("admin:core_media_changelist"),
-                },
-                {
                     "title": "Языки",
                     "link": reverse_lazy("admin:core_language_changelist"),
                 },
@@ -423,11 +419,6 @@ UNFOLD = {
                         "title": "Запросы отчетов",
                         "icon": "assignment",
                         "link": reverse_lazy("admin:core_reportquery_changelist"),
-                    },
-                    {
-                        "title": "Медиафайлы",
-                        "icon": "image",
-                        "link": reverse_lazy("admin:core_media_changelist"),
                     },
                     {
                         "title": "Языки",

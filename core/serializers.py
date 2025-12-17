@@ -1,6 +1,5 @@
 from rest_framework import serializers
 from .models import (
-    Media,
     Organization,
     ReportQuery,
     OrgUser,
@@ -125,12 +124,6 @@ class DataProviderOutputSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "metadata"]
 
 
-class MediaOutputSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Media
-        fields = ["id", "media_type", "size", "filename", "type", "file_hash"]
-
-
 class ReportQueryOutputSerializer(serializers.ModelSerializer):
     provider_name = serializers.SerializerMethodField()
 
@@ -168,13 +161,6 @@ class OrgUserOutputSerializer(serializers.ModelSerializer):
         ]
 
 
-class CarBadDataOutputSerializer(serializers.ModelSerializer):
-    car_name = serializers.CharField(source="car_id.name", read_only=True)
-
-    class Meta:
-        model = CarBadData
-        fields = ["id", "car_name", "reason", "datetime"]
-
 
 class SensorsKeyOutputSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
@@ -182,17 +168,6 @@ class SensorsKeyOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = SensorsKey
         fields = ["id", "key", "display_name"]
-
-
-class AttachMediaSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = ReportQuery
-        fields = ["id", "provider_id", "status"]
-        read_only_fields = ["id"]
-
-    def create(self, validated_data):
-        report_query = ReportQuery.objects.create(**validated_data)
-        return report_query
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -235,22 +210,6 @@ class LanguageSerializer(serializers.ModelSerializer):
         model = Language
         fields = ["id", "code", "name", "description"]
 
-
-class CarMetricSerializer(serializers.Serializer):
-    x = serializers.CharField(help_text="Дата")
-    y = serializers.FloatField(help_text="Значение")
-    metric = serializers.CharField(help_text="Тип метрики (fuel_level или speed)")
-
-
-class CarMetricsQuerySerializer(serializers.Serializer):
-    periodFrom = serializers.DateField(required=False, allow_null=True)
-    periodDue = serializers.DateField(required=False, allow_null=True)
-    car = serializers.UUIDField(required=True)
-    agg = serializers.CharField(required=False, allow_null=True)
-    func = serializers.ChoiceField(choices=["mean", "median", "sum"], default="mean")
-    metric = serializers.ChoiceField(
-        choices=["fuel_level", "speed", "both"], default="both"
-    )
 
 
 class DailyLeaksSerializer(serializers.Serializer):
@@ -359,12 +318,6 @@ class CarActiveStatusSerializer(serializers.Serializer):
         car.save()
         return car
 
-
-class MileageTestSerializer(serializers.Serializer):
-    car_id = serializers.UUIDField(required=True, help_text="Id автомобиля")
-    start_date = serializers.DateTimeField(required=True, help_text="Начало промежутка")
-    end_date = serializers.DateTimeField(required=True, help_text="Конец промежутка")
-    agg = serializers.IntegerField(required=False, help_text="Агрегация (в минутах)")
 
 
 class CarBadDataSerializer(serializers.ModelSerializer):

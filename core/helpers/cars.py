@@ -1,5 +1,4 @@
 from core.models import Car, CarReport
-from core.services.databases.influx_db import query_influxdb
 from django.db.models import Count
 from django.db.models.functions import TruncDay
 from django.db.models import Sum
@@ -7,36 +6,6 @@ from core.serializers import CarLeaksSerializer
 from core.serializers import CarActiveStatusSerializer
 
 from core.helpers import *
-
-
-def get_car_or_error(car_id, org_id):
-    try:
-        car = Car.objects.filter(id=car_id, data_providers__org_id=org_id).first()
-        if not car:
-            logger.info(f"Автомобиль {car_id} не найден или не принадлежит организации {org_id}")
-            return None, error_response(
-                "Автомобиль не найден или не принадлежит вашей организации",
-                status.HTTP_404_NOT_FOUND
-            )
-        return car, None
-    except Car.DoesNotExist:
-        logger.info(f"Автомобиль {car_id} не существует")
-        return None, error_response("Автомобиль не найден", status.HTTP_404_NOT_FOUND)
-
-
-def fetch_car_metrics(car_id, metric, period_from, period_due, agg_window, agg_func, org_id):
-    result = query_influxdb(
-        car_id=car_id,
-        metric=metric,
-        period_from=period_from,
-        period_due=period_due,
-        agg_window=agg_window,
-        agg_func=agg_func,
-        org_id=org_id
-    )
-    logger.info(f"Выполнен запрос к InfluxDB для автомобиля {car_id}")
-    return result if result else None
-
 
 def filter_leaks_by_period(org_id, period_from=None, period_due=None):
     queryset = CarReport.objects.filter(

@@ -14,9 +14,10 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from rest_framework.views import APIView
-from rest_framework.generics import ListAPIView, RetrieveAPIView, get_object_or_404, RetrieveUpdateDestroyAPIView, \
+from rest_framework.generics import ListAPIView, RetrieveAPIView, RetrieveUpdateDestroyAPIView, \
     ListCreateAPIView
-from rest_framework.parsers import MultiPartParser
+
+
 from rest_framework import status
 import logging
 
@@ -24,44 +25,41 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from app import settings
-from core.helpers.cars import get_car_or_error, fetch_car_metrics, filter_leaks_by_period, aggregate_daily_counts, \
+from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
-from .helpers.data_provider import create_provider_data_request, validate_provider_request, validate_provider_cars, \
+from .helpers.car_request_helpers import CarRequestHelper
+from .helpers.car_sensors_helpers import CarSensorsHelper
+from .helpers.data_provider import validate_provider_cars, \
     create_data_provider
-from .helpers.media import create_media_instance, validate_media_upload, process_media_task
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
-from .models import Media, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
+from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, Language, CarUnit, UserCarList
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    MEDIA_UPLOAD_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
-    DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA, CAR_METRICS_SCHEMA, PROVIDER_DATA_REQUEST_SCHEMA,
+    LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
+    DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    MileageTestSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
+    UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
     CarOutputSerializer,
-    CarConsumptionOutputSerializer, ReportQueryOutputSerializer, MediaOutputSerializer,
+    CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
-    CarMetricsQuerySerializer, DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
-    DataProviderSerializer, CarBadDataOutputSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
+    DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
+    DataProviderSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
     UserCarListSerializer
 )
 
-from core.helpers.responses import error_response, user_registered_response, attach_media_response, user_response, \
+from core.helpers.responses import error_response, user_registered_response, user_response, \
     success_response
 from core.helpers.permissions import IsOrgMember
-from .services.data_providers.utils import provider_factory
 from .services.providers.car_sensors_raw_parser import CarSensorsRawParser
-from .services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
-from .services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
-from .services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
 from .services.providers.mileage_calculation_service import MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
 from .services.providers.report_service import ReportService
@@ -69,35 +67,7 @@ from .services.providers.report_service import ReportService
 logger = logging.getLogger(__name__)
 
 
-class CarMetricsAPIView(APIView):
-    permission_classes = [IsOrgMember]
-
-    @swagger_auto_schema(**CAR_METRICS_SCHEMA)
-    def get(self, request):
-        serializer = CarMetricsQuerySerializer(data=request.query_params)
-        if not serializer.is_valid():
-            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
-            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-
-        data = serializer.validated_data
-        car_id = data['car']
-        period_from = data.get('periodFrom')
-        period_due = data.get('periodDue')
-        agg_window = data.get('agg')
-        agg_func = data.get('func')
-        metric = data.get('metric')
-
-        car, error = get_car_or_error(car_id, request.user.org.id)
-        if error:
-            return error
-
-        result = fetch_car_metrics(car_id, metric, period_from, period_due, agg_window, agg_func, request.user.org.id)
-        if not result:
-            logger.info(f"Данные для автомобиля {car_id} не найдены")
-            return error_response("Данные не найдены", status.HTTP_404_NOT_FOUND)
-
-        return success_response(result, status.HTTP_200_OK)
-
+##TODO: Декомпозиция объемных views
 
 class DailyLeaksCountAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -202,39 +172,6 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
-class ProviderDataRequestAPIView(APIView):
-    permission_classes = [IsOrgMember]
-
-    @swagger_auto_schema(
-        operation_description="Создаёт заявку на получение данных от провайдера.",
-        request_body=PROVIDER_DATA_REQUEST_SCHEMA,
-        responses={
-            201: "Заявка успешно создана",
-            400: "Неверные данные",
-            503: "Ошибка при запуске задачи"
-        }
-    )
-    def post(self, request):
-        provider_name = request.data.get('provider_name')
-        start_date = request.data.get('start_date')
-        end_date = request.data.get('end_date')
-        is_save_bad_data = request.data.get('is_save_bad_data', False)
-
-        is_valid, result = validate_provider_request(provider_name, start_date, end_date, request.user.org)
-        if not is_valid:
-            return result
-
-        provider, metadata, start_date, end_date = result
-
-        report_query_id, error = create_provider_data_request(
-            provider, start_date, end_date, is_save_bad_data
-        )
-        if error:
-            return error
-
-        return success_response({"report_query_id": report_query_id}, status.HTTP_201_CREATED)
-
-
 class VehicleSyncAPIView(APIView):
     @swagger_auto_schema(
         operation_description="Запускает асинхронную синхронизацию транспортных средств с созданием отчета",
@@ -281,10 +218,17 @@ class VehicleSyncAPIView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
-
 class CarDataRequestAPIView(APIView):
+    """
+    API для создания заявок на получение и обработку данных по автомобилям.
+    Поддерживает три режима: все машины, по ID машин, по ID юнитов.
+    """
+
     @swagger_auto_schema(
-        operation_description="Создаёт заявку на получение и обработку данных по конкретным машинам, по юнитам или по всем машинам провайдера",
+        operation_description=(
+                "Создаёт заявку на получение и обработку данных "
+                "по конкретным машинам, по юнитам или по всем машинам провайдера"
+        ),
         request_body=CAR_DATA_REQUEST_SCHEMA,
         responses={
             202: "Задачи обработки запущены",
@@ -293,209 +237,86 @@ class CarDataRequestAPIView(APIView):
         }
     )
     def post(self, request):
-        provider_name = request.data.get('provider_name')
-        car_ids = request.data.get('car_ids', [])
-        unit_ids = request.data.get('unit_ids', [])
-        parse_all = request.data.get('parse_all', False)
-        start_date = request.data.get('start_date')
-        end_date = request.data.get('end_date')
-        is_save_bad_data = request.data.get('is_save_bad_data', False)
+        """Обработка POST-запроса на создание задач обработки данных."""
+        data = request.data
+        provider_name = data.get('provider_name')
+        car_ids = data.get('car_ids', [])
+        unit_ids = data.get('unit_ids', [])
+        parse_all = data.get('parse_all', False)
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        is_save_bad_data = data.get('is_save_bad_data', False)
 
-        if not provider_name:
-            return error_response("Provider name is required", status.HTTP_400_BAD_REQUEST)
+        is_valid, validation_error = CarRequestHelper.validate_input_data(
+            provider_name, parse_all, car_ids, unit_ids, start_date, end_date
+        )
+        if not is_valid:
+            return error_response(validation_error, status.HTTP_400_BAD_REQUEST)
 
-        if not start_date or not end_date:
-            return error_response("Start date and end date are required", status.HTTP_400_BAD_REQUEST)
+        provider, provider_error = CarRequestHelper.get_provider(provider_name)
+        if provider_error:
+            return error_response(provider_error, status.HTTP_404_NOT_FOUND)
 
-        selected_modes = sum([
-            bool(parse_all),
-            bool(car_ids),
-            bool(unit_ids)
-        ])
+        cars, car_ids_list, mode_info, cars_error = CarRequestHelper.get_cars_by_mode(
+            provider, parse_all, car_ids, unit_ids
+        )
+        if cars_error:
+            return error_response(cars_error, status.HTTP_404_NOT_FOUND)
 
-        if selected_modes == 0:
+        if cars is None or not cars.exists():
+            logger.error("Cars queryset is None or empty unexpectedly")
             return error_response(
-                "One of the following must be specified: parse_all=True, car_ids list, or unit_ids list",
+                "Unexpected error while fetching cars",
                 status.HTTP_400_BAD_REQUEST
             )
 
-        if selected_modes > 1:
-            return error_response(
-                "Only one mode can be selected: parse_all, car_ids, or unit_ids",
-                status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            provider = DataProvider.objects.get(name=provider_name)
-        except DataProvider.DoesNotExist:
-            return error_response(f"Provider {provider_name} not found", status.HTTP_404_NOT_FOUND)
-
-        cars = None
-        mode_info = ""
-
-        try:
-            if parse_all:
-                logger.info(f"parse_all flag is True, fetching all cars for provider {provider_name}")
-                cars = Car.objects.filter(data_providers=provider)
-                car_ids = [str(car.id) for car in cars]
-                mode_info = f"parse_all mode - {len(cars)} cars"
-
-                if not cars.exists():
-                    logger.warning(f"No cars found for provider {provider_name}")
-                    return error_response(
-                        f"No cars found for provider {provider_name}",
-                        status.HTTP_404_NOT_FOUND
-                    )
-                logger.info(f"Found {len(cars)} cars for provider {provider_name}")
-
-            elif unit_ids:
-                logger.info(f"Processing cars by unit_ids: {unit_ids}")
-
-                try:
-                    car_units = CarUnit.objects.filter(id__in=unit_ids)
-                    found_unit_ids = set(str(unit.id) for unit in car_units)
-                    missing_unit_ids = set(unit_ids) - found_unit_ids
-
-                    if missing_unit_ids:
-                        logger.warning(f"Missing unit IDs: {missing_unit_ids}")
-                        return error_response(
-                            f"Some units not found: {list(missing_unit_ids)}",
-                            status.HTTP_404_NOT_FOUND
-                        )
-                except Exception as e:
-                    logger.error(f"Error fetching car units: {e}")
-                    return error_response(f"Error validating unit IDs: {str(e)}", status.HTTP_400_BAD_REQUEST)
-
-                cars = Car.objects.filter(
-                    data_providers=provider,
-                    car_unit__in=car_units
-                ).distinct()
-
-                car_ids = [str(car.id) for car in cars]
-                mode_info = f"unit_ids mode - {len(car_units)} units, {len(cars)} cars"
-
-                if not cars.exists():
-                    logger.warning(f"No cars found for units {unit_ids} in provider {provider_name}")
-                    return error_response(
-                        f"No cars found for specified units in provider {provider_name}",
-                        status.HTTP_404_NOT_FOUND
-                    )
-
-                logger.info(f"Found {len(cars)} cars for {len(car_units)} units")
-
-            else:
-                logger.info(f"Processing specific cars: {car_ids}")
-                cars = Car.objects.filter(
-                    id__in=car_ids,
-                    data_providers=provider
-                ).distinct()
-                found_car_ids = set(str(car.id) for car in cars)
-                missing_car_ids = set(car_ids) - found_car_ids
-                mode_info = f"car_ids mode - {len(found_car_ids)} cars"
-
-                if missing_car_ids:
-                    logger.warning(f"Missing car IDs: {missing_car_ids}")
-                    return error_response(
-                        f"Some cars not found or not associated with provider {provider_name}: {list(missing_car_ids)}",
-                        status.HTTP_404_NOT_FOUND
-                    )
-
-        except Exception as e:
-            logger.error(f"Error checking cars existence: {e}", exc_info=True)
-            return error_response(f"Error validating input IDs: {str(e)}", status.HTTP_400_BAD_REQUEST)
-
-        if cars is None:
-            logger.error("Cars queryset is None unexpectedly")
-            return error_response("Unexpected error while fetching cars", status.HTTP_400_BAD_REQUEST)
-
-        task_group = []
-        report_query_ids = []
-        car_names = {}
         unit_info = {}
+        if unit_ids:
+            unit_info = CarRequestHelper.collect_unit_info(cars)
+
+        task_group, report_query_ids, car_names, tasks_error = (
+            CarRequestHelper.create_processing_tasks(
+                cars, provider, start_date, end_date, is_save_bad_data
+            )
+        )
+
+        if tasks_error:
+            return self._handle_tasks_creation_error(
+                report_query_ids, tasks_error, status.HTTP_503_SERVICE_UNAVAILABLE
+            )
 
         try:
-            logger.info(f"Starting processing for {len(cars)} cars ({mode_info})")
-
-            if unit_ids:
-                for car in cars:
-                    if car.car_unit:
-                        unit_id = str(car.car_unit.id)
-                        unit_name = car.car_unit.name
-                        if unit_id not in unit_info:
-                            unit_info[unit_id] = {
-                                'name': unit_name,
-                                'car_count': 0
-                            }
-                        unit_info[unit_id]['car_count'] += 1
-
-            for car in cars:
-                report_query, report_details = ReportService.create_report(
-                    provider_id=str(provider.id),
-                    report_type=ReportQuery.ReportType.LEAKS,
-                    is_save_bad_data=is_save_bad_data
-                )
-
-                task = process_single_car_data_task.s(
-                    car_id=str(car.id),
-                    provider_id=str(provider.id),
-                    report_query_id=str(report_query.id),
-                    start_date=start_date,
-                    end_date=end_date
-                )
-
-                task_group.append(task)
-                report_query_ids.append(str(report_query.id))
-                car_names[str(car.id)] = car.name
-
             job = group(task_group)
             result = job.apply_async()
             logger.info(f"Successfully started task group {result.id} for {len(cars)} cars")
 
-            response_data = {
-                "task_group_id": result.id,
-                "report_query_ids": report_query_ids,
-                "total_cars": len(car_ids),
-                "car_names": car_names,
-                "message": f"Обработка данных для {len(car_ids)} машин запущена",
-                "provider_name": provider_name,
-                "mode": mode_info.split(' - ')[0],
-                "status_endpoint": f"/api/tasks/{result.id}/status/",
-                "individual_status_endpoint": "/api/tasks/{task_id}/status/"
-            }
-
-            if parse_all:
-                response_data["parse_all_mode"] = True
-                response_data[
-                    "message"] = f"Обработка данных для всех ({len(car_ids)}) машин провайдера {provider_name} запущена"
-
-            elif unit_ids:
-                response_data["unit_ids"] = unit_ids
-                response_data["units_info"] = unit_info
-                response_data[
-                    "message"] = f"Обработка данных для {len(car_ids)} машин из {len(unit_info)} юнитов запущена"
-
-            else:
-                response_data["car_ids"] = car_ids
+            response_data = CarRequestHelper.create_response_data(
+                task_group_id=result.id,
+                report_query_ids=report_query_ids,
+                car_ids=car_ids_list,
+                car_names=car_names,
+                provider_name=provider_name,
+                mode_info=mode_info,
+                parse_all=parse_all,
+                unit_ids=unit_ids,
+                unit_info=unit_info
+            )
 
             return success_response(response_data, status.HTTP_202_ACCEPTED)
 
         except Exception as e:
             logger.error(f"Ошибка запуска задач обработки: {e}", exc_info=True)
-
-            for report_query_id in report_query_ids:
-                try:
-                    report_query = ReportQuery.objects.get(id=report_query_id)
-                    ReportService.complete_report_error(
-                        report_query, f"Failed to start processing task: {str(e)}"
-                    )
-                except Exception:
-                    logger.error(f"Failed to complete report error for {report_query_id}")
-
-            return error_response(
-                f"Failed to start processing tasks: {str(e)}",
-                status.HTTP_503_SERVICE_UNAVAILABLE
+            return self._handle_tasks_creation_error(
+                report_query_ids, str(e), status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
+    def _handle_tasks_creation_error(self, report_query_ids, error_message, status_code):
+        """Обработка ошибок создания задач."""
+        CarRequestHelper.handle_failed_tasks(report_query_ids, error_message)
+        return error_response(
+            f"Failed to start processing tasks: {error_message}",
+            status_code
+        )
 
 class MileageCalculationAPIView(APIView):
     @swagger_auto_schema(
@@ -554,7 +375,6 @@ class MotohoursCalculationAPIView(APIView):
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
-        from datetime import datetime
         try:
             if start_date:
                 start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
@@ -572,27 +392,6 @@ class MotohoursCalculationAPIView(APIView):
         )
 
         return Response(result, status=status_code)
-
-
-class MediaUploadAPIView(APIView):
-    parser_classes = [MultiPartParser]
-    permission_classes = [IsOrgMember]
-
-    @swagger_auto_schema(**MEDIA_UPLOAD_SCHEMA)
-    def post(self, request):
-        uploaded_file = request.FILES.get('file')
-        file_type = request.data.get('type')
-
-        is_valid, error = validate_media_upload(uploaded_file, file_type)
-        if not is_valid:
-            return error
-
-        media, report_query = create_media_instance(uploaded_file, file_type, request.user.org.id)
-        success, error = process_media_task(report_query.id, file_type)
-        if not success:
-            return error
-
-        return attach_media_response(report_query)
 
 
 class UserRegistrationAPIView(APIView):
@@ -773,27 +572,6 @@ class ReportQueryDetailAPIView(RetrieveAPIView):
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
         ).select_related('provider_id')
-
-
-class MediaListAPIView(ListAPIView):
-    permission_classes = [IsOrgMember]
-    serializer_class = MediaOutputSerializer
-    pagination_class = StandardResultsSetPagination
-    filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['type', 'report_query_id']
-    search_fields = ['filename', 'media_type', 'type']
-
-    def get_queryset(self):
-        return Media.objects.filter(
-            report_query_id__provider_id__org_id=self.request.user.org
-        ).select_related('report_query_id__provider_id').order_by('id')
-
-
-class MediaDetailAPIView(RetrieveAPIView):
-    permission_classes = [IsOrgMember]
-    serializer_class = MediaOutputSerializer
-    queryset = Media.objects.all()
-    lookup_field = 'pk'
 
 
 class CarReportListAPIView(ListAPIView):
@@ -1163,7 +941,8 @@ class LanguageListAPIView(ListAPIView):
 
 class CarSensorsRawDataAPIView(APIView):
     """
-    API для получения сырых данных по машине для построения графиков
+    API для получения сырых данных по машине для построения графиков.
+
     Поддерживает 3 режима:
     1. Пробег (mileage): timestamp, mileage, pos_s, ign, rpm
     2. Топливо (fuel): timestamp, calc_sensors_fuel_level, pos_s, rpm
@@ -1189,142 +968,67 @@ class CarSensorsRawDataAPIView(APIView):
         responses=CAR_SENSORS_RAW_DATA_SCHEMA['responses']
     )
     def post(self, request):
+        """Обработка POST-запроса для получения сырых данных."""
         try:
-            car_id = request.data.get('car_id')
-            start_date_str = request.data.get('start_date')
-            end_date_str = request.data.get('end_date')
-            mode = request.data.get('mode', 'mileage')
+            data = request.data
+            car_id = data.get('car_id')
+            start_date_str = data.get('start_date')
+            end_date_str = data.get('end_date')
+            mode = data.get('mode', 'mileage')
 
-            if not all([car_id, start_date_str, end_date_str]):
-                return error_response(
-                    "Требуются параметры: car_id, start_date, end_date",
+            error_response = self._validate_request_params(car_id, start_date_str, end_date_str, mode)
+            if error_response:
+                return error_response
+
+            start_date, end_date, date_error = CarSensorsHelper.parse_and_validate_dates(
+                start_date_str, end_date_str
+            )
+            if date_error:
+                return error_response(date_error, status.HTTP_400_BAD_REQUEST)
+
+            car, car_error = CarSensorsHelper.get_car_for_user(car_id, request.user)
+            if car_error:
+                return error_response(car_error, status.HTTP_404_NOT_FOUND)
+
+            result, parser, parse_error = CarSensorsHelper.parse_raw_data(
+                car_id, start_date, end_date, mode
+            )
+            if parse_error:
+                error_status = (
                     status.HTTP_400_BAD_REQUEST
+                    if "Неверный формат" in parse_error
+                    else status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
+                return error_response(parse_error, error_status)
 
-            if mode not in ['mileage', 'fuel', 'motohours']:
-                return error_response(
-                    "Недопустимый режим. Допустимые: mileage, fuel, motohours",
-                    status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
-                end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
-
-                if start_date >= end_date:
-                    return error_response(
-                        "start_date должен быть раньше end_date",
-                        status.HTTP_400_BAD_REQUEST
-                    )
-
-                max_days = 90
-                if (end_date - start_date).days > max_days:
-                    return error_response(
-                        f"Период не должен превышать {max_days} дней",
-                        status.HTTP_400_BAD_REQUEST
-                    )
-
-            except ValueError:
-                return error_response(
-                    "Неверный формат даты. Используйте YYYY-MM-DD",
-                    status.HTTP_400_BAD_REQUEST
-                )
-
-            try:
-                from core.models import Car
-                car = Car.objects.get(
-                    id=car_id,
-                    data_providers__org_id=request.user.org.id
-                )
-            except Car.DoesNotExist:
-                return error_response(
-                    "Машина не найдена или не принадлежит вашей организации",
-                    status.HTTP_404_NOT_FOUND
-                )
-
-            try:
-                parser = CarSensorsRawParser(
-                    car_id=car_id,
-                    start_date=start_date,
-                    end_date=end_date,
-                    mode=mode
-                )
-
-                result = parser.parse_raw_data()
-
-                total_messages = parser.total_messages
-                processed_messages = parser.processed_messages
-
-                mode_names = {
-                    'mileage': 'Пробег',
-                    'fuel': 'Топливо',
-                    'motohours': 'Моточасы'
-                }
-
-                response_data = {
-                    "success": True,
-                    "car_id": car_id,
-                    "car_name": car.name,
-                    "mode": mode,
-                    "mode_name": mode_names.get(mode, mode),
-                    "start_date": start_date_str,
-                    "end_date": end_date_str,
-                    "result": result,
-                    "statistics": {
-                        "total_messages": total_messages,
-                        "processed_messages": processed_messages,
-                        "skipped_messages": total_messages - processed_messages,
-                        "period_days": (end_date - start_date).days
-                    },
-                    "fields": self._get_fields_for_mode(mode)
-                }
-
-                return success_response(response_data, status.HTTP_200_OK)
-
-            except ValueError as e:
-                return error_response(str(e), status.HTTP_400_BAD_REQUEST)
-            except Exception as e:
-                logger.error(f"Ошибка парсинга данных для машины {car_id}: {e}", exc_info=True)
-                return error_response(
-                    f"Ошибка получения данных: {str(e)}",
-                    status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-
-        except Exception as e:
-            logger.error(f"Неожиданная ошибка в CarSensorsRawDataAPIView: {e}", exc_info=True)
-            return error_response(
-                "Внутренняя ошибка сервера",
-                status.HTTP_500_INTERNAL_SERVER_ERROR
+            response_data = CarSensorsHelper.build_response_data(
+                car_id=car_id,
+                car_name=car.name,
+                mode=mode,
+                start_date_str=start_date_str,
+                end_date_str=end_date_str,
+                result=result,
+                parser=parser
             )
 
-    def _get_fields_for_mode(self, mode: str) -> Dict[str, str]:
-        """Возвращает описание полей для каждого режима"""
-        fields = {
-            'mileage': {
-                "timestamp": "Временная метка (ISO 8601)",
-                "mileage": "Пробег (км или мили)",
-                "pos_s": "Скорость",
-                "ign": "Зажигание (0 - выключено, 1 - включено)",
-                "rpm": "Обороты двигателя (об/мин)"
-            },
-            'fuel': {
-                "timestamp": "Временная метка (ISO 8601)",
-                "calc_sensors_fuel_level": "Уровень топлива",
-                "pos_s": "Скорость",
-                "rpm": "Обороты двигателя (об/мин)"
-            },
-            'motohours': {
-                "timestamp": "Временная метка (ISO 8601)",
-                "motohours": "Моточасы",
-                "pos_s": "Скорость",
-                "rpm": "Обороты двигателя (об/мин)",
-                "ign": "Зажигание (0 - выключено, 1 - включено)"
-            }
-        }
-        return fields.get(mode, {})
+            return success_response(response_data, status.HTTP_200_OK)
 
+        except Exception as e:
+            error_data, error_status = CarSensorsHelper.handle_general_exception(e)
+            return error_response(error_data["error"], error_status)
 
-##TODO: YShipik - кастомные руты с куками для токенов
+    def _validate_request_params(self, car_id: str, start_date: str, end_date: str, mode: str):
+        """Валидация параметров запроса."""
+        is_valid, required_error = CarSensorsHelper.validate_required_params(car_id, start_date, end_date)
+        if not is_valid:
+            return error_response(required_error, status.HTTP_400_BAD_REQUEST)
+
+        is_valid_mode, mode_error = CarSensorsHelper.validate_mode(mode)
+        if not is_valid_mode:
+            return error_response(mode_error, status.HTTP_400_BAD_REQUEST)
+
+        return None
+
 class CustomTokenObtainPairView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)

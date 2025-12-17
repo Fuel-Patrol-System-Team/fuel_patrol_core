@@ -1,8 +1,8 @@
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 import polars as pl
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional
 from pathlib import Path
 from django.conf import settings
 
