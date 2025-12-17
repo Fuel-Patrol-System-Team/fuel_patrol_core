@@ -80,7 +80,8 @@ class MotohoursCalculationService:
                 ReportService.create_bad_data_record(
                     car,
                     "Нет данных моточасов за указанный период",
-                    report_query
+                    report_query,
+                    start_date, end_date
                 )
 
                 report_data = {
