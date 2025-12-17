@@ -1,5 +1,4 @@
 import logging
-from typing import Dict, Any
 from django.utils import timezone
 from django.db import transaction
 import polars as pl

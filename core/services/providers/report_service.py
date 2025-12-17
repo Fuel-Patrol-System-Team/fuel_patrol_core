@@ -1,10 +1,9 @@
 import logging
 import traceback
-import json
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, Tuple, Union
 from django.utils import timezone
 from django.db import transaction
-from datetime import timedelta
+from datetime import timedelta, datetime
 import polars as pl
 
 from core.models import (
@@ -26,7 +25,7 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def create_report(
-        provider_id: str, report_type: str, is_save_bad_data: bool = True
+            provider_id: str, report_type: str, is_save_bad_data: bool = True
     ) -> Tuple[ReportQuery, ReportQueryDetails]:
         """
         Создает новую заявку на отчет с деталями
@@ -54,10 +53,10 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def complete_report_success(
-        report_query: ReportQuery,
-        result_data: Dict[str, Any],
-        cars_proceed: int = 1,
-        cars_skipped: int = 0,
+            report_query: ReportQuery,
+            result_data: Dict[str, Any],
+            cars_proceed: int = 1,
+            cars_skipped: int = 0,
     ) -> None:
         """
         Завершает отчет успешно
@@ -93,11 +92,11 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def complete_report_error(
-        report_query: ReportQuery,
-        error_message: str,
-        exception: Optional[Exception] = None,
-        cars_proceed: int = 0,
-        cars_skipped: int = 1,
+            report_query: ReportQuery,
+            error_message: str,
+            exception: Optional[Exception] = None,
+            cars_proceed: int = 0,
+            cars_skipped: int = 1,
     ) -> None:
         """
         Завершает отчет с ошибкой
@@ -151,20 +150,83 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def create_bad_data_record(
-        car: Car, reason: str, report_query: Optional[ReportQuery] = None
+            car: Car,
+            reason: str,
+            report_query: Optional[ReportQuery] = None,
+            start_date: Optional[Union[datetime, str]] = None,
+            end_date: Optional[Union[datetime, str]] = None
     ) -> None:
         """
-        Создает запись о некорректных данных
+        Создает запись о некорректных данных с добавлением периода парсинга
+
+        Args:
+            car: Машина
+            reason: Причина некорректных данных
+            report_query: Отчет (опционально)
+            start_date: Начальная дата периода парсинга (datetime или строка в формате YYYY-MM-DD)
+            end_date: Конечная дата периода парсинга (datetime или строка в формате YYYY-MM-DD)
         """
         try:
             if not report_query or not report_query.is_save_bad_data:
                 return
 
+            period_info = ""
+
+            # Преобразуем строки в datetime при необходимости
+            start_date_dt = None
+            end_date_dt = None
+
+            if start_date:
+                if isinstance(start_date, str):
+                    try:
+                        # Пробуем разные форматы дат
+                        from dateutil import parser
+                        start_date_dt = parser.parse(start_date)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Не удалось распарсить start_date: {start_date}")
+                elif isinstance(start_date, datetime):
+                    start_date_dt = start_date
+                else:
+                    logger.warning(f"Неизвестный тип start_date: {type(start_date)}")
+
+            if end_date:
+                if isinstance(end_date, str):
+                    try:
+                        from dateutil import parser
+                        end_date_dt = parser.parse(end_date)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Не удалось распарсить end_date: {end_date}")
+                elif isinstance(end_date, datetime):
+                    end_date_dt = end_date
+                else:
+                    logger.warning(f"Неизвестный тип end_date: {type(end_date)}")
+
+            # Форматируем даты для отображения
+            if start_date_dt and end_date_dt:
+                start_str = start_date_dt.strftime("%d.%m.%Y")
+                end_str = end_date_dt.strftime("%d.%m.%Y")
+                period_info = f" за период с {start_str} по {end_str}"
+            elif start_date_dt:
+                start_str = start_date_dt.strftime("%d.%m.%Y")
+                period_info = f" за период с {start_str}"
+            elif end_date_dt:
+                end_str = end_date_dt.strftime("%d.%m.%Y")
+                period_info = f" за период до {end_str}"
+            # Если переданы строки, но не удалось распарсить, добавляем их как есть
+            elif start_date or end_date:
+                period_info = f" за период {start_date or ''} {f'- {end_date}' if end_date else ''}".strip()
+
+            full_reason = f"{reason}{period_info}"
+
             CarBadData.objects.create(
-                car_id=car, reason=reason, datetime=timezone.now()
+                car_id=car,
+                reason=full_reason,
+                datetime=timezone.now()
             )
 
-            logger.warning(f"Создана запись CarBadData для {car.name}: {reason}")
+            logger.warning(
+                f"Создана запись CarBadData для {car.name}: {full_reason}"
+            )
 
         except Exception as e:
             logger.error(f"Ошибка создания CarBadData для {car.name}: {e}")

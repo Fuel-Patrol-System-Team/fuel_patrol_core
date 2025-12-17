@@ -1,9 +1,7 @@
 import logging
-from typing import Dict, Any, List
-from django.utils import timezone
-from django.db import transaction
+from typing import Dict, Any
 
-from core.models import DataProvider, Organization, Car, CarBadData
+from core.models import DataProvider, Organization
 
 from core.services.providers.provider_factory import ProviderFactory
 from core.services.providers.report_service import ReportService

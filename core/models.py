@@ -4,13 +4,8 @@ import uuid
 from pathlib import Path
 
 from django.contrib.auth.models import AbstractUser
-from django.core.exceptions import ValidationError
 from django.db import models
-from django.db.models.signals import post_delete
-from django.dispatch import receiver
 from django.utils import timezone
-
-from core.services.notifications.tg_bot import logger
 
 NULLABLE = {"blank": True, "null": True}
 
@@ -94,6 +89,7 @@ class Car(models.Model):
     def __str__(self):
         return self.name
 
+
 class CarUnit(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
@@ -106,10 +102,12 @@ class CarUnit(models.Model):
     def __str__(self):
         return self.name
 
+
 class UserCarList(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     user = models.ForeignKey(OrgUser, on_delete=models.SET_NULL, **NULLABLE)
+
 
 class CarPrimary(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -154,7 +152,6 @@ class DataProvider(models.Model):
 
     def __str__(self):
         return self.name
-
 
 
 class ReportQuery(models.Model):
@@ -206,35 +203,6 @@ class ReportQueryDetails(models.Model):
         return f"Report {self.report_query} Details {self.id}"
 
 
-class Media(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    media_type = models.CharField(max_length=255, **NULLABLE)
-    file = models.FileField(**NULLABLE, upload_to="")
-    size = models.BigIntegerField(default=0, **NULLABLE)
-    filename = models.CharField(max_length=255)
-    type = models.CharField(max_length=255, **NULLABLE)
-    report_query_id = models.OneToOneField(
-        ReportQuery, on_delete=models.CASCADE, **NULLABLE, related_name="media"
-    )
-    file_hash = models.CharField(max_length=64, unique=True, **NULLABLE)
-
-    class Meta:
-        verbose_name = "Media"
-        verbose_name_plural = "Media Files"
-        ordering = ["filename"]
-
-    def __str__(self):
-        return self.filename
-
-    def save(self, *args, **kwargs):
-        from core.helpers.media_utils import calculate_file_hash
-
-        if self.file:
-            self.size = self.file.size
-            self.file_hash = calculate_file_hash(self.file)
-        super().save(*args, **kwargs)
-
-
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="reports")
@@ -281,13 +249,6 @@ class Driver(models.Model):
 
     def __str__(self):
         return self.fullname
-
-
-@receiver(post_delete, sender=Media)
-def delete_media_file(sender, instance, **kwargs):
-    if instance.file and os.path.isfile(instance.file.path):
-        logger.info(f"Deleting file: {instance.file.path}")
-        os.remove(instance.file.path)
 
 
 class SensorsKey(models.Model):

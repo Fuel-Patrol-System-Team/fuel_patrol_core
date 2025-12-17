@@ -159,8 +159,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             elif sensor_type == "FuelLvl":
                 if sensor.get("gradeType") == "GradeTable":
                     grades_tables = sensor.get("gradesTables", [{}])
-                    if grades_tables and grades_tables[0]:
-                        grades = grades_tables[0].get("grades", [{}])
+                    if grades_tables and grades_tables[-1]:
+                        grades = grades_tables[-1].get("grades", [{}])
                         if grades:
                             record = grades[-1]
                             input_value = record.get("input")
