@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Dict
+from uuid import UUID
 
 import pytz
 from celery import group
@@ -16,7 +17,6 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView, RetrieveUpdateDestroyAPIView, \
     ListCreateAPIView
-
 
 from rest_framework import status
 import logging
@@ -218,6 +218,7 @@ class VehicleSyncAPIView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
+
 class CarDataRequestAPIView(APIView):
     """
     API для создания заявок на получение и обработку данных по автомобилям.
@@ -317,6 +318,7 @@ class CarDataRequestAPIView(APIView):
             f"Failed to start processing tasks: {error_message}",
             status_code
         )
+
 
 class MileageCalculationAPIView(APIView):
     @swagger_auto_schema(
@@ -874,6 +876,10 @@ class CarBadDataAPIView(ListAPIView):
 class StartTerminalMessagesParsingView(APIView):
     """
     View для запуска парсинга terminalMessages
+    Поддерживает три режима:
+    1. parse_all=True - парсинг всех активных машин
+    2. parse_all=False + car_ids - парсинг конкретных машин
+    3. parse_all=False + без car_ids - старая логика (все машины провайдера)
     """
     permission_classes = [IsOrgMember]
 
@@ -883,7 +889,9 @@ class StartTerminalMessagesParsingView(APIView):
             provider_name = request.data.get('provider_name')
             start_date_str = request.data.get('start_date')
             end_date_str = request.data.get('end_date')
-            is_raw_data = request.data.get('is_raw_data')
+            is_raw_data = request.data.get('is_raw_data', True)
+            parse_all = request.data.get('parse_all', False)
+            car_ids = request.data.get('car_ids', [])
 
             if not all([provider_name, start_date_str, end_date_str]):
                 return Response(
@@ -907,12 +915,31 @@ class StartTerminalMessagesParsingView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
+            if car_ids:
+                try:
+                    validated_car_ids = []
+                    for car_id in car_ids:
+                        if isinstance(car_id, str):
+                            validated_car_ids.append(UUID(car_id))
+                        else:
+                            validated_car_ids.append(car_id)
+                    car_ids = validated_car_ids
+                except (ValueError, TypeError) as e:
+                    return Response(
+                        {'error': f'Неверный формат car_ids: {str(e)}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
             task = parse_terminal_messages_task.delay(
                 provider_name=provider_name,
                 start_date_str=start_date_str,
                 end_date_str=end_date_str,
-                is_raw_data=is_raw_data
+                is_raw_data=is_raw_data,
+                parse_all=parse_all,
+                car_ids=car_ids
             )
+
+            mode = "parse_all" if parse_all else ("specific_cars" if car_ids else "all_cars")
 
             return Response({
                 'status': 'success',
@@ -920,7 +947,12 @@ class StartTerminalMessagesParsingView(APIView):
                 'task_id': task.id,
                 'provider_name': provider_name,
                 'start_date': start_date_str,
-                'end_date': end_date_str
+                'end_date': end_date_str,
+                'is_raw_data': is_raw_data,
+                'parse_all': parse_all,
+                'car_ids': car_ids,
+                'mode': mode,
+                'car_count': len(car_ids) if car_ids else None
             }, status=status.HTTP_202_ACCEPTED)
 
         except Exception as e:
@@ -1028,6 +1060,7 @@ class CarSensorsRawDataAPIView(APIView):
             return error_response(mode_error, status.HTTP_400_BAD_REQUEST)
 
         return None
+
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     def post(self, request, *args, **kwargs):

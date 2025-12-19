@@ -148,32 +148,48 @@ class GlonassSoftTerminalMessagesParser:
         except (ValueError, TypeError):
             return default
 
-    def parse_all_cars(self, max_workers: int = 3) -> Dict[str, Any]:
-        """Парсит данные для всех машин"""
+    def parse_all_cars(self, max_workers: int = 3, parse_all: bool = False, car_ids: Optional[List[str]] = None) -> \
+    Dict[str, Any]:
+        """Парсит данные для машин"""
         self.start_time = timezone.now()
-        cars = self.get_all_vehicles_from_db()
+
+        if parse_all:
+            cars = Car.objects.filter(is_active=True,data_providers=self.provider).all()
+        elif car_ids:
+            cars = Car.objects.filter(id__in=car_ids,data_providers=self.provider).all()
+        else:
+            cars = Car.objects.filter(data_providers=self.provider).all()
+
         self.total_cars = len(cars)
 
         if not cars:
-            logger.warning(f"Нет машин для провайдера '{self.provider_name}'")
+            mode_description = "активных машин" if parse_all else "указанных машин" if car_ids else f"машин для провайдера '{self.provider_name}'"
+            logger.warning(f"Нет {mode_description}")
             return {
                 "status": "completed",
-                "message": "Нет машин для обработки",
+                "message": f"Нет {mode_description} для обработки",
+                "mode": "parse_all" if parse_all else ("specific_cars" if car_ids else "all_cars"),
                 "total_cars": 0,
                 "processed_cars": 0,
-                "failed_cars": 0
+                "failed_cars": 0,
+                "parse_all": parse_all,
+                "car_ids_count": len(car_ids) if car_ids else None
             }
 
-        logger.info(f"Начинаем парсинг {self.total_cars} машин в режиме {'raw' if self.is_raw_data else 'mapped'}")
+        mode = "parse_all" if parse_all else ("specific_cars" if car_ids else "all_cars")
+        logger.info(
+            f"Начинаем парсинг {self.total_cars} машин в режиме {mode} ({'raw' if self.is_raw_data else 'mapped'})")
 
-        # Аутентификация
         if not self.authenticate():
             return {
                 "status": "failed",
                 "message": "Ошибка аутентификации",
+                "mode": mode,
                 "total_cars": self.total_cars,
                 "processed_cars": 0,
-                "failed_cars": 0
+                "failed_cars": 0,
+                "parse_all": parse_all,
+                "car_ids_count": len(car_ids) if car_ids else None
             }
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -201,12 +217,16 @@ class GlonassSoftTerminalMessagesParser:
         return {
             "status": "completed",
             "message": f"Обработано {self.processed_cars} из {self.total_cars} машин",
+            "mode": mode,
             "total_cars": self.total_cars,
             "processed_cars": self.processed_cars,
             "failed_cars": self.failed_cars,
             "start_time": self.start_time,
             "end_time": self.end_time,
-            "mode": "raw" if self.is_raw_data else "mapped"
+            "data_mode": "raw" if self.is_raw_data else "mapped",
+            "parse_all": parse_all,
+            "car_ids_count": len(car_ids) if car_ids else None,
+            "execution_time": str(self.end_time - self.start_time)
         }
 
     def parse_single_car(self, car: Car) -> bool:

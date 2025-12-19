@@ -1,4 +1,6 @@
 import logging
+from typing import Optional, List
+
 import polars as pl
 from datetime import datetime
 import pytz
@@ -346,7 +348,9 @@ def parse_terminal_messages_task(
         provider_name: str,
         start_date_str: str,
         end_date_str: str,
-        is_raw_data: bool = True
+        is_raw_data: bool = True,
+        parse_all: bool = False,
+        car_ids: Optional[List[str]] = None
 ):
     """
     Celery задача для парсинга terminalMessages
@@ -362,7 +366,11 @@ def parse_terminal_messages_task(
             is_raw_data=is_raw_data
         )
 
-        result = parser.parse_all_cars(max_workers=3)
+        result = parser.parse_all_cars(
+            max_workers=3,
+            parse_all=parse_all,
+            car_ids=car_ids
+        )
 
         self.update_state(
             state='SUCCESS',

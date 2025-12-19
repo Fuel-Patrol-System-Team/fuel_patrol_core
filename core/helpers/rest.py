@@ -456,6 +456,19 @@ PARSE_RAW_DATA_SCHEMA = {
                 type=openapi.TYPE_BOOLEAN,
                 default=True,
                 description='True - данные без маппинга, False - с маппингом сенсоров'
+            ),
+            'parse_all': openapi.Schema(
+                type=openapi.TYPE_BOOLEAN,
+                default=False,
+                description='True - парсинг всех активных машин (is_active=True)'
+            ),
+            'car_ids': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format='uuid'
+                ),
+                description='Список UUID машин для парсинга (используется если parse_all=False)'
             )
         }
     ),
@@ -472,7 +485,13 @@ PARSE_RAW_DATA_SCHEMA = {
                     'start_date': openapi.Schema(type=openapi.TYPE_STRING),
                     'end_date': openapi.Schema(type=openapi.TYPE_STRING),
                     'is_raw_data': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'parse_all': openapi.Schema(type=openapi.TYPE_BOOLEAN),
+                    'car_ids': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_STRING)
+                    ),
                     'mode': openapi.Schema(type=openapi.TYPE_STRING),
+                    'car_count': openapi.Schema(type=openapi.TYPE_INTEGER),
                 }
             )
         ),
