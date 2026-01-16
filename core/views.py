@@ -60,7 +60,7 @@ from core.helpers.responses import error_response, user_registered_response, use
     success_response
 from core.helpers.permissions import IsOrgMember
 from .services.providers.car_sensors_raw_parser import CarSensorsRawParser
-from .services.providers.mileage_calculation_service import MileageCalculationService
+from .services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
 from .services.providers.report_service import ReportService
 
@@ -335,6 +335,7 @@ class MileageCalculationAPIView(APIView):
     def post(self, request):
         car_id = request.data.get("car_id")
         agg = request.data.get("agg")
+        alg = MileageAlgorithms.__members__.get( request.data.get("alg", ""), MileageAlgorithms.compute) # пока fraud очень тестовый
         start_date = request.data.get("start_date")
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
@@ -350,6 +351,7 @@ class MileageCalculationAPIView(APIView):
         result, status_code = MileageCalculationService.calculate_mileage(
             car_id=car_id,
             agg=agg,
+            alg = alg,
             start_date=start_date,
             end_date=end_date,
             is_save_bad_data=is_save_bad_data

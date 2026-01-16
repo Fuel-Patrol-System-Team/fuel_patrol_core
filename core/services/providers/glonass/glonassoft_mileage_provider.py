@@ -95,6 +95,7 @@ class GlonassSoftMileageProvider(RateLimitedProvider):
                 strict=False
             ).alias("timestamp"),
             pl.col("mileage").cast(pl.Float64),
+            pl.col("satellites").cast(pl.Int16),
             pl.lit(str(car.id)).alias("auto")
         ])
 
@@ -223,7 +224,9 @@ class GlonassSoftMileageProvider(RateLimitedProvider):
             timestamp_str = record.get("deviceTime")
             if not timestamp_str:
                 continue
-
+            satellites = record.get("satellites")
+            if not satellites:
+                continue
             mileage = self._extract_mileage_value(record, mileage_key_path)
             if mileage is None:
                 continue
@@ -232,7 +235,8 @@ class GlonassSoftMileageProvider(RateLimitedProvider):
             if timestamp:
                 parsed_data.append({
                     "timestamp": timestamp,
-                    "mileage": float(mileage)
+                    "mileage": float(mileage),
+                    "satellites": satellites
                 })
 
         return parsed_data

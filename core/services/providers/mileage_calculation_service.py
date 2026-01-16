@@ -1,14 +1,18 @@
+from enum import Enum
 import logging
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
-from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test
+from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud, mileage_test_fraud_new
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
 from core.services.providers.report_service import ReportService
 
 logger = logging.getLogger(__name__)
 
+class MileageAlgorithms(Enum):
+    compute = "compute"
+    fraud = "fraud"
 
 class MileageCalculationService:
     """Сервис для расчета пробега с полной бизнес-логикой"""
@@ -16,6 +20,7 @@ class MileageCalculationService:
     @staticmethod
     def calculate_mileage(
             car_id: str,
+            alg: MileageAlgorithms,
             agg: Optional[int] = None,
             start_date: Optional[datetime] = None,
             end_date: Optional[datetime] = None,
@@ -85,15 +90,17 @@ class MileageCalculationService:
 
 
             mode = MileageModes.standart if agg is None else MileageModes.agg
-            agg_period = 1 if agg is None else agg
-            result = mileage_test(df, agg_period, mode)
-
+            if alg == MileageAlgorithms.compute:
+                result = mileage_test_compute(df, agg, mode)
+            else:
+                result = mileage_test_fraud_new(car_id, df,agg, mode)
 
             report_data = {
                 "result": result,
                 "rows_processed": len(df),
                 "calculation_mode": mode,
-                "aggregation_period_minutes": agg_period
+                "alg": alg.name,
+                "aggregation_period_minutes": agg
             }
 
 
