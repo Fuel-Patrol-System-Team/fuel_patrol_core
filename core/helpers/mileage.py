@@ -379,6 +379,7 @@ def mileage_test_fraud_new(
                 pl.sum("dmileage_factor"),
             ]
         )
+        agg = agg.to_dicts()
     df = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
