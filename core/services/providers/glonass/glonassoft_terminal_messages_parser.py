@@ -100,11 +100,13 @@ class GlonassSoftTerminalMessagesParser:
             logger.error(f"Ошибка аутентификации: {e}")
             return False
 
+    # TODO: убрать передавать в таск/класс
     def get_all_vehicles_from_db(self) -> List[Car]:
         """Получает все машины из БД для данного провайдера"""
         cars = Car.objects.filter(data_providers=self.provider).all()
         return list(cars)
 
+    # TODO: убрать передавать в таск/класс
     def _get_sensors_mapping(self, car: Car) -> Dict[str, str]:
         """Получает маппинг сенсоров для машины"""
         if car.id not in self.sensors_mapping_cache:
@@ -120,7 +122,7 @@ class GlonassSoftTerminalMessagesParser:
                 self.sensors_mapping_cache[car.id] = {}
 
         return self.sensors_mapping_cache[car.id]
-
+    # TODO: убрать сделать через новый препроцессор парсер
     def _get_nested_value(
             self,
             data: dict,

@@ -1023,9 +1023,8 @@ class CarSensorsRawDataAPIView(APIView):
             car, car_error = CarSensorsHelper.get_car_for_user(car_id, request.user)
             if car_error:
                 return error_response(car_error, status.HTTP_404_NOT_FOUND)
-
             result, parser, parse_error = CarSensorsHelper.parse_raw_data(
-                car_id, start_date, end_date, mode
+                car, start_date, end_date, mode
             )
             if parse_error:
                 error_status = (

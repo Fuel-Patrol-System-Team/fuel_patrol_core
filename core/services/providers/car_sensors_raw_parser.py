@@ -1,18 +1,22 @@
+from enum import Enum
 import logging
+import string
 import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
+from attr import dataclass
 import orjson
+import polars as pl
 import pytz
 import requests
 from django.utils import timezone
 
 from core.models import Car, SensorsValues
+from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol
 from core.services.providers.rate_limiter import global_rate_limiter
 
 logger = logging.getLogger(__name__)
-
 
 class CarSensorsRawParser:
     """
@@ -147,11 +151,11 @@ class CarSensorsRawParser:
 
 
         if self.mode == "mileage":
-            result = self._process_mileage_mode(all_messages, sensors_mapping)
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition])
         elif self.mode == "fuel":
-            result = self._process_fuel_mode(all_messages, sensors_mapping)
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)])
         elif self.mode == "motohours":
-            result = self._process_motohours_mode(all_messages, sensors_mapping)
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition])
         else:
             raise ValueError(f"Неизвестный режим: {self.mode}")
 
@@ -237,53 +241,104 @@ class CarSensorsRawParser:
             logger.error(f"Ошибка запроса данных для {vehicle_id}: {e}")
             return None
 
-    def _process_mileage_mode(self, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str]) -> List[
-        Dict[str, Any]]:
-        """Обработка сообщений для режима пробега"""
-        result = []
-
-        mileage_path = sensors_mapping.get("mileage", "")
-        speed_path = sensors_mapping.get("speed", "speed")
-        ign_path = sensors_mapping.get("ign", "")
-        rpm_path = sensors_mapping.get("rpm", "")
-
-        for message in messages:
-            try:
-                timestamp_str = message.get("deviceTime")
-                if not timestamp_str:
+    def _build_use_cols(self, required_columns, sensors_mapping):
+        usecols = []
+        for col in required_columns:
+            param = GLOBAL_GLONASS_PARAMS.get(col)
+            if param:
+                path_to_param = ""
+                if param.is_dynamic:
+                    path_to_param = sensors_mapping.get(col.value, param.default_key)
+                else:
+                    path_to_param = param.default_key
+                if path_to_param == "":
                     continue
+                usecols.append(path_to_param)
+        return usecols
+                    
+
+    def _process_general(self, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None) -> List[Dict[str, Any]]:
+        result = pl.DataFrame(messages, infer_schema_length=None)
+        fields = list(map(lambda x: f"parameters.{x}" , result["parameters"].struct.fields))
+        result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
+        use_cols = self._build_use_cols(required_columns, sensors_mapping)
+        result = result.select(use_cols)
+
+        for col in required_columns:
+            param = GLOBAL_GLONASS_PARAMS.get(col)
+            if param:
+                if param.is_dynamic:
+                    path_to_param = sensors_mapping.get(col.value, param.default_key)
+                    
+                else:
+                    path_to_param = param.default_key
+                if path_to_param == "":
+                    # заменить спец значением весь столбец
+                    result = result.with_columns(pl.lit(param.default_on_absence).alias(param.label))
+                else:
+                    # переименовываем столбец
+                    result = result.rename({path_to_param: param.label})
+                    if param.cast: # если есть каст, кастуем
+                        result = param.cast(result)
+                    if param.default_value is not None:
+                        result = result.with_columns(pl.col(param.label).fill_null(param.default_value))
+                    if param.filter_on_absence:
+                        result = result.filter(pl.col(param.label).is_not_null())
+        mapped_required_columns = list(map(lambda x: GLOBAL_GLONASS_PARAMS.get(x).label ,required_columns))
+        result = result.select(mapped_required_columns)
+        if required_actions is not None:
+            for action in required_actions:
+                if action is not None:
+                    result = action(result, self.car)
+        self.processed_messages += result.shape[0]
+        return result.to_dicts()
+    # def _process_mileage_mode(self, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str]) -> List[
+    #     Dict[str, Any]]:
+    #     """Обработка сообщений для режима пробега"""
+    #     result = []
+
+    #     mileage_path = sensors_mapping.get("mileage", "")
+    #     speed_path = sensors_mapping.get("speed", "speed")
+    #     ign_path = sensors_mapping.get("ign", "")
+    #     rpm_path = sensors_mapping.get("rpm", "")
+
+    #     for message in messages:
+    #         try:
+    #             timestamp_str = message.get("deviceTime")
+    #             if not timestamp_str:
+    #                 continue
 
 
-                timestamp = self._parse_timestamp(timestamp_str)
-                if not timestamp:
-                    continue
+    #             timestamp = self._parse_timestamp(timestamp_str)
+    #             if not timestamp:
+    #                 continue
 
 
-                mileage = self._get_nested_value(message, mileage_path)
-                speed = self._get_nested_value(message, speed_path, 0.0)
-                rpm = self._get_nested_value(message, rpm_path, 0.0)
+    #             mileage = self._get_nested_value(message, mileage_path)
+    #             speed = self._get_nested_value(message, speed_path, 0.0)
+    #             rpm = self._get_nested_value(message, rpm_path, 0.0)
 
-                ign_value = self._get_nested_value(message, ign_path, 0.0)
-                ign = 1 if ign_value > 0 else 0
+    #             ign_value = self._get_nested_value(message, ign_path, 0.0)
+    #             ign = 1 if ign_value > 0 else 0
 
-                if mileage is None:
-                    continue
+    #             if mileage is None:
+    #                 continue
 
-                result.append({
-                    "timestamp": timestamp.isoformat(),
-                    "mileage": float(mileage),
-                    "pos_s": float(speed),
-                    "ign": ign,
-                    "rpm": float(rpm) if rpm is not None else 0.0
-                })
+    #             result.append({
+    #                 "timestamp": timestamp.isoformat(),
+    #                 "mileage": float(mileage),
+    #                 "pos_s": float(speed),
+    #                 "ign": ign,
+    #                 "rpm": float(rpm) if rpm is not None else 0.0
+    #             })
 
-                self.processed_messages += 1
+    #             self.processed_messages += 1
 
-            except Exception as e:
-                logger.debug(f"Ошибка обработки сообщения для режима пробега: {e}")
-                continue
+    #         except Exception as e:
+    #             logger.debug(f"Ошибка обработки сообщения для режима пробега: {e}")
+    #             continue
 
-        return result
+    #     return result
 
     def _process_fuel_mode(self, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str]) -> List[
         Dict[str, Any]]:

@@ -99,7 +99,7 @@ class CarSensorsHelper:
 
     @staticmethod
     def parse_raw_data(
-            car_id: str,
+            car: Car,
             start_date: datetime,
             end_date: datetime,
             mode: str
@@ -107,7 +107,7 @@ class CarSensorsHelper:
         """Парсинг сырых данных с использованием CarSensorsRawParser."""
         try:
             parser = CarSensorsRawParser(
-                car_id=car_id,
+                car_id=str(car.id),
                 start_date=start_date,
                 end_date=end_date,
                 mode=mode
@@ -119,7 +119,7 @@ class CarSensorsHelper:
         except ValueError as e:
             return None, None, str(e)
         except Exception as e:
-            logger.error(f"Ошибка парсинга данных для машины {car_id}: {e}", exc_info=True)
+            logger.error(f"Ошибка парсинга данных для машины {car.id}: {e}", exc_info=True)
             return None, None, f"Ошибка получения данных: {str(e)}"
 
     @staticmethod
