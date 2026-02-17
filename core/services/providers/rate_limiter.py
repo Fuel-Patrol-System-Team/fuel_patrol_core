@@ -26,7 +26,7 @@ class GlobalRateLimiter:
         if not hasattr(self, '_initialized') or not self._initialized:
             self._lock = threading.Lock()
             self._last_request_time = 0.0
-            self._min_interval = 1.05
+            self._min_interval = 1.55
             self._initialized = True
             logger.info("GlobalRateLimiter инициализирован")
 

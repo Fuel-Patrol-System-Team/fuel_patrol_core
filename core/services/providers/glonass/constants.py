@@ -10,7 +10,7 @@ class GlonassCastProtocol(Protocol):
     def __call__(self, df: pl.DataFrame) -> pl.DataFrame:
         ...
 class GlonassAfterParsingProtocol(Protocol):
-    def __call__(self, df: pl.DataFrame, car: Car) -> pl.DataFrame:
+    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str]) ->pl.DataFrame:
         ...
 @dataclass
 class GlonassParameter:
@@ -24,7 +24,7 @@ class GlonassParameter:
 class GL_PARAM_KEYS(Enum):
     timestamp = "timestamp"
     speed = "speed"
-    fuel_level = "fuel"
+    fuel_level = "calc_sensors_fuel_level"
     mileage = "mileage"
     motohours = "motohours"
     ignition = "ign"
@@ -33,10 +33,15 @@ class GL_PARAM_KEYS(Enum):
     voltage = "voltage"
     latitude = "latitude"
     longitude = "longitude"
+    amtr_x= "amtr_x"
+    amtr_y= "amtr_y"
+    amtr_z= "amtr_z"
     satellites = "satellites"
     
 class GL_ACTION_KEYS(Enum):
     tarify_car = "tarify"
+    auto_column = "auto"
+    amtr_merge = "amtr_merge"
 
 GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
@@ -50,9 +55,26 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.voltage: GlonassParameter(False, "voltage", "calc_sensors_voltage", None, False, None, None),
     GL_PARAM_KEYS.latitude: GlonassParameter(False, "latitude", "latitude", None, False, None, None),
     GL_PARAM_KEYS.longitude: GlonassParameter(False, "longitude", "longitude", None, False, None, None),
+    GL_PARAM_KEYS.amtr_x: GlonassParameter(False, "amtr_x", "amtr_x", None, False, 0, 0),
+    GL_PARAM_KEYS.amtr_y: GlonassParameter(False, "amtr_y", "amtr_y", None, False, 0, 0),
+    GL_PARAM_KEYS.amtr_z: GlonassParameter(False, "amtr_z", "amtr_z", None, False, 0,0),
     GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None), }
 
 
+def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str]):
+    df = df.with_columns(pl.lit(str(car.id)).alias("auto").cast(pl.Categorical)) 
+    mapping.append("auto")
+    return df
+
+def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str]):
+    df = df.with_columns(pl.col("amtr_x").add(pl.col("amtr_y")).add(pl.col("amtr_z")).alias("amtr")) 
+    mapping.remove("amtr_x")
+    mapping.remove("amtr_y")
+    mapping.remove("amtr_z")
+    mapping.append("amtr")
+    return df
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {
-    GL_ACTION_KEYS.tarify_car: lambda df, car: df.with_columns(pl.col("calc_sensors_fuel_level").mul(car.output).truediv(car.input)),
+    GL_ACTION_KEYS.tarify_car: lambda df, car, mapping: df.with_columns(pl.col("calc_sensors_fuel_level").mul(car.output).truediv(car.input)) ,
+    GL_ACTION_KEYS.auto_column: _modify_auto,
+    GL_ACTION_KEYS.amtr_merge: _merge_amtr,
 }

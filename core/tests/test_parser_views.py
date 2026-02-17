@@ -8,7 +8,6 @@ from django.http import HttpResponse
 from django.urls import reverse
 
 from core.models import OrgUser
-from core.services.providers.car_sensors_raw_parser import CarSensorsRawParser
 
 
 @pytest.mark.django_db

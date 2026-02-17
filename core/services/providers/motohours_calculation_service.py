@@ -2,10 +2,13 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
+import polars
+
 from core.helpers.motohours import compute_motohours
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
 from core.services.providers.report_service import ReportService
+from core.tests.test_parser import GlonassGeneralProvider
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +20,8 @@ class MotohoursCalculationService:
     def calculate_motohours(
             car_id: str,
             agg: Optional[int] = None,
-            start_date: Optional[datetime] = None,
-            end_date: Optional[datetime] = None,
+            start_date: datetime = datetime.now(),
+            end_date: datetime = datetime.now(),
             is_save_bad_data: bool = True
     ) -> Tuple[Dict[str, Any], int]:
         """
@@ -43,7 +46,7 @@ class MotohoursCalculationService:
                 ReportService.complete_report_error(report_query, validation_error)
                 return {"error": validation_error}, 400
 
-            provider = GlonassSoftMotohoursProvider(provider_obj.metadata, car_id)
+            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "motohours")
 
             try:
                 if not provider.authenticate():
@@ -56,7 +59,7 @@ class MotohoursCalculationService:
                 return {"error": error_msg}, 401
 
             try:
-                df = provider.get_car_data(start_date, end_date)
+                df = provider.parse_raw_data(return_df=True)
             except Exception as data_error:
                 error_msg = f"Не удалось получить данные от провайдера: {str(data_error)}"
                 logger.error(f"Ошибка получения данных от провайдера для car_id={car_id}: {data_error}", exc_info=True)
@@ -101,7 +104,8 @@ class MotohoursCalculationService:
 
             try:
                 agg_period = 0 if agg is None else agg
-                result = compute_motohours(df, agg)
+                if isinstance(df, polars.DataFrame):
+                    result = compute_motohours(df, agg)
             except Exception as calc_error:
                 error_msg = f"Ошибка при расчете моточасов: {str(calc_error)}"
                 logger.error(f"Ошибка расчета моточасов для car_id={car_id}: {calc_error}", exc_info=True)

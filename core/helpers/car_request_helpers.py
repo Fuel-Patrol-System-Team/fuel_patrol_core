@@ -1,6 +1,6 @@
 import logging
 from typing import Dict, List, Tuple, Optional, Set
-from app.tasks import process_single_car_data_task
+from app.tasks import GlonassGeneralProvider, process_single_car_data_task
 from django.db.models import QuerySet
 
 from core.models import DataProvider, Car, CarUnit, ReportQuery

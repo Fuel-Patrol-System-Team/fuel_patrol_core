@@ -345,6 +345,8 @@ class MileageCalculationAPIView(APIView):
                 start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
             if end_date:
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            else:
+                end_date = datetime.now()
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
 
@@ -916,6 +918,7 @@ class StartTerminalMessagesParsingView(APIView):
                     {'error': 'Неверный формат даты. Используйте YYYY-MM-DD'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            provider = DataProvider.objects.filter(nmae=provider_name).first()
 
             if car_ids:
                 try:
@@ -933,12 +936,11 @@ class StartTerminalMessagesParsingView(APIView):
                     )
 
             task = parse_terminal_messages_task.delay(
-                provider_name=provider_name,
+                provider=provider,
                 start_date_str=start_date_str,
                 end_date_str=end_date_str,
-                is_raw_data=is_raw_data,
-                parse_all=parse_all,
-                car_ids=car_ids
+                mode="raw",
+                cars=cars
             )
 
             mode = "parse_all" if parse_all else ("specific_cars" if car_ids else "all_cars")

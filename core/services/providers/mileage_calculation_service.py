@@ -3,10 +3,14 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
+from pandas import DataFrame
+import polars
+
 from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud, mileage_test_fraud_new
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
 from core.services.providers.report_service import ReportService
+from core.tests.test_parser import GlonassGeneralProvider
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +26,8 @@ class MileageCalculationService:
             car_id: str,
             alg: MileageAlgorithms,
             agg: Optional[int] = None,
-            start_date: Optional[datetime] = None,
-            end_date: Optional[datetime] = None,
+            start_date: datetime = datetime.now(),
+            end_date: datetime = datetime.now(),
             is_save_bad_data: bool = True
     ) -> Tuple[Dict[str, Any], int]:
         """
@@ -51,15 +55,14 @@ class MileageCalculationService:
                 return {"error": validation_error}, 400
 
 
-            provider = GlonassSoftMileageProvider(provider_obj.metadata, car_id)
+            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "mileage")
             if not provider.authenticate():
                 error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
                 return {"error": error_msg}, 401
 
 
-            df = provider.get_car_data(start_date, end_date)
-
+            df = provider.parse_raw_data(return_df=True)
             if df is None or df.is_empty():
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 result = make_empty_mileage_result(mode)
@@ -87,31 +90,31 @@ class MileageCalculationService:
                 )
 
                 return {"result": result}, 200
+            if isinstance(df, polars.DataFrame):
+            
+                mode = MileageModes.standart if agg is None else MileageModes.agg
+                if alg == MileageAlgorithms.compute:
+                    result = mileage_test_compute(df, agg, mode)
+                else:
+                    result = mileage_test_fraud_new(car_id, df,agg, mode)
+
+                report_data = {
+                    "result": result,
+                    "rows_processed": len(df),
+                    "calculation_mode": mode,
+                    "alg": alg.name,
+                    "aggregation_period_minutes": agg
+                }
 
 
-            mode = MileageModes.standart if agg is None else MileageModes.agg
-            if alg == MileageAlgorithms.compute:
-                result = mileage_test_compute(df, agg, mode)
-            else:
-                result = mileage_test_fraud_new(car_id, df,agg, mode)
+                ReportService.complete_report_success(
+                    report_query,
+                    report_data,
+                    cars_proceed=1,
+                    cars_skipped=0
+                )
 
-            report_data = {
-                "result": result,
-                "rows_processed": len(df),
-                "calculation_mode": mode,
-                "alg": alg.name,
-                "aggregation_period_minutes": agg
-            }
-
-
-            ReportService.complete_report_success(
-                report_query,
-                report_data,
-                cars_proceed=1,
-                cars_skipped=0
-            )
-
-            return {"result": result}, 200
+                return {"result": result}, 200
 
         except Car.DoesNotExist:
             error_msg = "Автомобиль не найден"

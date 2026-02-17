@@ -1,5 +1,5 @@
 import logging
-from typing import Optional, List
+from typing import Literal, Optional, List
 
 import polars as pl
 from datetime import datetime
@@ -24,6 +24,7 @@ import time
 from core.services.providers.car_data_service import CarDataService
 from core.services.providers.filtering_service import FilteringService
 
+from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
 
 from core.services.providers.leaks_service import LeaksService
@@ -161,18 +162,7 @@ def process_single_car_data_task(
         data_provider = ProviderFactory.create_provider(
             provider.metadata, provider_type="data", car_id=car_id
         )
-
-        if not data_provider:
-            error_msg = f"Не удалось создать провайдер данных для машины {car_id}"
-            logger.error(error_msg)
-            ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
-            return {"success": False, "car_id": car_id, "error": error_msg}
-
-        if not data_provider.authenticate():
-            error_msg = f"Ошибка аутентификации для машины {car_id}"
-            logger.error(error_msg)
-            ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
-            return {"success": False, "car_id": car_id, "error": error_msg}
+ 
 
         start_dt = (
             datetime.fromisoformat(start_date.replace("Z", "+00:00"))
@@ -186,7 +176,16 @@ def process_single_car_data_task(
         )
 
         logger.info(f"ЭТАП 1: Получение сырых данных для машины {car_id}...")
-        raw_df = data_provider.get_car_data(start_dt, end_dt)
+        parser = GlonassGeneralProvider(None, car, provider, start_dt, end_dt, "fuel")
+        status, raw_df = parser.parse_raw_data("fuel", return_df=True)
+        # raw_df = data_provider.get_car_data(start_dt, end_dt)
+        
+        if not status:
+            error_msg = f"Не удалось создать провайдер данных для машины {car_id}"
+            logger.error(error_msg)
+            ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+            return {"success": status, "car_id": car_id, "error": raw_df[0]}
+
 
         if raw_df is None or raw_df.is_empty():
             error_msg = f"Нет сырых данных для машины {car_id}"
@@ -345,12 +344,11 @@ def process_single_car_data_task(
 @shared_task(bind=True)
 def parse_terminal_messages_task(
         self,
-        provider_name: str,
+        provider: DataProvider,
         start_date_str: str,
         end_date_str: str,
-        is_raw_data: bool = True,
-        parse_all: bool = False,
-        car_ids: Optional[List[str]] = None
+        mode: Literal["raw"] | Literal["raw_mapped"],
+        cars: List[Car] | None = None
 ):
     """
     Celery задача для парсинга terminalMessages
@@ -359,18 +357,20 @@ def parse_terminal_messages_task(
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
         end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
 
-        parser = GlonassSoftTerminalMessagesParser(
-            provider_name=provider_name,
-            start_date=start_date,
-            end_date=end_date,
-            is_raw_data=is_raw_data
-        )
+        # parser = GlonassSoftTerminalMessagesParser(
+        #     provider_name=provider_name,
+        #     start_date=start_date,
+        #     end_date=end_date,
+        #     is_raw_data=is_raw_data
+        # )
+        parser = GlonassGeneralProvider( cars, None, provider, start_date, end_date, mode)
 
-        result = parser.parse_all_cars(
-            max_workers=3,
-            parse_all=parse_all,
-            car_ids=car_ids
-        )
+        # result = parser.parse_all_cars(
+        #     max_workers=3,
+        #     parse_all=parse_all,
+        #     car_ids=car_ids
+        # )
+        result = parser.parse_raw_data_all() 
 
         self.update_state(
             state='SUCCESS',

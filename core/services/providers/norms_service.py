@@ -176,7 +176,7 @@ class NormsService:
                 anti_bug.group_by_dynamic(
                     index_column="timestamp",
                     every=f"{PERIOD_2_MIN}m",
-                    by="auto"
+                    group_by="auto"
                 )
                 .agg([
                     pl.col("pos_s").mean(),
