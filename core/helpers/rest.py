@@ -319,6 +319,14 @@ CAR_ACTIVE_STATUS_SCHEMA = {
     }
 }
 
+CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA = openapi.Parameter(
+    name="key",
+    in_=openapi.IN_QUERY,
+    description="Sensor key used to filter cars",
+    type=openapi.TYPE_STRING,
+    required=True,  # or False if optional
+)
+
 BAD_DATA_SCHEMA = {
     "tags": ["car-bad-data"],
     "operation_description": """
