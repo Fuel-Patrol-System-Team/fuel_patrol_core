@@ -35,10 +35,10 @@ from .helpers.data_provider import validate_provider_cars, \
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language, CarUnit, UserCarList
+    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
+    CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
@@ -46,7 +46,7 @@ from core.helpers.rest import (
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
+    CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
     CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
@@ -485,6 +485,26 @@ class CarListAPIView(ListAPIView):
             data_providers__org_id=self.request.user.org.id
         ).annotate(bad_data_count=Count('bad_data')).order_by('id')
         return result
+
+class CarListBySensorGroupAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = CarByGroupSensorsValuesOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    search_fields = ["car_id__name"]
+    @swagger_auto_schema(manual_parameters=[CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    def get_queryset(self):
+        key_value = self.request.query_params.get("key")
+        result = SensorsValues.objects.select_related("car_id", 'key' ).filter(
+            car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value
+        )
+        return result.annotate(
+            bad_data_count=Count("car_id__bad_data")
+        ).order_by("id")
+
+
 
 
 class CarDetailAPIView(RetrieveAPIView):

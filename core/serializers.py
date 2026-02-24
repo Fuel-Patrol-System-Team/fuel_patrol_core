@@ -22,6 +22,27 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
         model = Organization
         fields = ["id", "name", "bot_token", "chat_id"]
 
+class CarByGroupSensorsValuesOutputSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source="car_id.id", read_only=True)
+    name = serializers.CharField(source="car_id.name", read_only=True)
+    description = serializers.CharField(source="car_id.description", read_only=True)
+    is_active = serializers.BooleanField(source="car_id.is_active", read_only=True)
+    is_tarrified = serializers.BooleanField(source="car_id.is_tarrified", read_only=True)
+
+    key = serializers.CharField(source="key.key", read_only=True)
+
+    class Meta:
+        model = SensorsValues
+        fields = [
+            "id",
+            "value",
+            "key",
+            "car_id",
+            "name",
+            "description",
+            "is_active",
+            "is_tarrified",
+        ]
 
 class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
