@@ -7,7 +7,8 @@ from app.tasks import DataProvider
 from core.models import Car
 from core.services.providers.car_sensors_raw_parser import CarSensorsRawParser
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
-from core.views import MileageAlgorithms, MileageCalculationService, MotohoursCalculationService
+from core.services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
+from core.services.providers.motohours_calculation_service import MotohoursCalculationService
 def wrapper_for_parser(car_id: str):
     car = Car.objects.select_related("sensors").get(id=car_id)
     provider = car.data_providers.first()

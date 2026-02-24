@@ -981,7 +981,7 @@ class CarSensorsRawDataAPIView(APIView):
 
     Поддерживает 3 режима:
     1. Пробег (mileage): timestamp, mileage, pos_s, ign, rpm
-    2. Топливо (fuel): timestamp, calc_sensors_fuel_level, pos_s, rpm
+    2. Топливо (fuel_charts): timestamp, calc_sensors_fuel_level, pos_s, rpm
     3. Моточасы (motohours): timestamp, motohours, pos_s, rpm, ign
     """
     permission_classes = [IsAuthenticated]
@@ -1023,10 +1023,14 @@ class CarSensorsRawDataAPIView(APIView):
                 return error_response(date_error, status.HTTP_400_BAD_REQUEST)
 
             car, car_error = CarSensorsHelper.get_car_for_user(car_id, request.user)
+            
             if car_error:
                 return error_response(car_error, status.HTTP_404_NOT_FOUND)
+            car_r =  Car.objects.select_related('car_unit').get(id=car_id)
+
+            provider = car_r.data_providers.first()
             result, parser, parse_error = CarSensorsHelper.parse_raw_data(
-                car, start_date, end_date, mode
+                car, provider, start_date, end_date, mode
             )
             if parse_error:
                 error_status = (

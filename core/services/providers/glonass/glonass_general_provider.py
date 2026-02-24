@@ -163,7 +163,7 @@ class GlonassGeneralProvider:
         try:
             if not self.authenticate():
                 return (False, [{"error": "Auth Error"}])
-            if mode not in ["mileage", "fuel", "motohours", "raw", "raw_mapped"]:
+            if mode not in ["mileage", "fuel", "fuel_charts", "motohours", "raw", "raw_mapped"]:
                 return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}])
 
             sensors_mapping = self._get_sensors_mapping(car_to_use)
@@ -179,6 +179,8 @@ class GlonassGeneralProvider:
                 result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
             elif mode == "fuel":
                 result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
+            elif mode == "fuel_charts":
+                result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)], return_df=return_df)
             elif mode == "motohours":
                 result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
             elif mode == "raw":

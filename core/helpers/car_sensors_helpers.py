@@ -5,7 +5,8 @@ import pytz
 
 from rest_framework import status
 
-from core.models import Car
+from app.tasks import GlonassGeneralProvider
+from core.models import Car, DataProvider
 from core.services.providers.car_sensors_raw_parser import CarSensorsRawParser
 
 logger = logging.getLogger(__name__)
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 class CarSensorsHelper:
     """Хелпер для работы с сырыми данными датчиков автомобилей."""
 
-    VALID_MODES = ['mileage', 'fuel', 'motohours']
+    VALID_MODES = ['mileage', 'fuel', "fuel_charts", 'motohours']
     MAX_PERIOD_DAYS = 90
     DATE_FORMAT = "%Y-%m-%d"
 
@@ -90,6 +91,7 @@ class CarSensorsHelper:
                 id=car_id,
                 data_providers__org_id=user.org.id
             )
+            car
             return car, None
         except Car.DoesNotExist:
             return None, "Машина не найдена или не принадлежит вашей организации"
@@ -100,20 +102,16 @@ class CarSensorsHelper:
     @staticmethod
     def parse_raw_data(
             car: Car,
+            provider: DataProvider,
             start_date: datetime,
             end_date: datetime,
             mode: str
     ) -> Tuple[Optional[Dict], Optional[CarSensorsRawParser], Optional[str]]:
         """Парсинг сырых данных с использованием CarSensorsRawParser."""
         try:
-            parser = CarSensorsRawParser(
-                car_id=str(car.id),
-                start_date=start_date,
-                end_date=end_date,
-                mode=mode
-            )
+            parser = GlonassGeneralProvider(None, car, provider, start_date, end_date, mode)
 
-            result = parser.parse_raw_data()
+            status, result = parser.parse_raw_data(mode, False, car)
             return result, parser, None
 
         except ValueError as e:

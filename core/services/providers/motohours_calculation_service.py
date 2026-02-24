@@ -6,9 +6,9 @@ import polars
 
 from core.helpers.motohours import compute_motohours
 from core.models import Car, DataProvider, ReportQuery
+from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
 from core.services.providers.report_service import ReportService
-from core.tests.test_parser import GlonassGeneralProvider
 
 logger = logging.getLogger(__name__)
 

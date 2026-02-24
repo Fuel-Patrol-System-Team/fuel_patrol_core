@@ -8,9 +8,9 @@ import polars
 
 from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud, mileage_test_fraud_new
 from core.models import Car, DataProvider, ReportQuery
+from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
 from core.services.providers.report_service import ReportService
-from core.tests.test_parser import GlonassGeneralProvider
 
 logger = logging.getLogger(__name__)
 
