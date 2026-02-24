@@ -529,7 +529,7 @@ CAR_SENSORS_RAW_DATA_SCHEMA = {
             ),
             'mode': openapi.Schema(
                 type=openapi.TYPE_STRING,
-                enum=['mileage', 'fuel', 'motohours'],
+                enum=['mileage', 'fuel_charts', 'motohours'],
                 default='mileage',
                 description='Режим парсинга: mileage (пробег), fuel (топливо), motohours (моточасы)'
             )
