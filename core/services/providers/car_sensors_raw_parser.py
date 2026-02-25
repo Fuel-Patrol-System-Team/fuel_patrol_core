@@ -34,7 +34,7 @@ class CarSensorsRawParser:
         self.mode = mode
 
 
-        if mode not in ["mileage", "fuel", "motohours"]:
+        if mode not in ["mileage", "fuel", "fuel_charts", "motohours"]:
             raise ValueError(f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours")
 
 
@@ -289,6 +289,6 @@ class CarSensorsRawParser:
         if required_actions is not None:
             for action in required_actions:
                 if action is not None:
-                    result = action(result, self.car)
+                    result = action(result, self.car, mapped_required_columns)
         self.processed_messages += result.shape[0]
         return result.to_dicts()
