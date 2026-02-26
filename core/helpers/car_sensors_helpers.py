@@ -16,7 +16,7 @@ class CarSensorsHelper:
     """Хелпер для работы с сырыми данными датчиков автомобилей."""
 
     VALID_MODES = ['mileage', 'fuel', "fuel_charts", 'motohours']
-    MAX_PERIOD_DAYS = 90
+    MAX_PERIOD_DAYS = 30 
     DATE_FORMAT = "%Y-%m-%d"
 
     MODE_NAMES = {

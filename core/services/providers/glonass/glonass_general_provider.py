@@ -160,45 +160,41 @@ class GlonassGeneralProvider:
     def parse_raw_data(self, mode: str, return_df=False, car : Car | None = None) -> tuple[ bool, pl.DataFrame | List[Dict[str, Any]] | None]:
         """Основной метод парсинга данных"""
         car_to_use = car if car is not None else self.car
-        try:
-            if not self.authenticate():
-                return (False, [{"error": "Auth Error"}])
-            if mode not in ["mileage", "fuel", "fuel_charts", "motohours", "raw", "raw_mapped"]:
-                return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}])
+        if not self.authenticate():
+            return (False, [{"error": "Auth Error"}])
+        if mode not in ["mileage", "fuel", "fuel_charts", "motohours", "raw", "raw_mapped"]:
+            return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}])
 
-            sensors_mapping = self._get_sensors_mapping(car_to_use)
+        sensors_mapping = self._get_sensors_mapping(car_to_use)
 
 
-            all_messages = self._get_all_messages_for_period()
+        all_messages = self._get_all_messages_for_period()
 
-            if not all_messages:
-                logger.warning(f"Нет данных для машины {self.car.id_in_provider_system}")
-                return True, []
+        if not all_messages:
+            logger.warning(f"Нет данных для машины {self.car.id_in_provider_system}")
+            return True, pl.DataFrame() if return_df else []
 
-            if mode == "mileage":
-                result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
-            elif mode == "fuel":
-                result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
-            elif mode == "fuel_charts":
-                result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)], return_df=return_df)
-            elif mode == "motohours":
-                result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
-            elif mode == "raw":
-                result = self._process_unmapped(all_messages)
-                if isinstance(result, pl.DataFrame):
-                    _, path = self._save_to_csv(result, car_to_use)
-                    self._archive_csv_file(path)
-            elif mode == "raw_mapped":
-                result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.fuel_level, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=True)
-                if isinstance(result, pl.DataFrame):
-                    _, path = self._save_to_csv(result, car_to_use)
-                    self._archive_csv_file(path)
+        if mode == "mileage":
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
+        elif mode == "fuel":
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
+        elif mode == "fuel_charts":
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)], return_df=return_df)
+        elif mode == "motohours":
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
+        elif mode == "raw":
+            result = self._process_unmapped(all_messages)
+            if isinstance(result, pl.DataFrame):
+                _, path = self._save_to_csv(result, car_to_use)
+                self._archive_csv_file(path)
+        elif mode == "raw_mapped":
+            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.fuel_level, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=True)
+            if isinstance(result, pl.DataFrame):
+                _, path = self._save_to_csv(result, car_to_use)
+                self._archive_csv_file(path)
 
-            logger.info(f"Обработано {self.processed_messages} сообщений из {self.total_messages} для режима {mode}")
-            return (True, result)
-        except Exception as err:
-            logger.error(f"Ошибка при обработке машины {car_to_use.name} {car_to_use.id} / {err}")
-            return (False, None)
+        logger.info(f"Обработано {self.processed_messages} сообщений из {self.total_messages} для режима {mode}")
+        return (True, result)
 
     def _get_all_messages_for_period(self) -> List[Dict[str, Any]]:
         """Получает все сообщения за период с адаптивными запросами"""
@@ -344,7 +340,10 @@ class GlonassGeneralProvider:
     def _process_general(self, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
         result = self._process_unmapped(messages)
         use_cols = self._build_use_cols(required_columns, sensors_mapping, result.columns)
-        result = result.select(use_cols)
+        try:
+            result = result.select(use_cols)
+        except Exception:
+            raise ValueError("Нет данных по одному из требуемых стобцов за этот период")
 
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)

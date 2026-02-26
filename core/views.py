@@ -349,6 +349,8 @@ class MileageCalculationAPIView(APIView):
                 end_date = datetime.now()
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
+        if (end_date - start_date).days > 60:
+            return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 
         result, status_code = MileageCalculationService.calculate_mileage(
             car_id=car_id,
@@ -388,7 +390,8 @@ class MotohoursCalculationAPIView(APIView):
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
-
+        if (end_date - start_date).days > 60:
+            return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
         result, status_code = MotohoursCalculationService.calculate_motohours(
             car_id=car_id,
             agg=agg,
@@ -1025,6 +1028,7 @@ class CarSensorsRawDataAPIView(APIView):
     )
     def post(self, request):
         """Обработка POST-запроса для получения сырых данных."""
+        DAYS = 30
         try:
             data = request.data
             car_id = data.get('car_id')
@@ -1032,9 +1036,9 @@ class CarSensorsRawDataAPIView(APIView):
             end_date_str = data.get('end_date')
             mode = data.get('mode', 'mileage')
 
-            error_response = self._validate_request_params(car_id, start_date_str, end_date_str, mode)
-            if error_response:
-                return error_response
+            validation_rsp = self._validate_request_params(car_id, start_date_str, end_date_str, mode)
+            if validation_rsp:
+                return validation_rsp
 
             start_date, end_date, date_error = CarSensorsHelper.parse_and_validate_dates(
                 start_date_str, end_date_str
