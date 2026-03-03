@@ -128,6 +128,7 @@ class Car(models.Model):
         return self.name
 
 
+
 class CarUnit(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
@@ -257,6 +258,21 @@ class CarReport(models.Model):
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
 
+class CarMileageReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="mileage_reports")
+    datetime = models.DateTimeField()
+    mileage_start = models.FloatField(**NULLABLE)
+    mileage_end = models.FloatField(**NULLABLE)
+    fraud = models.FloatField(**NULLABLE)
+
+    class Meta:
+        verbose_name = "Car Mileage Report"
+        verbose_name_plural = "Car Mileage Reports"
+        ordering = ["-datetime"]
+
+    def __str__(self):
+        return f"{self.car_id.name} - {self.datetime}"
 
 class CarBadData(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
