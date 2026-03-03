@@ -35,7 +35,7 @@ from .helpers.data_provider import validate_provider_cars, \
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList
+    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -46,14 +46,15 @@ from core.helpers.rest import (
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer, OrgUserOutputSerializer,
+    CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer,
+    OrgUserOutputSerializer,
     CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
     DataProviderSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
-    UserCarListSerializer
+    UserCarListSerializer, CarMileageReportOutputSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
@@ -508,6 +509,27 @@ class CarListBySensorGroupAPIView(ListAPIView):
         ).order_by("id")
 
 
+class CarMileageReportListAPIView(ListAPIView):
+    serializer_class = CarMileageReportOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['car_id', 'datetime']
+    search_fields = ['car_id__name', 'fraud']
+
+    def get_queryset(self):
+        return CarMileageReport.objects.filter(
+            car_id__data_providers__org_id__users=self.request.user
+        ).select_related('car_id').order_by('-datetime')
+
+
+class CarMileageReportDetailAPIView(RetrieveAPIView):
+    serializer_class = CarMileageReportOutputSerializer
+    lookup_field = 'pk'
+
+    def get_queryset(self):
+        return CarMileageReport.objects.filter(
+            car_id__data_providers__org_id__users=self.request.user
+        ).select_related('car_id')
 
 
 class CarDetailAPIView(RetrieveAPIView):
@@ -941,7 +963,7 @@ class StartTerminalMessagesParsingView(APIView):
                     {'error': 'Неверный формат даты. Используйте YYYY-MM-DD'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            provider = DataProvider.objects.filter(nmae=provider_name).first()
+            provider = DataProvider.objects.filter(name=provider_name).first()
 
             if car_ids:
                 try:
@@ -959,11 +981,11 @@ class StartTerminalMessagesParsingView(APIView):
                     )
 
             task = parse_terminal_messages_task.delay(
-                provider=provider,
+                provider_name=provider.name,
                 start_date_str=start_date_str,
                 end_date_str=end_date_str,
                 mode="raw",
-                cars=cars
+                car_ids=car_ids
             )
 
             mode = "parse_all" if parse_all else ("specific_cars" if car_ids else "all_cars")

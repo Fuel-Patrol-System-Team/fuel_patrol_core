@@ -13,7 +13,7 @@ from core.views import CarListBySensorGroupAPIView, OrganizationListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
-    CarSensorsRawDataAPIView
+    CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView
 
 urlpatterns = [
 
@@ -27,7 +27,6 @@ urlpatterns = [
 
     path('register', UserRegistrationAPIView.as_view(), name='register'),
 
-
     path('leaks/count', CarLeaksCountAPIView.as_view(), name='leaks-count'),
     path('leaks/volume', CarLeaksVolumeAPIView.as_view(), name='leaks-volume'),
     path('leaks/daily-sum', DailyLeaksSumAPIView.as_view(), name='daily-leaks-sum'),
@@ -40,7 +39,7 @@ urlpatterns = [
     path('org-users/<uuid:pk>', OrgUserDetailAPIView.as_view(), name='orguser-detail'),
     path("cars/bySensorGroup", CarListBySensorGroupAPIView.as_view(), name="car-sensor-list"),
     path('cars', CarListAPIView.as_view(), name='car-list'),
-    
+
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
@@ -55,6 +54,8 @@ urlpatterns = [
     path('report-queries/<uuid:pk>', ReportQueryDetailAPIView.as_view(), name='report-query-detail'),
     path('car-reports', CarReportListAPIView.as_view(), name='car-report-list'),
     path('car-reports/<uuid:pk>', CarReportDetailAPIView.as_view(), name='car-report-detail'),
+    path('car-reports-mileage', CarMileageReportListAPIView.as_view(), name='car-report-mileage-list'),
+    path('car-reports-mileage/<uuid:pk>', CarMileageReportDetailAPIView.as_view(), name='car-report-mileage-detail'),
     path('drivers', DriverListAPIView.as_view(), name='driver-list'),
     path('drivers/<uuid:pk>', DriverDetailAPIView.as_view(), name='driver-detail'),
     path('dataprovider', DataProviderListAPIView.as_view(), name='dataprovider-list'),

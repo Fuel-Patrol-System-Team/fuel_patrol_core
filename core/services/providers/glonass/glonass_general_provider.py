@@ -26,7 +26,6 @@ class GlonassGeneralProvider:
     failed_cars = 0
     processed_cars = 0
     total_cars = 0
-    total_cars = 0
     mode: str
 
     def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage"):

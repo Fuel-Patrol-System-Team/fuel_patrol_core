@@ -13,7 +13,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
-    CarUnit, UserCarList,
+    CarUnit, UserCarList, CarMileageReport,
 )
 
 
@@ -243,6 +243,22 @@ class CarLeaksSerializer(serializers.Serializer):
     label = serializers.CharField()
     value = serializers.FloatField()
 
+
+class CarMileageReportOutputSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car_id.name', read_only=True)
+
+    class Meta:
+        model = CarMileageReport
+        fields = [
+            'id',
+            'car_id',
+            'car_name',
+            'datetime',
+            'mileage_start',
+            'mileage_end',
+            'fraud',
+        ]
+        read_only_fields = ['id']
 
 class CarLeaksFilterSerializer(serializers.Serializer):
     car_id = serializers.UUIDField(required=True, help_text="ID автомобиля")

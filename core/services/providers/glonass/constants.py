@@ -20,7 +20,8 @@ class GlonassParameter:
     cast: GlonassCastProtocol | None
     filter_on_absence: bool
     default_value: Any
-    default_on_absence: Any 
+    default_on_absence: Any
+
 class GL_PARAM_KEYS(Enum):
     timestamp = "timestamp"
     speed = "speed"

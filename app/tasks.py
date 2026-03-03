@@ -2,7 +2,7 @@ import logging
 from typing import Literal, Optional, List
 
 import polars as pl
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from celery import shared_task
 from django.utils import timezone
@@ -341,46 +341,114 @@ def process_single_car_data_task(
         return {"success": False, "car_id": car_id, "error": error_msg}
 
 
+
 @shared_task(bind=True)
 def parse_terminal_messages_task(
         self,
-        provider: DataProvider,
-        start_date_str: str,
-        end_date_str: str,
-        mode: Literal["raw"] | Literal["raw_mapped"],
-        cars: List[Car] | None = None
+        provider_name: str,
+        start_date_str: Optional[str] = None,
+        end_date_str: Optional[str] = None,
+        mode: Literal["raw", "raw_mapped"] = "raw",
+        car_ids: Optional[List[str]] = None,
+        by_cron: bool = False
 ):
-    """
-    Celery задача для парсинга terminalMessages
-    """
     try:
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
-        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+        if by_cron:
+            tz = pytz.UTC
+            end_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+            start_date = end_date - timedelta(days=1)
 
-        # parser = GlonassSoftTerminalMessagesParser(
-        #     provider_name=provider_name,
-        #     start_date=start_date,
-        #     end_date=end_date,
-        #     is_raw_data=is_raw_data
-        # )
-        parser = GlonassGeneralProvider( cars, None, provider, start_date, end_date, mode)
+            start_date_str = start_date.strftime("%Y-%m-%d")
+            end_date_str = end_date.strftime("%Y-%m-%d")
+        else:
+            if not start_date_str or not end_date_str:
+                raise ValueError("Для ручного запуска требуются start_date_str и end_date_str")
 
-        # result = parser.parse_all_cars(
-        #     max_workers=3,
-        #     parse_all=parse_all,
-        #     car_ids=car_ids
-        # )
-        result = parser.parse_raw_data_all() 
+            start_date = datetime.strptime(start_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+            end_date = datetime.strptime(end_date_str, "%Y-%m-%d").replace(tzinfo=pytz.UTC)
+
+
+        provider = DataProvider.objects.filter(name=provider_name).first()
+        if not provider:
+            raise ValueError(f"Провайдер с именем '{provider_name}' не найден")
+
+        cars = None
+        if car_ids:
+            cars = list(Car.objects.filter(id__in=car_ids, data_providers=provider))
+        elif by_cron:
+            cars = list(provider.cars.all())
+
+        logger.info(
+            f"Запуск парсинга: провайдер={provider_name}, "
+            f"даты={start_date_str} - {end_date_str}, "
+            f"режим={mode}, машин={len(cars) if cars else 'все'}, "
+            f"источник={'крон' if by_cron else 'ручной'}"
+        )
+
+        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date, mode)
+
+        result = parser.parse_raw_data_all()
 
         self.update_state(
             state='SUCCESS',
-            meta=result
+            meta={
+                'result': result,
+                'provider_name': provider_name,
+                'start_date': start_date_str,
+                'end_date': end_date_str,
+                'mode': mode,
+                'by_cron': by_cron
+            }
         )
 
-        return result
+        return {
+            'status': 'success',
+            'result': result,
+            'provider_name': provider_name,
+            'start_date': start_date_str,
+            'end_date': end_date_str,
+            'mode': mode,
+            'by_cron': by_cron
+        }
 
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга terminalMessages: {e}", exc_info=True)
+        self.update_state(
+            state='FAILURE',
+            meta={'error': str(e)}
+        )
+        raise
+
+
+
+@shared_task(bind=True)
+def parse_cars_milleage_task(
+        self,
+        provider_name: str,
+        aggregation: str,
+        is_save_bad_data : bool = False
+):
+    try:
+
+        tz = pytz.UTC
+        end_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = end_date - timedelta(days=1)
+
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        provider = DataProvider.objects.fiter(name=provider_name)
+        cars = list(provider.cars.all())
+
+        ##TODO: Тут ЮЛИК прошелся по циклу и вызвал для машины свой сервис
+
+        ##TODO: МБ 1 из админки не будет работать как bool, тогда стоит сделать строку и каставать к Bool из строки
+
+        ## Важный момент - сохранение результата в модель CarMileageReport
+        ## 2 варианта предлагаю
+        ## Вариант 1 - в сигнатуру сервиса по милейджу - добавляем флаг save_result и сохраняем внутри процедуры
+        ## Вариант 2 - результат возвращаемой функции тут получать и тут же код сохранения
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинга mileage: {e}", exc_info=True)
         self.update_state(
             state='FAILURE',
             meta={'error': str(e)}

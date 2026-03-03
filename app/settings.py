@@ -280,126 +280,9 @@ LOGGING = {
 # UNFOLD ADMIN SETTINGS
 # ======================
 UNFOLD = {
-    "TABS": [
-        {
-            "models": (
-                "core.organization",
-                "core.orguser",
-                "core.reportquery",
-                "core.media",
-                "core.language",
-            ),
-            "items": [
-                {
-                    "title": "Организации",
-                    "link": reverse_lazy("admin:core_organization_changelist"),
-                },
-                {
-                    "title": "Пользователи",
-                    "link": reverse_lazy("admin:core_orguser_changelist"),
-                },
-                {
-                    "title": "Запросы отчетов",
-                    "link": reverse_lazy("admin:core_reportquery_changelist"),
-                },
-                {
-                    "title": "Языки",
-                    "link": reverse_lazy("admin:core_language_changelist"),
-                },
-            ],
-        },
-        {
-            "models": (
-                "core.car",
-                "core.carreport",
-                "core.carconsumption",
-                "core.driver",
-                "core.carbaddata",
-                "core.sensorskey",
-                "core.sensorsvalues",
-                "core.sensorskeylocalization"
-            ),
-            "items": [
-                {
-                    "title": "Автомобили",
-                    "link": reverse_lazy("admin:core_car_changelist"),
-                },
-                {
-                    "title": "Отчеты об автомобилях",
-                    "link": reverse_lazy("admin:core_carreport_changelist"),
-                },
-                {
-                    "title": "Расход топлива",
-                    "link": reverse_lazy("admin:core_carconsumption_changelist"),
-                },
-                {
-                    "title": "Водители",
-                    "link": reverse_lazy("admin:core_driver_changelist"),
-                },
-                {
-                    "title": "Отчёты об ошибках",
-                    "link": reverse_lazy("admin:core_carbaddata_changelist"),
-                },
-                {
-                    "title": "Ключи датчиков",
-                    "link": reverse_lazy("admin:core_sensorskey_changelist"),
-                },
-                {
-                    "title": "Значения датчиков",
-                    "link": reverse_lazy("admin:core_sensorsvalues_changelist"),
-                },
-                {
-                    "title": "Локализации датчиков",
-                    "link": reverse_lazy("admin:core_sensorskeylocalization_changelist"),
-                },
-            ],
-        },
-        {
-            "models": (
-                "core.dataprovider",
-            ),
-            "items": [
-                {
-                    "title": "Поставщики данных",
-                    "link": reverse_lazy("admin:core_dataprovider_changelist"),
-                },
-            ],
-        },
-        {
-            "models": (
-                "django_celery_beat.periodictask",
-                "django_celery_beat.crontabschedule",
-                "django_celery_beat.intervalschedule",
-                "django_celery_beat.solarschedule",
-                "django_celery_beat.clockedschedule",
-            ),
-            "items": [
-                {
-                    "title": "Периодические задачи",
-                    "link": reverse_lazy("admin:django_celery_beat_periodictask_changelist"),
-                },
-                {
-                    "title": "Cron-графики",
-                    "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
-                },
-                {
-                    "title": "Интервалы",
-                    "link": reverse_lazy("admin:django_celery_beat_intervalschedule_changelist"),
-                },
-                {
-                    "title": "Солнечные графики",
-                    "link": reverse_lazy("admin:django_celery_beat_solarschedule_changelist"),
-                },
-                {
-                    "title": "Графики по времени",
-                    "link": reverse_lazy("admin:django_celery_beat_clockedschedule_changelist"),
-                },
-            ],
-        },
-    ],
     "SIDEBAR": {
         "show_search": True,
-        "show_all_applications": True,
+        "show_all_applications": False,
         "navigation": [
             {
                 "title": "Организации и пользователи",
@@ -416,11 +299,6 @@ UNFOLD = {
                         "link": reverse_lazy("admin:core_orguser_changelist"),
                     },
                     {
-                        "title": "Запросы отчетов",
-                        "icon": "assignment",
-                        "link": reverse_lazy("admin:core_reportquery_changelist"),
-                    },
-                    {
                         "title": "Языки",
                         "icon": "language",
                         "link": reverse_lazy("admin:core_language_changelist"),
@@ -428,39 +306,69 @@ UNFOLD = {
                 ],
             },
             {
-                "title": "Автомобили и водители",
+                "title": "Автопарк",
                 "collapsible": True,
                 "items": [
                     {
                         "title": "Автомобили",
-                        "icon": "car_repair",
+                        "icon": "directions_car",
                         "link": reverse_lazy("admin:core_car_changelist"),
                     },
                     {
-                        "title": "Отчеты об автомобилях",
-                        "icon": "report_problem",
-                        "link": reverse_lazy("admin:core_carreport_changelist"),
-                    },
-
-                    {
-                        "title": "Расход топлива",
-                        "icon": "local_gas_station",
-                        "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                        "title": "Подразделения",
+                        "icon": "account_tree",
+                        "link": reverse_lazy("admin:core_carunit_changelist"),
                     },
                     {
-                        "title": "Отчёты об ошибках",
-                        "icon": "error",
-                        "link": reverse_lazy("admin:core_carbaddata_changelist")
+                        "title": "Списки машин",
+                        "icon": "list",
+                        "link": reverse_lazy("admin:core_usercarlist_changelist"),
                     },
                     {
-                        "title": "Детали выполнения",
-                        "icon": "details",
-                        "link": reverse_lazy("admin:core_reportquerydetails_changelist"),
+                        "title": "Первичные данные",
+                        "icon": "storage",
+                        "link": reverse_lazy("admin:core_carprimary_changelist"),
                     },
                     {
                         "title": "Водители",
                         "icon": "drive_eta",
                         "link": reverse_lazy("admin:core_driver_changelist"),
+                    },
+                    {
+                        "title": "Расход топлива",
+                        "icon": "local_gas_station",
+                        "link": reverse_lazy("admin:core_carconsumption_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Отчёты и мониторинг",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Запросы отчётов",
+                        "icon": "assignment",
+                        "link": reverse_lazy("admin:core_reportquery_changelist"),
+                    },
+                    {
+                        "title": "Детали выполнения",
+                        "icon": "query_stats",
+                        "link": reverse_lazy("admin:core_reportquerydetails_changelist"),
+                    },
+                    {
+                        "title": "Отчёты автомобилей",
+                        "icon": "summarize",
+                        "link": reverse_lazy("admin:core_carreport_changelist"),
+                    },
+                    {
+                        "title": "Отчёты по пробегам",
+                        "icon": "summarize",
+                        "link": reverse_lazy("admin:core_carmileagereport_changelist"),
+                    },
+                    {
+                        "title": "Ошибочные данные",
+                        "icon": "error_outline",
+                        "link": reverse_lazy("admin:core_carbaddata_changelist"),
                     },
                 ],
             },
@@ -479,19 +387,19 @@ UNFOLD = {
                         "link": reverse_lazy("admin:core_sensorsvalues_changelist"),
                     },
                     {
-                        "title": "Локализации датчиков",
+                        "title": "Локализации",
                         "icon": "translate",
                         "link": reverse_lazy("admin:core_sensorskeylocalization_changelist"),
                     },
                 ],
             },
             {
-                "title": "Данные",
+                "title": "Поставщики данных",
                 "collapsible": True,
                 "items": [
                     {
                         "title": "Поставщики данных",
-                        "icon": "cloud",
+                        "icon": "cloud_upload",
                         "link": reverse_lazy("admin:core_dataprovider_changelist"),
                     },
                 ],
@@ -524,6 +432,17 @@ UNFOLD = {
                         "title": "Графики по времени",
                         "icon": "schedule",
                         "link": reverse_lazy("admin:django_celery_beat_clockedschedule_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "DevOps",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Службы Systemd",
+                        "icon": "terminal",
+                        "link": reverse_lazy("admin:core_unitservice_changelist"),
                     },
                 ],
             },
