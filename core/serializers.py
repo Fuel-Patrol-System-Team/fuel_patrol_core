@@ -9,6 +9,7 @@ from .models import (
     Car,
     DataProvider,
     CarBadData,
+    ReportQueryDetails,
     SensorsKey,
     SensorsKeyLocalization,
     SensorsValues,
@@ -144,13 +145,18 @@ class DataProviderOutputSerializer(serializers.ModelSerializer):
         model = DataProvider
         fields = ["id", "name", "metadata"]
 
+class ReportQueryDetailsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ReportQueryDetails
+        fields = "__all__"
 
 class ReportQueryOutputSerializer(serializers.ModelSerializer):
     provider_name = serializers.SerializerMethodField()
+    report_query_details = ReportQueryDetailsSerializer(read_only=True)
 
     class Meta:
         model = ReportQuery
-        fields = ["id", "status", "provider_name", "created_at"]
+        fields = ["id", "status", "provider_name", "report_type", "created_at", "report_query_details",]
 
     def get_provider_name(self, obj):
         return obj.provider_id.name

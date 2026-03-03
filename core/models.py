@@ -65,6 +65,44 @@ class OrgUser(AbstractUser):
     def __str__(self):
         return self.username
 
+class CoreNotification(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    target = models.ForeignKey(
+        "OrgUser",
+        on_delete=models.CASCADE,
+        related_name="core_notifications"
+    )
+
+    type = models.CharField(max_length=50)
+
+    message = models.TextField()
+
+    url = models.CharField(
+        max_length=256,
+        blank=True,
+        null=True
+    )
+
+    read_at = models.DateTimeField(
+        blank=True,
+        null=True
+    )
+
+    created_at = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    class Meta:
+        db_table = "core_notifications"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["target", "read_at"]),
+            models.Index(fields=["created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.target} - {self.type}"
 
 class Car(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

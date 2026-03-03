@@ -592,6 +592,7 @@ class ReportQueryListAPIView(ListAPIView):
         ).select_related('provider_id')
 
 
+
 class ReportQueryDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
@@ -600,7 +601,7 @@ class ReportQueryDetailAPIView(RetrieveAPIView):
     def get_queryset(self):
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
-        ).select_related('provider_id')
+        ).select_related('provider_id', 'report_query_details')
 
 
 class CarReportListAPIView(ListAPIView):
