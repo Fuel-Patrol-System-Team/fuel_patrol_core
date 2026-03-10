@@ -13,7 +13,7 @@ from core.views import CarListBySensorGroupAPIView, OrganizationListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
-    CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView
+    CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView
 
 urlpatterns = [
 
@@ -26,6 +26,7 @@ urlpatterns = [
     path('user/info', UserInfoAPIView.as_view(), name='user_info'),
 
     path('register', UserRegistrationAPIView.as_view(), name='register'),
+    path('register/telegram', TelegramRegisterAPIView.as_view(), name='telegram-register'),
 
     path('leaks/count', CarLeaksCountAPIView.as_view(), name='leaks-count'),
     path('leaks/volume', CarLeaksVolumeAPIView.as_view(), name='leaks-volume'),

@@ -303,6 +303,11 @@ UNFOLD = {
                         "icon": "language",
                         "link": reverse_lazy("admin:core_language_changelist"),
                     },
+                    {
+                        "title": "Телеграм-пользователи",
+                        "icon": "chat",
+                        "link": reverse_lazy("admin:core_telegramuser_changelist"),
+                    },
                 ],
             },
             {
