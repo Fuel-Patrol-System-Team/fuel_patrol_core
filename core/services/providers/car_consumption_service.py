@@ -1,3 +1,4 @@
+from datetime import datetime
 import logging
 from django.utils import timezone
 from django.db import transaction
@@ -25,6 +26,9 @@ class CarConsumptionService:
                 raise ValueError(f"Нет данных норм для машины {car.id}")
 
             norm_data = car_norms.to_dicts()[0]
+            for k, v in norm_data.items():
+                if isinstance(v, datetime):
+                    norm_data[k] = v.isoformat()
 
 
             consumption, created = CarConsumption.objects.update_or_create(
@@ -34,7 +38,8 @@ class CarConsumptionService:
                     'summer_volume': norm_data.get('norma_rasx_summer'),
                     'speed_etalon': norm_data.get('speed_etalon', 60.0),
                     'max_fuel': norm_data.get('max_fuel', 2000.0),
-                    'valid_period': timezone.now().date()
+                    'valid_period': timezone.now().date(),
+                    'json_data': norm_data
                 }
             )
 

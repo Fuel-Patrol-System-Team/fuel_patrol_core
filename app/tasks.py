@@ -1,15 +1,19 @@
 import logging
-from typing import Literal, Optional, List
+from typing import Literal, Optional, List, cast
+from zoneinfo import ZoneInfo
 
+from charset_normalizer.utils import is_emoticon
+from django.db.models import Q
 import polars as pl
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
 from celery import shared_task
-from django.utils import timezone
 
 from app.celery import app as celery_app
 
+from core.admin import CarPrimary, SensorsValues
 from core.models import (
+    CarMileageReport,
     ReportQuery,
     Organization,
     Car,
@@ -21,13 +25,15 @@ import os
 import psutil
 import time
 
+from core.services.providers import leaks_service
+from core.services.providers.car_consumption_service import CarConsumptionService
 from core.services.providers.car_data_service import CarDataService
 from core.services.providers.filtering_service import FilteringService
 
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
 
-from core.services.providers.leaks_service import LeaksService
+from core.services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
 from core.services.providers.norms_service import NormsService
 from core.services.providers.provider_factory import ProviderFactory
 from core.services.providers.report_service import ReportService
@@ -223,7 +229,7 @@ def process_single_car_data_task(
 
             end_number = norms_df.shape[0]
             if end_number < init_number:
-                error_msg = f"Машина {car_id} была отбросена - недостаточно данных для расчета норм"
+                error_msg = f"Машина {car_id} была отброшена - недостаточно данных для расчета норм"
                 ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date)
                 logger.error(error_msg)
                 return {"success": False, "car_id": car_id, "error": error_msg}
@@ -339,6 +345,179 @@ def process_single_car_data_task(
                 report_query, error_msg, exception=e, cars_skipped=1
             )
         return {"success": False, "car_id": car_id, "error": error_msg}
+    
+    
+@shared_task(bind=True)
+def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
+    
+    datetime_now = datetime.now()
+    provider = DataProvider.objects.get(name=provider_name)
+    
+
+    cars_primary = provider.cars.select_related("carprimary").filter(carprimary__isnull=True)
+    
+    if len(cars_primary) != 0:
+        datetime_primary = datetime_now - timedelta(days=45)
+        # primary computing
+        parser = GlonassGeneralProvider(cars_primary, None, provider, datetime_primary, datetime_now)
+        for car in cars_primary:
+            try:
+                is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
+                if is_sensor == 0:
+                    continue
+                auto_data = CarDataService.prepare_auto_data(car)
+                status, df = parser.parse_raw_data("fuel", True)
+                    
+                if status and isinstance(df, pl.DataFrame):
+                    primary = CarDataService.calculate_primary_single(df, auto_data )
+                    if primary is None or primary.is_empty():
+                        error_msg = f"Не удалось вычислить первичные показатели для машины {car.id}"
+                        logger.error(error_msg)
+                        report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                        # TODO: один отчет на все машины
+                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_primary, datetime_now)
+                        ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                        continue
+                    logger.info("ЭТАП 2.1: Сохранение первичных показателей в БД...")
+                    primary_saved = CarDataService.save_primary_to_db(car, primary, datetime_now, datetime_primary)
+                    if primary_saved:
+                        logger.info(f"Первичные показатели сохранены для машины {car.id}")
+                    else:
+                        logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
+            except Exception as err:
+                report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                error_msg = f"Внутренняя ошибка {err} для {car.id}"
+                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_primary, datetime_now)
+                ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                continue
+
+@shared_task(bind=True)
+def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
+    
+    datetime_now = datetime.now()
+    provider = DataProvider.objects.get(name=provider_name)
+    
+
+    cars_norms = provider.cars.select_related("carprimary").filter(carprimary__isnull=False).prefetch_related("consumptions").filter(consumptions__isnull=True)
+    
+    if len(cars_norms) != 0:
+        date_time_norms = datetime_now - timedelta(days=90)
+        # primary computing
+        parser = GlonassGeneralProvider(cars_norms, None, provider, date_time_norms, datetime_now)
+        for car in cars_norms:
+            try:
+                auto_data = CarDataService.prepare_auto_data(car)
+                status, df = parser.parse_raw_data("fuel", True)
+                    
+                if status and isinstance(df, pl.DataFrame):
+                    primary = pl.DataFrame(car.carprimary.primary)
+                    norms = NormsService.calculate_norms_single(df, primary, auto_data)
+                    if norms is None or norms.is_empty():
+                        error_msg = f"Не удалось вычислить первичные показатели для машины {car.id}"
+                        logger.error(error_msg)
+                        report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                        # TODO: один отчет на все машины
+                        ReportService.create_bad_data_record(car, error_msg, report_query, date_time_norms, datetime_now)
+                        ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                        continue
+                    # norms = norms.filter(pl.col("norma_rasx_summer") > 5)
+                    if norms.is_empty():
+                        error_msg = f"Недостаточно данных для построения норм {car.id}"
+                        logger.error(error_msg)
+                        ReportService.create_bad_data_record(car, error_msg, report_query, date_time_norms, datetime_now)
+                        ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                        continue
+                    logger.info("Сохранение первичных показателей в БД...")
+                    norms_saved = CarConsumptionService.save_consumption_rates(norms, car)
+                    if norms_saved:
+                        logger.info(f"Первичные показатели сохранены для машины {car.id}")
+                    else:
+                        logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
+            except Exception:
+                report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                error_msg = f"Внутренняя ошибка {car.id}"
+                ReportService.create_bad_data_record(car, error_msg, report_query, date_time_norms, datetime_now)
+                ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                continue
+
+@shared_task(bind=True)
+def calculate_leaks_cron(
+    self,
+    provider_name: str,
+    is_save_bad_data: bool = False
+):
+    provider = DataProvider.objects.get(name=provider_name)
+    
+    tz = pytz.UTC
+    now = datetime.now().astimezone(tz)
+    day_start= datetime.combine(now, datetime.min.time()).astimezone(tz)
+
+    cars_for_computing= provider.cars.select_related("carprimary").prefetch_related("consumptions").filter(consumptions__isnull=False, carprimary__isnull=False, is_active=True).filter(
+        Q(last_processed_date__lt=day_start) | Q(last_processed_date__isnull=True)
+    )
+    
+                
+    if len(cars_for_computing) != 0:
+        parser = GlonassGeneralProvider(cars_for_computing, None, provider, now, now)
+        for car in cars_for_computing:
+            try:
+                last_date_for_processing =  car.last_processed_date if car.last_processed_date else (now.now() - timedelta(365))
+                datetime_parsing = cast(datetime,  last_date_for_processing)
+                datetime_parsing = datetime_parsing.astimezone(tz)
+
+                report_query, report_details = ReportService.create_report(
+                    str(provider.id),
+                    ReportQuery.ReportType.LEAKS,
+                    is_save_bad_data=is_save_bad_data
+                )
+                status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
+                if status and isinstance(data_df, pl.DataFrame):
+                    primary_df = pl.DataFrame(car.carprimary.primary, schema_overrides={
+                        "auto": pl.Categorical
+                    })
+                    norms_df = pl.DataFrame(car.consumptions.first().json_data)
+                    auto_data = CarDataService.prepare_auto_data(car)
+                    leak_service = leaks_service.LeaksService()
+                    leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                if leaks_result is None or leaks_result.is_empty():
+                    error_msg = f"Не однаружены сливы для машины {car.id}"
+                    logger.error(error_msg)
+                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
+                    continue
+                filtering_service = FilteringService()
+                filtering_result = filtering_service.apply_filters(leaks_result)
+                report = ReportService.save_car_reports_batch(filtering_result)
+                logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
+                Car.objects.filter(id=car.id).update(last_processed_date=now)
+            except Exception as err:
+                report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                error_msg = f"Внутренняя ошибка {car.id}"
+                ReportService.create_bad_data_record(car, error_msg, report_query, now, now) # нужно придумать как прокинуть реальную дату для каждой машины
+                ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                continue
+    else:
+        logger.info("Нет машин требующих расчета сливов")
+        
 
 
 
@@ -419,13 +598,11 @@ def parse_terminal_messages_task(
         )
         raise
 
-
-
 @shared_task(bind=True)
 def parse_cars_milleage_task(
         self,
         provider_name: str,
-        aggregation: str,
+        aggregation: int,
         is_save_bad_data : bool = False
 ):
     try:
@@ -434,12 +611,19 @@ def parse_cars_milleage_task(
         end_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         start_date = end_date - timedelta(days=1)
 
-        start_date_str = start_date.strftime("%Y-%m-%d")
-        end_date_str = end_date.strftime("%Y-%m-%d")
-        provider = DataProvider.objects.fiter(name=provider_name)
+        provider = DataProvider.objects.filter(name=provider_name).first()
         cars = list(provider.cars.all())
 
         ##TODO: Тут ЮЛИК прошелся по циклу и вызвал для машины свой сервис
+        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date)
+        for car in cars:
+            result, status  = MileageCalculationService.calculate_mileage(car.id, MileageAlgorithms.fraud, None, start_date, end_date, parser=parser, is_save_bad_data=is_save_bad_data)
+            if status == 200:
+                CarMileageReport.objects.update_or_create(car_id_id=car.id, datetime=start_date, mileage_start=result["result"]["first_mileage"], mileage_end=result["result"]["last_mileage"], travel=result["result"]["travel"], fraud=result["result"]["travel_fraud"] )
+            else:
+                logger.error("Статус репорта не успешный")
+                    
+
 
         ##TODO: МБ 1 из админки не будет работать как bool, тогда стоит сделать строку и каставать к Bool из строки
 

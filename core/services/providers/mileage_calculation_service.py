@@ -6,6 +6,7 @@ from datetime import datetime
 from pandas import DataFrame
 import polars
 
+from core.admin import SensorsValues
 from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud, mileage_test_fraud_new
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
@@ -28,7 +29,8 @@ class MileageCalculationService:
             agg: Optional[int] = None,
             start_date: datetime = datetime.now(),
             end_date: datetime = datetime.now(),
-            is_save_bad_data: bool = True
+            is_save_bad_data: bool = True,
+            parser: Optional[GlonassGeneralProvider] = None
     ) -> Tuple[Dict[str, Any], int]:
         """
         Выполняет расчет пробега с созданием отчета
@@ -40,7 +42,6 @@ class MileageCalculationService:
             car, provider_obj = MileageCalculationService._get_car_and_provider(car_id)
             if not car or not provider_obj:
                 return {"error": "Автомобиль или провайдер не найдены"}, 400
-
 
             report_query, report_details = ReportService.create_report(
                 provider_id=str(provider_obj.id),
@@ -55,7 +56,7 @@ class MileageCalculationService:
                 return {"error": validation_error}, 400
 
 
-            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "mileage")
+            provider = parser if parser is not None else GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "mileage")
             if not provider.authenticate():
                 error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
@@ -63,7 +64,7 @@ class MileageCalculationService:
 
 
             status, df = provider.parse_raw_data("mileage", return_df=True)
-            if df is None or df.is_empty():
+            if df is None or df.is_empty() and status:
 
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 result = make_empty_mileage_result(mode)
@@ -137,6 +138,8 @@ class MileageCalculationService:
                 ReportService.complete_report_error(report_query, error_msg, e)
 
             return {"error": error_msg}, 500
+    
+
 
     @staticmethod
     def _get_car_and_provider(car_id: str) -> Tuple[Optional[Car], Optional[DataProvider]]:

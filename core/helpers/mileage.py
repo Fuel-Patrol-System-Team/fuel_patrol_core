@@ -1,4 +1,5 @@
 from enum import Enum
+from typing import cast
 import polars as pl
 
 class MileageModes(str, Enum):
@@ -221,6 +222,17 @@ def mileage_test_fraud_new(
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
 ):
+    """
+    Функция для расчета пройденного расстояния и детектирования накрутки автомобиля
+    
+    auto: id машины
+    df: датафрейм с колонками ["timestamp", "mileage", "pos_s", "ign"]
+    AGG_PERIOD_MINUTES: кастомная агрегация времени для пользователя
+    regime: режим парсинга(стандартный, с возвращаемой агрегацией)
+    TIME_PERIOD=количество часов, которое использование для отсчения прыжков, связанных с помехами gps
+    WORKING_AGG_PERIOD_HOURS=протестированное количество часов, которое отдает адекватные результаты в нахождении точного значения накрутки
+    """
+    COMMON_SENSOR_ISSUE_VALUES = [-127.0, 127.0, 254.0, -254.0]
 
     col_dtime_period = pl.col("timestamp").dt.truncate("48h")
     spikes_dtime_period = pl.col("timestamp").dt.truncate(f"{TIME_PERIOD}h")
@@ -237,7 +249,7 @@ def mileage_test_fraud_new(
             .diff()
             .over(["auto", col_dtime_period])
             .fill_null(0)
-            .replace([127.0, 254.0, -127.0, -254.0], 0)
+            .replace(COMMON_SENSOR_ISSUE_VALUES, 0)
             .alias("dmileage"),
             pl.col("timestamp")
             .diff()
@@ -425,11 +437,20 @@ def mileage_test_fraud_new(
             pl.col("travel").sub(pl.col("travel_r")).alias("mileage_diff_r"),
         ]
     )
+
+    df = df.with_columns(
+        pl.col("mileage_fraud").clip(upper_bound=0).truediv(127).abs().alias("resets")
+    )
+
+    df = df.with_columns(
+        pl.when((pl.lit(is_zero_one_sensor) & pl.col("resets").is_between(0, 2))  ).then(pl.col("last_mileage").add(pl.col("mileage_fraud"))).otherwise(pl.col("last_mileage")).alias("last_mileage")
+    )
+
     df = df.with_columns(
         (
             (
                 (pl.col("spikes_big").lt(20) & pl.col("dmileage_factor_diff").gt(0.65))
-                & pl.col("mileage_fraud").gt(100)
+                & pl.col("mileage_fraud").abs().gt(100)
             )
         )
         .alias("is_actual_fraud")
@@ -440,10 +461,16 @@ def mileage_test_fraud_new(
         .mul(pl.col("mileage_fraud"))
         .alias("true_mileage_fraud")
     )
+    last_mileage = cast(float , df["last_mileage"].last())
+    first_mileage = cast(float, df["first_mileage"].first())
+    travel = cast(float, df["travel"].sum() if is_zero_one_sensor else df["travel_r"].sum())
+    if last_mileage is not None:
+        if last_mileage < first_mileage:
+            last_mileage = first_mileage + travel
     return {
-        "travel": df["travel_r"].sum(),
+        "travel":travel,
         "travel_fraud": df["true_mileage_fraud"].sum(),
-        "first_mileage": df["first_mileage"].first(),
-        "last_mileage": df["last_mileage"].last(),
+        "first_mileage": first_mileage,
+        "last_mileage": last_mileage,
         "data": agg if regime is MileageModes.agg else None,
     }

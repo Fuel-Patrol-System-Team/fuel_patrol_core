@@ -985,7 +985,7 @@ class StartTerminalMessagesParsingView(APIView):
                 provider_name=provider.name,
                 start_date_str=start_date_str,
                 end_date_str=end_date_str,
-                mode="raw",
+                mode="raw" if is_raw_data else "raw_mapped",
                 car_ids=car_ids
             )
 

@@ -2,10 +2,10 @@ import datetime
 import polars
 import pytest
 
-from app.tasks import GlonassGeneralProvider, process_single_car_data_task
 from core.models import Car, DataProvider
 from core.services.providers.car_data_service import CarDataService
 from core.services.providers.filtering_service import FilteringService
+from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.leaks_service import LeaksService
 from core.services.providers.norms_service import NormsService
 from core.services.providers.report_service import ReportService

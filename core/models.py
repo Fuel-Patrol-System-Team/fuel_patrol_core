@@ -6,6 +6,7 @@ from pathlib import Path
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
+import polars
 
 NULLABLE = {"blank": True, "null": True}
 
@@ -165,6 +166,7 @@ class CarConsumption(models.Model):
     speed_etalon = models.FloatField(default=60.0)
     max_fuel = models.FloatField(default=2000.0)
     valid_period = models.DateField(**NULLABLE)
+    json_data = models.JSONField()
 
     class Meta:
         verbose_name = "Car Consumption"
@@ -173,6 +175,7 @@ class CarConsumption(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} Consumption"
+    
 
 
 class DataProvider(models.Model):
@@ -192,13 +195,15 @@ class DataProvider(models.Model):
     def __str__(self):
         return self.name
 
-
 class ReportQuery(models.Model):
     class ReportType(models.TextChoices):
         VEHICLES = "vehicles", "Синхронизация транспортных средств"
         MILEAGE = "mileage", "Анализ пробега"
         MOTOHOURS = "motohours", "Анализ моточасов"
         LEAKS = "leaks", "Анализ утечек топлива"
+        PRIMARY = "primary", "Расчет превичных данных"
+        NORMS = "norms", "Расчет норм расхода"
+
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
@@ -241,6 +246,13 @@ class ReportQueryDetails(models.Model):
     def __str__(self):
         return f"Report {self.report_query} Details {self.id}"
 
+class ParsingCarStats(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id=models.ForeignKey(Car, on_delete=models.CASCADE, related_name="parsingcar_stats")
+    norms_last_proccessed = models.DateTimeField(**NULLABLE)
+    fuel_last_proccessed = models.DateTimeField(**NULLABLE)
+    primary_last_proccessed = models.DateTimeField(**NULLABLE)
+    preffered_period_days = models.IntegerField(default=90)
 
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -264,7 +276,9 @@ class CarMileageReport(models.Model):
     datetime = models.DateTimeField()
     mileage_start = models.FloatField(**NULLABLE)
     mileage_end = models.FloatField(**NULLABLE)
+    travel =  models.FloatField(**NULLABLE)
     fraud = models.FloatField(**NULLABLE)
+    
 
     class Meta:
         verbose_name = "Car Mileage Report"

@@ -2,8 +2,9 @@ from enum import Enum
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, Any, Optional, List
+from uuid import UUID
 import zipfile
 
 from attr import dataclass
@@ -27,19 +28,22 @@ class GlonassGeneralProvider:
     processed_cars = 0
     total_cars = 0
     mode: str
+    old_car_id: UUID | None
+    i = 0
 
     def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage"):
         if cars is None and car is not None:
             self.cars = list([car])
             self.total_cars = 1
         if cars is not None:
-            self.cars = list(cars)
+            self.cars =(list(cars))
             self.total_cars = len(cars)
-        self.car = self.cars[0]
         self.start_date = start_date.replace(tzinfo=pytz.UTC)
+        self.i = 0
+        self.car = self.cars[self.i]
         self.end_date = end_date.replace(tzinfo=pytz.UTC)
         self.provider = provider
-
+        self.old_car_id = None
         self.metadata = self.provider.metadata or {}
 
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
@@ -61,6 +65,9 @@ class GlonassGeneralProvider:
 
     def _get_sensors_mapping(self, car: Car) -> Dict[str, str]:
         """Получает маппинг сенсоров для машины"""
+        if self.old_car_id is None or self.old_car_id != car.id:
+            self.old_car_id = car.id
+            self.sensors_mapping_cache = None
         
         if not self.sensors_mapping_cache:
             right_car = Car.objects.only("id").get(id_in_provider_system=car.id_in_provider_system)
@@ -71,9 +78,9 @@ class GlonassGeneralProvider:
                     for sv in sensors
                 }
                 self.sensors_mapping_cache = sensors_mapping
-                logger.debug(f"Загружен маппинг для {self.car.name}: {len(sensors_mapping)} сенсоров")
+                logger.debug(f"Загружен маппинг для {car.name}: {len(sensors_mapping)} сенсоров")
             except Exception as e:
-                logger.error(f"Ошибка загрузки маппинга для {self.car.name}: {e}")
+                logger.error(f"Ошибка загрузки маппинга для {car.name}: {e}")
                 self.sensors_mapping_cache = {}
 
         return self.sensors_mapping_cache
@@ -156,18 +163,25 @@ class GlonassGeneralProvider:
         }
 
 
-    def parse_raw_data(self, mode: str, return_df=False, car : Car | None = None) -> tuple[ bool, pl.DataFrame | List[Dict[str, Any]] | None]:
+    def _pick_car(self):
+        self.car = self.cars[self.i]
+        self.i += 1
+        return self.car 
+    
+    def parse_raw_data(self, mode: str, return_df=False, car : Car | None = None, start_date: datetime | None = None, end_date: datetime | None = None) -> tuple[ bool, pl.DataFrame | List[Dict[str, Any]] | None]:
         """Основной метод парсинга данных"""
-        car_to_use = car if car is not None else self.car
+        car_to_use = car if car is not None else self._pick_car()
+        sensors_mapping = self._get_sensors_mapping(car_to_use)
         if not self.authenticate():
             return (False, [{"error": "Auth Error"}])
         if mode not in ["mileage", "fuel", "fuel_charts", "motohours", "raw", "raw_mapped"]:
             return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}])
+        
 
-        sensors_mapping = self._get_sensors_mapping(car_to_use)
+        
 
 
-        all_messages = self._get_all_messages_for_period()
+        all_messages = self._get_all_messages_for_period(start_date, end_date)
 
         if not all_messages:
             logger.warning(f"Нет данных для машины {self.car.id_in_provider_system}")
@@ -195,14 +209,15 @@ class GlonassGeneralProvider:
         logger.info(f"Обработано {self.processed_messages} сообщений из {self.total_messages} для режима {mode}")
         return (True, result)
 
-    def _get_all_messages_for_period(self) -> List[Dict[str, Any]]:
+    def _get_all_messages_for_period(self, start_time: datetime | None, end_time: datetime | None, default_days=90) -> List[Dict[str, Any]]:
         """Получает все сообщения за период с адаптивными запросами"""
         all_messages = []
-        current_start = self.start_date
+        current_start = start_time if start_time else self.start_date
+        end_time = end_time if end_time else self.end_date
         vehicle_id = self.car.id_in_provider_system
 
-        while current_start < self.end_date:
-            period_days = min(self.default_period_days, (self.end_date - current_start).days)
+        while current_start < end_time:
+            period_days = min(self.default_period_days, (end_time - current_start).days)
             if period_days < 1:
                 period_days = 1
 
