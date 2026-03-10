@@ -7,7 +7,7 @@ from django.db.models import Q
 import polars as pl
 from datetime import datetime, timedelta, timezone
 import pytz
-from celery import shared_task
+from celery import chain, shared_task
 
 from app.celery import app as celery_app
 
@@ -243,10 +243,10 @@ def process_single_car_data_task(
             return {"success": False, "car_id": car_id, "error": error_msg}
 
         logger.info("ЭТАП 4: Расчет утечек топлива...")
-        leaks_service = LeaksService()
+        leak_service = leaks_service.LeaksService()
         leaks_result, intermediate_df = None, None
         if norms_df is not None and not norms_df.is_empty():
-            leaks_result, intermediate_df = leaks_service.compute_leaks(
+            leaks_result, intermediate_df = leak_service.compute_leaks(
                 auto_df=auto_df,
                 data_df=raw_df,
                 primary_df=primary_df,
@@ -638,3 +638,14 @@ def parse_cars_milleage_task(
             meta={'error': str(e)}
         )
         raise
+
+
+@shared_task(bind=True)
+def parse_cars_fuel_provider(provider_name: str, is_save_bad_data = False):
+    agg = 1440
+    chain(
+        calculate_primary_cron.si(provider_name, is_save_bad_data),
+        calculate_norms_cron.si(provider_name, is_save_bad_data),
+        calculate_leaks_cron.si(provider_name, is_save_bad_data),
+        parse_cars_milleage_task.si(provider_name, agg, is_save_bad_data )
+    ).apply_async()

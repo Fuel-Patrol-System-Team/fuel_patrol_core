@@ -49,6 +49,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             logger.error(f"Ошибка аутентификации: {e}")
             return False
 
+
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
     def get_vehicles(self) -> Optional[List[Dict[str, Any]]]:
         if not self.auth_token:
@@ -125,6 +126,20 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             logger.error(f"Ошибка при получении деталей vehicleId={vehicle_id}: {e}")
             return None
 
+    def _get_right_grade(self, grade: Any):
+        grade_for_choice = {
+            "input": 0,
+            "output": 0,
+        }
+        max_factor = 1000
+        for grade_item in grade:
+            if grade_item["input"] != 0 and grade_item["output"] != 0:
+                factor = grade_item["input"] / grade_item["output"]
+                if factor < max_factor:
+                    grade_for_choice = grade_item
+        return grade_for_choice
+                
+        
     def _enrich_with_sensors_mapping(
             self, vehicle_data: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -162,7 +177,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     if grades_tables and grades_tables[-1]:
                         grades = grades_tables[-1].get("grades", [{}])
                         if grades:
-                            record = grades[-1]
+                            record = self._get_right_grade(grades)
                             input_value = record.get("input")
                             output_value = record.get("output")
                 if parameter_name:
