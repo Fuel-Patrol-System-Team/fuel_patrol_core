@@ -966,7 +966,7 @@ class StartTerminalMessagesParsingView(APIView):
                 )
             provider = DataProvider.objects.filter(name=provider_name).first()
 
-            if car_ids:
+            if car_ids and not parse_all:
                 try:
                     validated_car_ids = []
                     for car_id in car_ids:
@@ -975,6 +975,15 @@ class StartTerminalMessagesParsingView(APIView):
                         else:
                             validated_car_ids.append(car_id)
                     car_ids = validated_car_ids
+                except (ValueError, TypeError) as e:
+                    return Response(
+                        {'error': f'Неверный формат car_ids: {str(e)}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            if parse_all:
+                try:
+                    car_ids = list(map(lambda car: car.id,  list(provider.cars.all())))
+                    
                 except (ValueError, TypeError) as e:
                     return Response(
                         {'error': f'Неверный формат car_ids: {str(e)}'},

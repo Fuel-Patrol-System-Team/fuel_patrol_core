@@ -641,11 +641,16 @@ def parse_cars_milleage_task(
 
 
 @shared_task(bind=True)
-def parse_cars_fuel_provider(provider_name: str, is_save_bad_data = False):
+def parse_cars_fuel_provider(self, provider_name: str, is_save_bad_data = False):
     agg = 1440
-    chain(
-        calculate_primary_cron.si(provider_name, is_save_bad_data),
-        calculate_norms_cron.si(provider_name, is_save_bad_data),
-        calculate_leaks_cron.si(provider_name, is_save_bad_data),
-        parse_cars_milleage_task.si(provider_name, agg, is_save_bad_data )
-    ).apply_async()
+    try:
+        chain(
+            calculate_primary_cron.si(provider_name, is_save_bad_data),
+            calculate_norms_cron.si(provider_name, is_save_bad_data),
+            calculate_leaks_cron.si(provider_name, is_save_bad_data),
+            parse_cars_milleage_task.si(provider_name, agg, is_save_bad_data )
+        ).apply_async()
+        pass
+    except Exception as e:
+        logger.error(f"Full exception: {e}", exc_info=True)
+        raise e

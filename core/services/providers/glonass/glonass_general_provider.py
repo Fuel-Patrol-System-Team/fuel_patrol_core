@@ -181,7 +181,7 @@ class GlonassGeneralProvider:
         
 
 
-        all_messages = self._get_all_messages_for_period(start_date, end_date)
+        all_messages = self._get_all_messages_for_period(start_date, end_date, car_to_use)
 
         if not all_messages:
             logger.warning(f"Нет данных для машины {self.car.id_in_provider_system}")
@@ -209,12 +209,12 @@ class GlonassGeneralProvider:
         logger.info(f"Обработано {self.processed_messages} сообщений из {self.total_messages} для режима {mode}")
         return (True, result)
 
-    def _get_all_messages_for_period(self, start_time: datetime | None, end_time: datetime | None, default_days=90) -> List[Dict[str, Any]]:
+    def _get_all_messages_for_period(self, start_time: datetime | None, end_time: datetime | None, car: Car, default_days=90) -> List[Dict[str, Any]]:
         """Получает все сообщения за период с адаптивными запросами"""
         all_messages = []
         current_start = start_time if start_time else self.start_date
         end_time = end_time if end_time else self.end_date
-        vehicle_id = self.car.id_in_provider_system
+        vehicle_id = car.id_in_provider_system
 
         while current_start < end_time:
             period_days = min(self.default_period_days, (end_time - current_start).days)
