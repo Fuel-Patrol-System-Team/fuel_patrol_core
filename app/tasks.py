@@ -400,6 +400,71 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 continue
 
 @shared_task(bind=True)
+def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
+    
+    datetime_now = datetime.now()
+    provider = DataProvider.objects.get(name=provider_name)
+    
+
+    cars_primary = provider.cars.select_related("carprimary").filter(carprimary__isnull=True)
+    
+    if len(cars_primary) != 0:
+        datetime_for_stats = datetime_now - timedelta(days=180)
+        # primary computing
+        parser = GlonassGeneralProvider(cars_primary, None, provider, datetime_for_stats, datetime_now)
+        for car in cars_primary:
+            try:
+                is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
+                if is_sensor == 0:
+                    continue
+                auto_data = CarDataService.prepare_auto_data(car)
+                status, df = parser.parse_raw_data("fuel", True)
+                    
+                if status and isinstance(df, pl.DataFrame):
+                    primary = CarDataService.calculate_primary_single(df, auto_data )
+                    if primary is None or primary.is_empty():
+                        error_msg = f"Не удалось вычислить первичные показатели для машины {car.id}"
+                        logger.error(error_msg)
+                        report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                        # TODO: один отчет на все машины
+                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                        ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                        continue
+                    norms = NormsService.calculate_norms_single(df, primary, auto_data)
+                    if norms is None or norms.is_empty():
+                        error_msg = f"Не удалось вычислить первичные показатели для машины {car.id}"
+                        logger.error(error_msg)
+                        report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.NORMS,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                        # TODO: один отчет на все машины
+                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                        ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                        continue
+                    logger.info("ЭТАП 2.1: Сохранение первичных показателей в БД...")
+                    primary_saved = CarDataService.save_primary_to_db(car, primary, datetime_now, datetime_for_stats)
+                    if primary_saved:
+                        logger.info(f"Первичные показатели сохранены для машины {car.id}")
+                    else:
+                        logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
+            except Exception as err:
+                report_query, report_details = ReportService.create_report(
+                            provider_id=str(provider.id),
+                            report_type=ReportQuery.ReportType.PRIMARY,
+                            is_save_bad_data=is_save_bad_data
+                        )
+                error_msg = f"Внутренняя ошибка {err} для {car.id}"
+                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                continue
+
+@shared_task(bind=True)
 def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
     
     datetime_now = datetime.now()
@@ -425,7 +490,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
                         logger.error(error_msg)
                         report_query, report_details = ReportService.create_report(
                             provider_id=str(provider.id),
-                            report_type=ReportQuery.ReportType.PRIMARY,
+                            report_type=ReportQuery.ReportType.NORMS,
                             is_save_bad_data=is_save_bad_data
                         )
                         # TODO: один отчет на все машины
@@ -448,7 +513,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
             except Exception:
                 report_query, report_details = ReportService.create_report(
                             provider_id=str(provider.id),
-                            report_type=ReportQuery.ReportType.PRIMARY,
+                            report_type=ReportQuery.ReportType.NORMS,
                             is_save_bad_data=is_save_bad_data
                         )
                 error_msg = f"Внутренняя ошибка {car.id}"
@@ -508,7 +573,7 @@ def calculate_leaks_cron(
             except Exception as err:
                 report_query, report_details = ReportService.create_report(
                             provider_id=str(provider.id),
-                            report_type=ReportQuery.ReportType.PRIMARY,
+                            report_type=ReportQuery.ReportType.LEAKS,
                             is_save_bad_data=is_save_bad_data
                         )
                 error_msg = f"Внутренняя ошибка {car.id}"
@@ -591,7 +656,7 @@ def parse_terminal_messages_task(
         }
 
     except Exception as e:
-        logger.error(f"Ошибка в задаче парсинга terminalMessages: {e}", exc_info=True)
+        logger.error(f"Ошибка в задаче парсинга terminalMessages: {e}")
         self.update_state(
             state='FAILURE',
             meta={'error': str(e)}
@@ -623,14 +688,6 @@ def parse_cars_milleage_task(
             else:
                 logger.error("Статус репорта не успешный")
                     
-
-
-        ##TODO: МБ 1 из админки не будет работать как bool, тогда стоит сделать строку и каставать к Bool из строки
-
-        ## Важный момент - сохранение результата в модель CarMileageReport
-        ## 2 варианта предлагаю
-        ## Вариант 1 - в сигнатуру сервиса по милейджу - добавляем флаг save_result и сохраняем внутри процедуры
-        ## Вариант 2 - результат возвращаемой функции тут получать и тут же код сохранения
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга mileage: {e}", exc_info=True)
         self.update_state(
@@ -645,9 +702,10 @@ def parse_cars_fuel_provider(self, provider_name: str, is_save_bad_data = False)
     agg = 1440
     try:
         chain(
+            calculate_stats_fuel_cron.si(provider_name, is_save_bad_data),
+            calculate_leaks_cron.si(provider_name, is_save_bad_data),
             calculate_primary_cron.si(provider_name, is_save_bad_data),
             calculate_norms_cron.si(provider_name, is_save_bad_data),
-            calculate_leaks_cron.si(provider_name, is_save_bad_data),
             parse_cars_milleage_task.si(provider_name, agg, is_save_bad_data )
         ).apply_async()
         pass

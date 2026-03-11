@@ -113,7 +113,6 @@ class GlonassGeneralProvider:
             return False
         
     def parse_raw_data_all(self, return_df=False ):
-        
         if self.cars is None:
             return {
                 "status": "completed",
@@ -139,12 +138,16 @@ class GlonassGeneralProvider:
             }
         if self.cars is not None:
             for car in self.cars:
-                self._enforce_rate_limit()
-                status, result = self.parse_raw_data(self.mode, return_df=return_df, car=car)
-                if status:
-                    self.processed_cars += 1
-                else:
-                    self.failed_cars += 1
+                try:
+                    self._enforce_rate_limit()
+                    status, result = self.parse_raw_data(self.mode, return_df=return_df, car=car)
+                    if status:
+                        self.processed_cars += 1
+                    else:
+                        self.failed_cars += 1
+                except Exception as err:
+                    logger.warning(f"Ошибка связанная с машиной {car.id_in_provider_system} {err}")
+                    continue
 
         end_time = datetime.now()
         return {
