@@ -187,24 +187,24 @@ class GlonassGeneralProvider:
         all_messages = self._get_all_messages_for_period(start_date, end_date, car_to_use)
 
         if not all_messages:
-            logger.warning(f"Нет данных для машины {self.car.id_in_provider_system}")
+            logger.warning(f"Нет данных для машины {car_to_use.id_in_provider_system}")
             return True, pl.DataFrame() if return_df else []
 
         if mode == "mileage":
-            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
+            result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
         elif mode == "fuel":
-            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
-            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)], return_df=return_df)
         elif mode == "motohours":
-            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
         elif mode == "raw":
-            result = self._process_unmapped(all_messages)
+            result = self._process_unmapped(car_to_use, all_messages)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.fuel_level, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
@@ -347,15 +347,15 @@ class GlonassGeneralProvider:
         except Exception as e:
             logger.error(f"Ошибка при архивации файла {csv_file_path}: {e}")
 
-    def _process_unmapped(self, messages: List[Dict[str, Any]]) -> pl.DataFrame:
+    def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]]) -> pl.DataFrame:
         result = pl.DataFrame(messages, infer_schema_length=None)
         fields = list(map(lambda x: f"parameters.{x}" , result["parameters"].struct.fields))
         result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
-        result = result.with_columns(pl.lit(str(self.car.id)).alias("auto"))
+        result = result.with_columns(pl.lit(str(car.id)).alias("auto"))
         return result
 
-    def _process_general(self, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
-        result = self._process_unmapped(messages)
+    def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
+        result = self._process_unmapped(car, messages)
         use_cols = self._build_use_cols(required_columns, sensors_mapping, result.columns)
         try:
             result = result.select(use_cols)
@@ -390,7 +390,7 @@ class GlonassGeneralProvider:
         if required_actions is not None:
             for action in required_actions:
                 if action is not None:
-                    result = action(result, self.car, mapped_required_columns)
+                    result = action(result, car, mapped_required_columns)
         result = result.select(mapped_required_columns)
         self.processed_messages += result.shape[0]
         return result if return_df else result.to_dicts()
