@@ -14,7 +14,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
-    CarUnit, UserCarList, CarMileageReport,
+    CarUnit, UserCarList, CarMileageReport, TelegramUser,
 )
 
 
@@ -166,6 +166,7 @@ class UserOutputSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     username = serializers.CharField()
     organization = OrganizationOutputSerializer(read_only=True, source="org")
+    organization_tg_link = serializers.URLField()
 
 
 class OrgUserOutputSerializer(serializers.ModelSerializer):
@@ -231,6 +232,26 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         )
         return user
 
+class TelegramUserRegistrationSerializer(serializers.Serializer):
+    chat_id = serializers.CharField(max_length=100)
+    username = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    first_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    last_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
+    organization_id = serializers.UUIDField()
+
+    def validate_organization_id(self, value):
+        try:
+            Organization.objects.get(id=value)
+        except Organization.DoesNotExist:
+            raise serializers.ValidationError("Organization not found")
+        return value
+
+class TelegramUserOutputSerializer(serializers.ModelSerializer):
+    organization = OrganizationOutputSerializer(read_only=True)
+
+    class Meta:
+        model = TelegramUser
+        fields = ('id', 'chat_id', 'username', 'first_name', 'last_name', 'organization', 'created_at', 'is_active')
 
 class LanguageSerializer(serializers.ModelSerializer):
     class Meta:

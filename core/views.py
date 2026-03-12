@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from typing import Dict
 from uuid import UUID
@@ -35,14 +36,14 @@ from .helpers.data_provider import validate_provider_cars, \
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport
+    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
-    CAR_SENSORS_RAW_DATA_SCHEMA
+    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
@@ -54,7 +55,8 @@ from .serializers import (
     DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
     DataProviderSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
-    UserCarListSerializer, CarMileageReportOutputSerializer
+    UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
+    TelegramUserOutputSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
@@ -168,7 +170,8 @@ class UserInfoAPIView(APIView):
         serializer = UserOutputSerializer({
             'id': user.id,
             'username': user.username,
-            'organization': user.org.name
+            'organization': user.org.name,
+            'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.org.id}",
         })
         return user_response(serializer.data, status.HTTP_200_OK)
 
@@ -1175,6 +1178,40 @@ class CustomTokenRefreshView(TokenRefreshView):
 
         return response
 
+
+class TelegramRegisterAPIView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    @swagger_auto_schema(**TELEGRAM_REGISTER_SCHEMA)
+    def post(self, request):
+        serializer = TelegramUserRegistrationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(serializer.errors, status=400)
+
+        data = serializer.validated_data
+        chat_id = data['chat_id']
+        organization_id = data['organization_id']
+
+        try:
+            organization = Organization.objects.get(id=organization_id)
+        except Organization.DoesNotExist:
+            return error_response('Organization not found', status=404)
+
+        user, created = TelegramUser.objects.update_or_create(
+            chat_id=chat_id,
+            defaults={
+                'organization': organization,
+                'username': data.get('username', '')[:255],
+                'first_name': data.get('first_name', '')[:255],
+                'last_name': data.get('last_name', '')[:255],
+                'is_active': True,
+            }
+        )
+
+        output_serializer = TelegramUserOutputSerializer(user)
+        status_code = 201 if created else 200
+        return success_response(output_serializer.data, status_code)
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

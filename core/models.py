@@ -15,6 +15,7 @@ class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
     bot_token = models.CharField(max_length=255, **NULLABLE)
+    bot_username = models.CharField(max_length=255, **NULLABLE)
     chat_id = models.CharField(max_length=255, **NULLABLE)
 
     class Meta:
@@ -24,6 +25,61 @@ class Organization(models.Model):
 
     def __str__(self):
         return self.name
+
+class TelegramUser(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='telegram_users',
+        verbose_name="Организация"
+    )
+    chat_id = models.CharField(
+        max_length=100,
+        unique=True,
+        verbose_name="Chat ID Telegram",
+        help_text="Уникальный идентификатор чата с пользователем"
+    )
+    username = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Username",
+        help_text="Telegram username (без @)"
+    )
+    first_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Имя"
+    )
+    last_name = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        verbose_name="Фамилия"
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        verbose_name="Дата подписки"
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Активен",
+        help_text="Пользователь не заблокировал бота"
+    )
+
+    class Meta:
+        verbose_name = "Пользователь Telegram"
+        verbose_name_plural = "Пользователи Telegram"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['chat_id']),
+            models.Index(fields=['organization']),
+        ]
+
+    def __str__(self):
+        return f"{self.username or self.chat_id} ({self.organization.name})"
 
 
 class Language(models.Model):

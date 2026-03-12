@@ -1,7 +1,7 @@
 from drf_yasg import openapi
 
-from core.serializers import  CarReportOutputSerializer, DataProviderSerializer, \
-    CarActiveStatusSerializer
+from core.serializers import CarReportOutputSerializer, DataProviderSerializer, \
+    CarActiveStatusSerializer, TelegramUserOutputSerializer
 
 CAR_DATA_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -576,5 +576,27 @@ CAR_SENSORS_RAW_DATA_SCHEMA = {
                 }
             )
         )
+    }
+}
+
+TELEGRAM_REGISTER_SCHEMA = {
+    'operation_description': "Регистрация/обновление пользователя Telegram",
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['chat_id', 'organization_id'],
+        properties={
+            'chat_id': openapi.Schema(type=openapi.TYPE_STRING, description='Telegram chat ID'),
+            'username': openapi.Schema(type=openapi.TYPE_STRING, description='Telegram username (без @)', default=''),
+            'first_name': openapi.Schema(type=openapi.TYPE_STRING, description='Имя', default=''),
+            'last_name': openapi.Schema(type=openapi.TYPE_STRING, description='Фамилия', default=''),
+            'organization_id': openapi.Schema(type=openapi.TYPE_STRING, format='uuid', description='UUID организации'),
+        }
+    ),
+    'responses': {
+        201: openapi.Response('Пользователь создан', TelegramUserOutputSerializer),
+        200: openapi.Response('Пользователь обновлен', TelegramUserOutputSerializer),
+        400: 'Bad Request',
+        401: 'Unauthorized (неверный API-ключ)',
+        404: 'Organization not found',
     }
 }
