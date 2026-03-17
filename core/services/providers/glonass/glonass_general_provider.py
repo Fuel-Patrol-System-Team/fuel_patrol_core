@@ -204,7 +204,7 @@ class GlonassGeneralProvider:
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
@@ -218,9 +218,10 @@ class GlonassGeneralProvider:
         current_start = start_time if start_time else self.start_date
         end_time = end_time if end_time else self.end_date
         vehicle_id = car.id_in_provider_system
+        period_days = self.default_period_days 
 
         while current_start < end_time:
-            period_days = min(self.default_period_days, (end_time - current_start).days)
+            period_days = min(period_days, (end_time - current_start).days)
             if period_days < 1:
                 period_days = 1
 
@@ -234,9 +235,9 @@ class GlonassGeneralProvider:
                     current_start = current_end + timezone.timedelta(seconds=1)
                 else:
 
-                    if self.default_period_days > 1:
-                        self.default_period_days = max(self.default_period_days // 2, 1)
-                        logger.warning(f"Уменьшаем период до {self.default_period_days} дней")
+                    if period_days > 1:
+                        period_days = max(period_days // 2, 1)
+                        logger.warning(f"Уменьшаем период до {period_days} дней")
                         continue
                     else:
                         logger.error(f"Не удалось получить данные для {vehicle_id} даже за 1 день")
@@ -245,9 +246,9 @@ class GlonassGeneralProvider:
             except requests.exceptions.HTTPError as e:
                 if e.response.status_code == 429:
 
-                    if self.default_period_days > 1:
-                        self.default_period_days = max(self.default_period_days // 2, 1)
-                    logger.warning(f"Rate limit (429). Уменьшаем период до {self.default_period_days} дней")
+                    if period_days > 1:
+                        period_days = max(period_days // 2, 1)
+                    logger.warning(f"Rate limit (429). Уменьшаем период до {period_days} дней")
                     time.sleep(5)
                     continue
                 else:
@@ -357,10 +358,7 @@ class GlonassGeneralProvider:
     def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
         result = self._process_unmapped(car, messages)
         use_cols = self._build_use_cols(required_columns, sensors_mapping, result.columns)
-        try:
-            result = result.select(use_cols)
-        except Exception:
-            raise ValueError("Нет данных по одному из требуемых стобцов за этот период")
+        
 
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -373,7 +371,7 @@ class GlonassGeneralProvider:
                 else:
                     if param.default_key in result.columns:
                         path_to_param = param.default_key
-                if path_to_param == "":
+                if path_to_param == "" or path_to_param not in result.columns:
                     # заменить спец значением весь столбец
                     result = result.with_columns(pl.lit(param.default_on_absence).alias(param.label))
                 else:
@@ -385,6 +383,7 @@ class GlonassGeneralProvider:
                         result = result.with_columns(pl.col(param.label).fill_null(param.default_value))
                     if param.filter_on_absence:
                         result = result.filter(pl.col(param.label).is_not_null())
+
         mapped_required_columns = list(map(lambda x: GLOBAL_GLONASS_PARAMS.get(x).label ,required_columns))
         
         if required_actions is not None:

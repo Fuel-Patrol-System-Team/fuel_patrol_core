@@ -218,7 +218,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part == "can_mileage":
-                        sensors_mapping["mileage"] = f"parameters.can_mileage"
+                        sensors_mapping["mileage"] = f"parameters.mileage" # пока так
                     elif key_part.startswith("can_") and input_number:
                         sensors_mapping["mileage"] = f"parameters.can{input_number}"
                     else:
@@ -239,7 +239,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping["engine_temp"] = f"parameters.{key_part}"
             elif sensor_type == "Ignition":
                 if parameter_name:
-                    key_part = "iobits"
+                    key_part = parameter_name.split(";")[0]
                     if input_type == "FMS":
                         key_part = "ign"
                     sensors_mapping["ign"] = f"parameters.{key_part}"

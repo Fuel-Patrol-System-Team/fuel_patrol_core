@@ -34,6 +34,8 @@ class FilteringService(BaseFilteringService):
 
         filtered_df, _ = self.filtering_spent_fuel_std(filtered_df, SIGMAS=2.5)
 
+        filtered_df, _ = self.filtering_nan(filtered_df)
+
         # filtered_df, _ = self.filtering_certains_ids(filtered_df, ["example_id"])
 
         logger.info(f"После фильтрации осталось {len(filtered_df)} записей")
@@ -49,6 +51,10 @@ class FilteringService(BaseFilteringService):
     def filtering_ptime(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
         filtered_df = result_df.filter(pl.col("ptime") > 10)
         return filtered_df, result_df
+
+    def filtering_nan(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        filtering_df = result_df.filter(pl.col("leak").is_not_nan())
+        return filtering_df, result_df
 
     def filtering_spent_fuel_std(self, result_df: pl.DataFrame, SIGMAS: float = 3.5) -> Tuple[
         pl.DataFrame, pl.DataFrame]:

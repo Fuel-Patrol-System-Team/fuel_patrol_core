@@ -608,6 +608,10 @@ class NormsService:
             if max_speed is not None and max_speed < 0.2:
                 max_speed = group["pos_s"].quantile(0.95, interpolation="nearest")
                 logger.info(f"Машина {auto}: низкая скорость, использован 95% квантиль = {max_speed:.2f}")
+            
+            if max_speed == 0:
+                logger.info(f"Машина {auto} нулевую скорость за весь период. Проблема с датчиком?")
+                continue
 
             max_fuel = group["max_local_fuel_level"].max()
             rpm_max = group["rpm_mean"].max()
