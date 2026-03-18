@@ -400,6 +400,79 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 continue
 
 @shared_task(bind=True)
+def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save_bad_data=False):
+    
+    datetime_now = datetime.now()
+    provider = DataProvider.objects.get(name=provider_name)
+    
+
+    car = Car.objects.filter(id=car_id).first()
+    if car is None:
+        logger.warning(f"Машина не найдена {car_id}")
+        return
+    if car is not None:
+        datetime_for_stats = datetime_now - timedelta(days=365)
+        # primary computing
+        parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now)
+        try:
+            is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
+            if is_sensor == 0:
+                return
+            auto_data = CarDataService.prepare_auto_data(car)
+            status, df = parser.parse_raw_data("fuel", True, car)
+                
+            if status and isinstance(df, pl.DataFrame):
+                primary = CarDataService.calculate_primary_single(df, auto_data )
+                if primary is None or primary.is_empty():
+                    error_msg = f"Не удалось вычислить первичные показатели для машины {car.id}"
+                    logger.error(error_msg)
+                    report_query, report_details = ReportService.create_report(
+                        provider_id=str(provider.id),
+                        report_type=ReportQuery.ReportType.PRIMARY,
+                        is_save_bad_data=is_save_bad_data
+                    )
+                    # TODO: один отчет на все машины
+                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                    ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                    return
+                logger.info("ЭТАП 2.1: Сохранение первичных показателей в БД...")
+                primary_saved = CarDataService.save_primary_to_db(car, primary, datetime_now, datetime_for_stats)
+                if primary_saved:
+                    logger.info(f"Первичные показатели сохранены для машины {car.id}")
+                else:
+                    logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
+                logger.info("ЭТАП 3.0: Вычисление норм в БД...")
+                norms = NormsService.calculate_norms_single(df, primary, auto_data)
+                if norms is None or norms.is_empty():
+                    error_msg = f"Не удалось вычислить нормы показатели для машины {car.id}"
+                    logger.error(error_msg)
+                    report_query, report_details = ReportService.create_report(
+                        provider_id=str(provider.id),
+                        report_type=ReportQuery.ReportType.NORMS,
+                        is_save_bad_data=is_save_bad_data
+                    )
+                    # TODO: один отчет на все машины
+                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                    ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                    return
+                logger.info("ЭТАП 3.1: Сохранение норм в БД...")
+                norms_saved = CarConsumptionService.save_consumption_rates(norms, car)
+                if norms_saved:
+                    logger.info(f"Показатели норм сохранены для машины {car.id}")
+                else:
+                    logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
+                
+        except Exception as err:
+            report_query, report_details = ReportService.create_report(
+                        provider_id=str(provider.id),
+                        report_type=ReportQuery.ReportType.PRIMARY,
+                        is_save_bad_data=is_save_bad_data
+                    )
+            error_msg = f"Внутренняя ошибка {err} для {car.id}"
+            ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+            ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+
+@shared_task(bind=True)
 def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
     
     datetime_now = datetime.now()
@@ -482,7 +555,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
     cars_norms = provider.cars.select_related("carprimary").filter(carprimary__isnull=False).prefetch_related("consumptions").filter(consumptions__isnull=True)
     
     if len(cars_norms) != 0:
-        date_time_norms = datetime_now - timedelta(days=180)
+        date_time_norms = datetime_now - timedelta(days=360)
         # primary computing
         parser = GlonassGeneralProvider(cars_norms, None, provider, date_time_norms, datetime_now)
         for car in cars_norms:
@@ -755,10 +828,13 @@ def parse_cars_milleage_task(
         self,
         provider_name: str,
         aggregation: int,
-        is_save_bad_data : bool = False
+        is_save_bad_data : bool = False,
+        is_parse_mileage = False
 ):
     try:
 
+        if is_parse_mileage == False:
+            return
         tz = pytz.UTC
         start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = start_date + timedelta(days=1)
@@ -795,12 +871,13 @@ def parse_cars_milleage_task(
 
 
 @shared_task(bind=True)
-def parse_cars_fuel_provider(self, provider_name: str, is_save_bad_data = False):
+def parse_cars_fuel_provider(self, provider_name: str, is_save_bad_data = False, is_parse_mileage = False):
     agg = 1440
     try:
         chain(
             calculate_stats_fuel_cron.si(provider_name, is_save_bad_data),
             calculate_leaks_cron.si(provider_name, is_save_bad_data),
+            parse_cars_milleage_task.si(provider_name, agg,  is_save_bad_data, is_parse_mileage)
         ).apply_async()
         pass
     except Exception as e:
