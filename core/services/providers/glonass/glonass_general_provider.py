@@ -19,7 +19,6 @@ from django.utils import timezone
 from core.models import Car, DataProvider, SensorsValues
 from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol
 from core.services.providers.rate_limiter import global_rate_limiter
-from test import filter_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -363,7 +362,7 @@ class GlonassGeneralProvider:
         return messages
     def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]], parameters: list[str] | None = None) -> pl.DataFrame:
         if parameters is not None:
-            messages = filter_parameters(messages, parameters)
+            messages = self.filter_parameters(messages, parameters)
         result = pl.DataFrame(messages, infer_schema_length=10_000)
         fields = list(map(lambda x: f"parameters.{x}" , result["parameters"].struct.fields))
         result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
