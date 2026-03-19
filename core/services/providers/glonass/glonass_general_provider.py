@@ -6,7 +6,6 @@ from datetime import date, datetime
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 import zipfile
-from memory_profiler import profile
 
 from attr import dataclass
 from django.conf import settings
