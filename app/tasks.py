@@ -411,9 +411,9 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save
         logger.warning(f"Машина не найдена {car_id}")
         return
     if car is not None:
-        datetime_for_stats = datetime_now - timedelta(days=365)
+        datetime_for_stats = datetime_now - timedelta(days=360)
         # primary computing
-        parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now)
+        parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now, default_period_days=10)
         try:
             is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
             if is_sensor == 0:
@@ -488,7 +488,10 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
         for car in cars_primary:
             try:
                 is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
+                is_sensor_analog = SensorsValues.objects.filter(car_id__id=car.id, value__icontains="analog")
                 if is_sensor == 0:
+                    continue
+                if is_sensor_analog:
                     continue
                 auto_data = CarDataService.prepare_auto_data(car)
                 status, df = parser.parse_raw_data("fuel", True, car)

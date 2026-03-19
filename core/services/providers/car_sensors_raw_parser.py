@@ -197,7 +197,7 @@ class CarSensorsRawParser:
                     if self.default_period_days > 1:
                         self.default_period_days = max(self.default_period_days // 2, 1)
                     logger.warning(f"Rate limit (429). Уменьшаем период до {self.default_period_days} дней")
-                    time.sleep(5)
+                    time.sleep(3)
                     continue
                 else:
                     raise

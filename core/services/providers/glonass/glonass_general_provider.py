@@ -6,6 +6,7 @@ from datetime import date, datetime
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 import zipfile
+from memory_profiler import profile
 
 from attr import dataclass
 from django.conf import settings
@@ -19,6 +20,7 @@ from django.utils import timezone
 from core.models import Car, DataProvider, SensorsValues
 from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol
 from core.services.providers.rate_limiter import global_rate_limiter
+from test import filter_parameters
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +33,7 @@ class GlonassGeneralProvider:
     old_car_id: UUID | None
     i = 0
 
-    def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage"):
+    def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage", default_period_days=90):
         if cars is None and car is not None:
             self.cars = list([car])
             self.total_cars = 1
@@ -48,7 +50,7 @@ class GlonassGeneralProvider:
 
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
         self.auth_token = None
-        self.default_period_days = 90
+        self.default_period_days = default_period_days
         self.base_path = Path(settings.MEDIA_ROOT) / "raw_data" / f"raw_data_{self.start_date.strftime("%Y%m%d")}_{self.end_date.strftime("%Y%m%d")}"
         if not self.base_path.exists():
             self.base_path.mkdir(parents=True)
@@ -211,7 +213,6 @@ class GlonassGeneralProvider:
 
         logger.info(f"Обработано {self.processed_messages} сообщений из {self.total_messages} для режима {mode}")
         return (True, result)
-
     def _get_all_messages_for_period(self, start_time: datetime | None, end_time: datetime | None, car: Car, default_days=90) -> List[Dict[str, Any]]:
         """Получает все сообщения за период с адаптивными запросами"""
         all_messages = []
@@ -256,7 +257,6 @@ class GlonassGeneralProvider:
 
         self.total_messages = len(all_messages)
         return all_messages
-
     def _fetch_messages_for_period(
             self,
             vehicle_id: int,
@@ -293,7 +293,7 @@ class GlonassGeneralProvider:
             logger.error(f"Ошибка запроса данных для {vehicle_id}: {e}")
             return None
 
-    def _build_use_cols(self, required_columns, sensors_mapping, columns: list[str]):
+    def _build_use_cols(self, required_columns, sensors_mapping ):
         usecols = ["auto"]
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -301,9 +301,6 @@ class GlonassGeneralProvider:
                 path_to_param = ""
                 if param.is_dynamic:
                     path_to_param = sensors_mapping.get(col.value, param.default_key)
-                else:
-                    if param.default_key in columns:
-                        path_to_param = param.default_key
                 if path_to_param == "":
                     continue
                 usecols.append(path_to_param)
@@ -348,16 +345,35 @@ class GlonassGeneralProvider:
         except Exception as e:
             logger.error(f"Ошибка при архивации файла {csv_file_path}: {e}")
 
-    def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]]) -> pl.DataFrame:
-        result = pl.DataFrame(messages, infer_schema_length=None)
+    def filter_parameters(self, messages: List[Dict[str, Any]], allowed_keys):
+        allowed = set(allowed_keys)
+        if allowed:
+            allowed = list(map(lambda x: x.replace("parameters.", ""), allowed ))
+        
+        for msg in messages:
+            params = msg.get("parameters")
+
+            if isinstance(params, dict):
+                msg["parameters"] = {
+                    k: params[k]
+                    for k in params.keys() & allowed
+                }
+            else:
+                msg["parameters"] = None
+
+        return messages
+    def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]], parameters: list[str] | None = None) -> pl.DataFrame:
+        if parameters is not None:
+            messages = filter_parameters(messages, parameters)
+        result = pl.DataFrame(messages, infer_schema_length=10_000)
         fields = list(map(lambda x: f"parameters.{x}" , result["parameters"].struct.fields))
         result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
         result = result.with_columns(pl.lit(str(car.id)).alias("auto"))
         return result
 
     def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
-        result = self._process_unmapped(car, messages)
-        use_cols = self._build_use_cols(required_columns, sensors_mapping, result.columns)
+        use_cols = self._build_use_cols(required_columns, sensors_mapping )
+        result = self._process_unmapped(car, messages, use_cols)
         
 
         for col in required_columns:

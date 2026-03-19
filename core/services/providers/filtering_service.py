@@ -68,7 +68,7 @@ class FilteringService(BaseFilteringService):
         filtered_df = result_df.filter(pl.col("is_leak_sigma") | pl.col("low_speed"))
         return filtered_df, result_df
 
-    def filtering_standing_hard(self, result_df: pl.DataFrame, HARD_FUEL_FILTER: int = 15) -> Tuple[
+    def filtering_standing_hard(self, result_df: pl.DataFrame, HARD_FUEL_FILTER: int = 10) -> Tuple[
         pl.DataFrame, pl.DataFrame]:
         """Жесткая фильтрация стоянок"""
         filtered_df = result_df.filter(
