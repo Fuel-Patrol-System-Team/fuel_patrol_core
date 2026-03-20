@@ -673,9 +673,9 @@ def calculate_leaks_cron(
                 ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                 continue
         if total_leaks > 0:
-            notify_organization(str(provider.org_id.id), f"Найдерно сливов {filtering_result.shape[0]}")
+            notify_organization(str(provider.org_id.id), f"Найдено сливов {total_leaks}")
     else:
-        logger.info("Нет машин требующих расчета сливов")
+        logger.info("Нет сливов")
     
 @shared_task(bind=True)
 def calculate_leaks_cron_one(
@@ -739,9 +739,9 @@ def calculate_leaks_cron_one(
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
             return
     if total_leaks > 0:
-        notify_organization(str(provider.org_id.id), f"Найдерно сливов {filtering_result.shape[0]}")
+        notify_organization(str(provider.org_id.id), f"Найдено сливов {total_leaks}")
     else:
-        logger.info("Нет машин требующих расчета сливов")
+        logger.info("Нет сливов")
         
 
 
@@ -832,14 +832,15 @@ def parse_cars_milleage_task(
         provider_name: str,
         aggregation: int,
         is_save_bad_data : bool = False,
-        is_parse_mileage = False
+        is_parse_mileage = False,
+        start_date_manual = None
 ):
     try:
 
         if is_parse_mileage == False:
             return
         tz = pytz.UTC
-        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual)
         end_date = start_date + timedelta(days=1)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
