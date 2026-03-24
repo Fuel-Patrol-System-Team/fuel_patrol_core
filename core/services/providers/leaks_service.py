@@ -1,3 +1,4 @@
+import json
 import logging
 import polars as pl
 from typing import Any, Dict, Optional, Tuple
@@ -295,6 +296,13 @@ class LeaksService(BaseLeaksCalculator):
             )
         )
         logger.debug("Рассчитано скользящее среднее")
+        grades = cars["grades"]
+        unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+        fp_pos = len(unique) // 3
+        fp = unique[fp_pos]
+        sp = unique[-1]
+        slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
+        b = fp["output"] - slope * fp["input"]
 
         df = df.with_columns(
             [
@@ -302,9 +310,7 @@ class LeaksService(BaseLeaksCalculator):
                 .over(["auto", col_dtime_2hour])
                 .alias("voltage_max"),
                 (
-                    pl.col("calc_sensors_fuel_level")
-                    * pl.lit(cars["output"])
-                    / pl.lit(cars["input"])
+                    pl.col("calc_sensors_fuel_level").mul(slope).add(b)
                 ).alias("calc_sensors_fuel_level"),
             ]
         )

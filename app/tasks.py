@@ -643,6 +643,17 @@ def calculate_leaks_cron(
                 )
                 status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
                 if status and isinstance(data_df, pl.DataFrame):
+                    if data_df.is_empty():
+                        result_msg = f"Нет данных за период {datetime_parsing} {last_date_for_processing} для {car.id}"
+                        report_data = {
+                            "result": {
+                                },
+                            "empty_data": True,
+                            "rows_processed": 0
+                        }
+                        ReportService.complete_report_success(report_query, report_data, )
+                        logger.warning(result_msg)
+                        continue
                     primary_df = pl.DataFrame(car.carprimary.primary, schema_overrides={
                         "auto": pl.Categorical
                     })
@@ -698,7 +709,7 @@ def calculate_leaks_cron_one(
         parser = GlonassGeneralProvider([car], None, provider, now, now)
         total_leaks = 0
         try:
-            last_date_for_processing =  (now.now() - timedelta(120))
+            last_date_for_processing =  car.last_processed_date if car.last_processed_date else (now.now() - timedelta(365))
             datetime_parsing = cast(datetime,  last_date_for_processing)
             datetime_parsing = datetime_parsing.astimezone(tz)
 
@@ -879,7 +890,7 @@ def parse_cars_fuel_provider(self, provider_name: str, is_save_bad_data = False,
     agg = 1440
     try:
         chain(
-            calculate_stats_fuel_cron.si(provider_name, is_save_bad_data),
+            # calculate_stats_fuel_cron.si(provider_name, is_save_bad_data),
             calculate_leaks_cron.si(provider_name, is_save_bad_data),
             parse_cars_milleage_task.si(provider_name, agg,  is_save_bad_data, is_parse_mileage)
         ).apply_async()

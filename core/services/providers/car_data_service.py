@@ -158,6 +158,7 @@ class CarDataService:
                 "auto": str(car.id),
                 "input": float(car.input) if car.input else 1.0,
                 "output": float(car.output) if car.output else 1.0,
+                "grades": car.grades,
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,
                 "is_tarrified": car.is_tarrified

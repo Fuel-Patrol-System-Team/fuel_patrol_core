@@ -55,6 +55,7 @@ class VehicleService:
                     "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                     "engine_type": engine_type,
                     "input": vehicle_data.get("input"),
+                    "grades": vehicle_data.get("grades"),
                     "output": vehicle_data.get("output"),
                     "is_tarrified": VehicleService._calculate_is_tarrified(vehicle_data),
                     "is_active": len(critical_errors) == 0,

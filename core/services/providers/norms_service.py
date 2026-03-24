@@ -1,3 +1,4 @@
+import json
 import logging
 import polars as pl
 from typing import Optional, Tuple, Dict
@@ -85,6 +86,7 @@ class NormsService:
             auto_id = row['auto']
             cars_dict[auto_id] = {
                 'input': float(row['input']) if row['input'] is not None else 1.0,
+                'grades': row['grades'],
                 'output': float(row['output']) if row['output'] is not None else 1.0
             }
             logger.debug(
@@ -365,11 +367,18 @@ class NormsService:
                 .alias("dtime")
             )
 
+            grades = car_params['grades']
+            unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+            fp_pos = len(unique) // 3
+            fp = unique[fp_pos]
+            sp = unique[-1]
+            slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
+            b = fp["output"] - slope * fp["input"]
 
             df_processed = df_processed.with_columns(
                 [
                     pl.max("calc_sensors_voltage").over(["auto", col_dtime_2hour]).alias("voltage_max"),
-                    (pl.col("calc_sensors_fuel_level") * output_val / input_val).alias("calc_sensors_fuel_level"),
+                    (pl.col("calc_sensors_fuel_level").mul(slope).add(b) ).alias("calc_sensors_fuel_level"),
                 ]
             )
 

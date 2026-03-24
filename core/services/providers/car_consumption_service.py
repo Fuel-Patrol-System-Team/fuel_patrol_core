@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 from django.utils import timezone
 from django.db import transaction
@@ -38,7 +38,7 @@ class CarConsumptionService:
                     'summer_volume': norm_data.get('norma_rasx_summer'),
                     'speed_etalon': norm_data.get('speed_etalon', 60.0),
                     'max_fuel': norm_data.get('max_fuel', 2000.0),
-                    'valid_period': timezone.now().date(),
+                    'valid_period': timezone.now().date() + timedelta(days=365),
                     'json_data': norm_data
                 }
             )

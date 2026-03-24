@@ -170,6 +170,7 @@ class Car(models.Model):
     engine_type = models.FloatField(default=0.0)
     input = models.FloatField(**NULLABLE)
     output = models.FloatField(**NULLABLE)
+    grades = models.JSONField(null=True, blank=True)
     created_at = models.DateTimeField(default=timezone.now)
     last_processed_date = models.DateTimeField(**NULLABLE)
     is_tarrified = models.BooleanField(default=False)
@@ -183,6 +184,7 @@ class Car(models.Model):
 
     def __str__(self):
         return self.name
+
 
 
 

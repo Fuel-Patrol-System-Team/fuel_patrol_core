@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 import requests
 import orjson
@@ -131,12 +132,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             "input": 0,
             "output": 0,
         }
-        max_factor = 1000
         for grade_item in grade:
-            if grade_item["input"] != 0 and grade_item["output"] != 0:
-                factor = grade_item["input"] / grade_item["output"]
-                if factor < max_factor:
-                    grade_for_choice = grade_item
+            if grade_item["output"] != 0:
+                grade_for_choice = grade_item
         return grade_for_choice
                 
         
@@ -162,26 +160,35 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             vehicle_data["car_unit_id"] = str(car_unit.id)
         vehicle_data["unit_name"] = unit_name
 
+        gradeTable = None
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
             sensor_name = sensor.get("name", "")
+            sensor_kind = sensor.get("kind", "")
             parameter_name = sensor.get("parameterName")
             input_number = sensor.get("inputNumber")
             input_type = sensor.get("inputType")
+            expr = sensor.get("expr", "")
+            
 
             if "Скорость" in sensor_name or parameter_name == "can_speed":
                 sensors_mapping["speed"] = f"parameters.{parameter_name}"
             elif sensor_type == "FuelLvl":
                 if sensor.get("gradeType") == "GradeTable":
+
                     grades_tables = sensor.get("gradesTables", [{}])
                     if grades_tables and grades_tables[-1]:
                         grades = grades_tables[-1].get("grades", [{}])
+                        gradeTable = grades
                         if grades:
                             record = self._get_right_grade(grades)
                             input_value = record.get("input")
                             output_value = record.get("output")
+                            
+                    
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
+                    
 
                     if key_part.startswith("can_fuel_volume"):
                         sensors_mapping["calc_sensors_fuel_level"] = (
@@ -192,14 +199,32 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping["calc_sensors_fuel_level"] = (
                             f"parameters.can{input_number}"
                         )
+                    elif input_type == "Analog":
+                        match = re.search(r"\bflex_adc(\d+)\b", expr)
+                        analog_match = re.search(r"\banalog(\d+)\b", expr)
+                        if match is not None:
+                            sensors_mapping["calc_sensors_fuel_level"] = (
+                                f"parameters.{match.group(0)}"
+                            )
+                        if analog_match is not None:
+                            sensors_mapping["calc_sensors_fuel_level"] = (
+                                f"paramaters.{analog_match.group(0)}"
+                            )
                     else:
 
                         sensors_mapping["calc_sensors_fuel_level"] = (
                             f"parameters.{key_part}"
                         )
                 elif input_number:
-
-                    sensors_mapping["calc_sensors_fuel_level"] = (
+                    if input_type == "Analog":
+                        match = re.search(r"\bflex_adc(\d+)\b", expr)
+                        analog_match = re.search(r"\banalog(\d+)\b", expr)
+                        if match is not None:
+                            sensors_mapping["calc_sensors_fuel_level"] = (
+                                f"parameters.{match.group(0)}"
+                            )
+                    else:
+                        sensors_mapping["calc_sensors_fuel_level"] = (
                         f"parameters.analog{input_number}"
                     )
 
@@ -260,6 +285,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             sensors_mapping["speed"] = "speed"
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
+        vehicle_data["grades"] = {"grades": gradeTable } if gradeTable is not None else None
         vehicle_data["sensorsMapping"] = sensors_mapping
 
         return vehicle_data
