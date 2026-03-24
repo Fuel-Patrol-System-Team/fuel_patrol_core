@@ -488,10 +488,7 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
         for car in cars_primary:
             try:
                 is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
-                is_sensor_analog = SensorsValues.objects.filter(car_id__id=car.id, value__icontains="analog")
                 if is_sensor == 0:
-                    continue
-                if is_sensor_analog:
                     continue
                 auto_data = CarDataService.prepare_auto_data(car)
                 status, df = parser.parse_raw_data("fuel", True, car)
