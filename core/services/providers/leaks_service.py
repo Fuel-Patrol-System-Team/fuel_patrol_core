@@ -327,6 +327,7 @@ class LeaksService(BaseLeaksCalculator):
             f"Фильтрация по напряжению: {initial_count} -> {filtered_count} записей"
         )
 
+        logger.debug(df.schema)
         df = df.with_columns(
             [
                 pl.col("calc_sensors_fuel_level")
