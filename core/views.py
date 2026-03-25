@@ -36,7 +36,7 @@ from .helpers.data_provider import validate_provider_cars, \
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser
+    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser, CarFuelReport
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -56,7 +56,7 @@ from .serializers import (
     DataProviderSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
-    TelegramUserOutputSerializer
+    TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
@@ -653,6 +653,28 @@ class CarReportDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id=self.request.user.org
         )
 
+class CarFuelReportListAPIView(ListAPIView):
+    serializer_class = CarFuelReportSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['car_id', 'start_moment']
+    search_fields = ['car_id__name', 'car_id__id_in_provider_system']
+
+    def get_queryset(self):
+        return CarFuelReport.objects.filter(
+            car_id__data_providers__org_id=self.request.user.org.id
+        ).select_related('car_id').distinct().order_by('-start_moment')
+
+
+class CarFuelReportDetailAPIView(RetrieveAPIView):
+    serializer_class = CarFuelReportSerializer
+    lookup_field = 'pk'
+
+    def get_queryset(self):
+        return CarFuelReport.objects.filter(
+            car_id__data_providers__org_id=self.request.user.org.id
+        ).select_related('car_id').distinct()
+
 
 class UserCarListListView(ListCreateAPIView):
     permission_classes = [IsOrgMember]
@@ -750,16 +772,19 @@ class DataProviderListAPIView(ListAPIView):
             org_id=self.request.user.org
         ).order_by('id')
 
-
-class DataProviderDetailAPIView(RetrieveAPIView):
+class DataProviderDetailAPIView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsOrgMember]
-    serializer_class = DataProviderOutputSerializer
+    serializer_class = DataProviderUpdateSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
         return DataProvider.objects.filter(
-            org_id=self.request.user.org
-        )
+            org_id=self.request.user.org.id
+        ).prefetch_related('cars')
+
+    def perform_destroy(self, instance):
+        super().perform_destroy(instance)
+
 
 
 class CarLeaksAPIView(ListAPIView):

@@ -19,7 +19,7 @@ from core.models import (
     Organization, OrgUser, Car, CarReport, CarConsumption, Driver,
     ReportQuery, DataProvider, CarBadData, Language,
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails,
-    UnitService, CarUnit, UserCarList, CarPrimary, CarMileageReport, TelegramUser
+    UnitService, CarUnit, UserCarList, CarPrimary, CarMileageReport, TelegramUser, CarFuelReport
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -57,6 +57,20 @@ class CarReportInline(TabularInline):
     max_num = 20
     classes = ('collapse',)
     show_change_link = True
+
+class CarFuelReportInline(TabularInline):
+    model = CarFuelReport
+    extra = 0
+    fields = ('start_moment', 'end_moment', 'fuel_start', 'fuel_end', 'fuel_filled')
+    readonly_fields = ('start_moment', 'end_moment', 'fuel_start', 'fuel_end', 'fuel_filled')
+    verbose_name = "Отчёт по топливу"
+    verbose_name_plural = "Отчёты по топливу"
+    can_delete = False
+    show_change_link = True
+    classes = ('collapse',)
+
+    def has_add_permission(self, request, obj=None):
+        return False
 
 
 class SensorsValuesInline(TabularInline):
@@ -376,7 +390,7 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
     list_per_page = 30
     date_hierarchy = 'created_at'
     save_on_top = True
-    inlines = [CarConsumptionInline, SensorsValuesInline, CarReportInline, DriverCarInline]
+    inlines = [CarConsumptionInline, SensorsValuesInline, CarReportInline, DriverCarInline,CarFuelReportInline]
     actions = ['export_selected', 'activate_selected', 'deactivate_selected']
     fieldsets = (
         ('Основное', {'fields': ('name', 'description', 'id_in_provider_system', 'car_unit', 'list_id')}),
@@ -806,6 +820,70 @@ class CarReportAdmin(ImportExportMixin, ModelAdmin):
         queryset.update(status=False)
         self.message_user(request, "Отчёты отмечены как неактивные.")
 
+
+
+
+# ─────────────────────────────────────────────────────────────
+# CarFuelReport
+# ─────────────────────────────────────────────────────────────
+@admin.register(CarFuelReport)
+class CarFuelReportAdmin(ImportExportMixin, ModelAdmin):
+    list_display = (
+        'car_info',
+        'start_moment',
+        'end_moment',
+        'fuel_start_display',
+        'fuel_end_display',
+        'fuel_filled_display'
+    )
+    list_filter = ('start_moment', 'car_id__name')
+    search_fields = ('car_id__name', 'car_id__id_in_provider_system')
+    ordering = ('-start_moment',)
+    list_per_page = 30
+    date_hierarchy = 'start_moment'
+    autocomplete_fields = ['car_id']
+
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('car_id', ('start_moment', 'end_moment'))
+        }),
+        ('Показания топлива (л)', {
+            'fields': ('fuel_start', 'fuel_end', 'fuel_filled'),
+        }),
+    )
+
+    def car_info(self, obj):
+        if obj.car_id:
+            url = reverse("admin:core_car_change", args=[obj.car_id.id])
+            return format_html('<a href="{}">{}</a>', url, obj.car_id.name)
+        return "—"
+    car_info.short_description = "Автомобиль"
+    car_info.admin_order_field = 'car_id__name'
+
+    def _format_fuel(self, value):
+        if value is None:
+            return format_html('<span style="color: #94a3b8;">—</span>')
+        return f"{value:.2f} л"
+
+    def fuel_start_display(self, obj):
+        return self._format_fuel(obj.fuel_start)
+    fuel_start_display.short_description = "Бак (нач)"
+
+    def fuel_end_display(self, obj):
+        return self._format_fuel(obj.fuel_end)
+    fuel_end_display.short_description = "Бак (кон)"
+
+    def fuel_filled_display(self, obj):
+        if obj.fuel_filled and obj.fuel_filled > 0:
+            return format_html('<span style="color: #22c55e; font-weight: bold;">+ {}</span>', self._format_fuel(obj.fuel_filled))
+        return self._format_fuel(obj.fuel_filled)
+    fuel_filled_display.short_description = "Заправлено"
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('car_id')
+
+    def get_readonly_fields(self, request, obj=None):
+        return ('car_id', 'start_moment', 'end_moment') if obj else ()
 
 # ─────────────────────────────────────────────────────────────
 # CarPrimary

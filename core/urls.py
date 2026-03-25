@@ -13,7 +13,8 @@ from core.views import CarListBySensorGroupAPIView, OrganizationListAPIView, \
     CustomTokenObtainPairView, \
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
-    CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView
+    CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
+    CarFuelReportListAPIView, CarFuelReportDetailAPIView
 
 urlpatterns = [
 
@@ -55,6 +56,10 @@ urlpatterns = [
     path('report-queries/<uuid:pk>', ReportQueryDetailAPIView.as_view(), name='report-query-detail'),
     path('car-reports', CarReportListAPIView.as_view(), name='car-report-list'),
     path('car-reports/<uuid:pk>', CarReportDetailAPIView.as_view(), name='car-report-detail'),
+
+    path('car-fuel-reports', CarFuelReportListAPIView.as_view(), name='fuel-report-list'),
+    path('car-fuel-reports/<uuid:pk>', CarFuelReportDetailAPIView.as_view(), name='fuel-report-detail'),
+
     path('car-reports-mileage', CarMileageReportListAPIView.as_view(), name='car-report-mileage-list'),
     path('car-reports-mileage/<uuid:pk>', CarMileageReportDetailAPIView.as_view(), name='car-report-mileage-detail'),
     path('drivers', DriverListAPIView.as_view(), name='driver-list'),
@@ -62,7 +67,9 @@ urlpatterns = [
     path('dataprovider', DataProviderListAPIView.as_view(), name='dataprovider-list'),
     path('dataprovider/<uuid:pk>', DataProviderDetailAPIView.as_view(), name='dataprovider-detail'),
     path('dataprovider/create', DataProviderCreateAPIView.as_view(), name='data-provider-create'),
+
     path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status'),
+
     # path('sensors', SensorsMappingListByCardAPIView.as_view(), name='sensors'), ##TODO: Переписать
 
     path('sensors/keys', SensorsKeyListAPIView.as_view(), name='sensors-keys-list'),
