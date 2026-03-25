@@ -326,6 +326,10 @@ class LeaksService(BaseLeaksCalculator):
         logger.debug(
             f"Фильтрация по напряжению: {initial_count} -> {filtered_count} записей"
         )
+        df = df.with_columns(
+            pl.col("pos_s").cast(pl.Float32),
+            pl.col("calc_sensors_fuel_level").cast(pl.Float32)
+        )
 
         logger.debug(df.schema)
         df = df.with_columns(
@@ -347,7 +351,7 @@ class LeaksService(BaseLeaksCalculator):
                     | ((pl.col("ign") == 0) & pl.lit(primary["is_special_car"]))
                 )
                 .then(pl.col("calc_sensors_fuel_level"))
-                .otherwise(pl.lit(None))
+                .otherwise(pl.lit(None, dtype=pl.Float32))
                 .forward_fill()
                 .alias("fuel_level_standing"),
             ]
