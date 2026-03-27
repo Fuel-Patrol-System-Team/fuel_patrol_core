@@ -87,6 +87,7 @@ class NormsService:
             cars_dict[auto_id] = {
                 'input': float(row['input']) if row['input'] is not None else 1.0,
                 'grades': row['grades'],
+                'fuel_sensor': row['fuel_sensor'],
                 'output': float(row['output']) if row['output'] is not None else 1.0
             }
             logger.debug(
@@ -367,14 +368,21 @@ class NormsService:
                 .alias("dtime")
             )
 
-            grades = car_params['grades']
+            if "flex_adc" in car_params["fuel_sensor"]:
+                df_processed = df_processed.filter(pl.col("pos_s").ge(12))
+
+            col_dtime_half = pl.col("timestamp").dt.truncate("30m")
+            col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
+            grades = car_params["grades"]
             unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
             fp_pos = len(unique) // 3
+            mp = unique[0]
             fp = unique[fp_pos]
             sp = unique[-1]
             slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
             b = fp["output"] - slope * fp["input"]
 
+            df_processed = df_processed.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
             df_processed = df_processed.with_columns(
                 [
                     pl.max("calc_sensors_voltage").over(["auto", col_dtime_2hour]).alias("voltage_max"),

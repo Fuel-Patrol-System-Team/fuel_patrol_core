@@ -11,6 +11,8 @@ from rest_framework import permissions
 
 from core.views import api_docs_view
 
+
+
 schema_view = get_schema_view(
     openapi.Info(
         title="Fuel API",

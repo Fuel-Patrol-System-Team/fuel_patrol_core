@@ -49,7 +49,7 @@ class FilteringService(BaseFilteringService):
         return filtered_df, result_df
 
     def filtering_ptime(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
-        filtered_df = result_df.filter(pl.col("ptime") > 10)
+        filtered_df = result_df.filter(pl.col("ptime") > 5 * 60)
         return filtered_df, result_df
 
     def filtering_nan(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
@@ -78,7 +78,9 @@ class FilteringService(BaseFilteringService):
 
     def filtering_special_required(self, result_df: pl.DataFrame) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация специальных требований"""
-        filtered_df = result_df.filter(~pl.col("is_special_car") )
+        filtered_df = result_df.filter(
+            ~pl.col("is_special_car") | (pl.col("is_special_car") & pl.col("ign_working"))
+        )
         return filtered_df, result_df
 
     def filtering_sattelites(self, result_df: pl.DataFrame, SAT_AMOUNT: float = 0.65) -> Tuple[

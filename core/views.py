@@ -1,12 +1,16 @@
+import json
 import os
 from datetime import datetime
 from typing import Dict
 from uuid import UUID
 
+from django.http import StreamingHttpResponse
+import pandas
+import polars
 import pytz
 from celery import group
 
-from django.db.models import Count
+from django.db.models import Q, Count, OuterRef, Subquery
 from django.shortcuts import render
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -47,7 +51,7 @@ from core.helpers.rest import (
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer,
+    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
@@ -504,14 +508,75 @@ class CarListBySensorGroupAPIView(ListAPIView):
         return super().get(request, *args, **kwargs)
     def get_queryset(self):
         key_value = self.request.query_params.get("key")
-        result = SensorsValues.objects.select_related("car_id", 'key' ).filter(
-            car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value
-        )
+        if key_value == "motohours": 
+            result = SensorsValues.objects.select_related("car_id", 'key' ).filter(
+                car_id__data_providers__org_id=self.request.user.org.id
+            ).filter(Q(key__key="motohours") | Q(key__key="ignition"))
+        else:
+            result = SensorsValues.objects.select_related("car_id", 'key' ).filter(
+                car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value
+            )
         return result.annotate(
             bad_data_count=Count("car_id__bad_data")
         ).order_by("id")
 
+class AutoDataListAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    pagination_class = StandardResultsSetPagination
+    serializer_class = AutoDataOutputSerializer
+    filter_backends = [DjangoFilterBackend, SearchFilter]
 
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+    
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            fuel_subquery = Subquery(
+                SensorsValues.objects.filter(
+                    car_id=OuterRef("pk"),
+                    key__key="calc_sensors_fuel_level"
+                ).values("value")[:1]
+            )
+            cars = Car.objects.annotate(
+                fuel_sensor = fuel_subquery
+            )
+            return cars
+        return []
+
+import csv
+from django.http import StreamingHttpResponse
+from django.db.models import OuterRef, Subquery
+from rest_framework.generics import ListAPIView
+
+class AutoDataListAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+
+    def get_queryset(self):
+        if self.request.user.is_staff:
+            fuel_subquery = Subquery(
+                SensorsValues.objects.filter(
+                    car_id=OuterRef("pk"),
+                    key__key="calc_sensors_fuel_level"
+                ).values("value")[:1]
+            )
+            
+            return Car.objects.annotate(
+                fuel_sensor=fuel_subquery
+            )
+
+        return Car.objects.none()
+
+    def get(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        data = list(queryset.values())
+        for row in data:
+            if "grades" in row:
+                row["grades"] = json.dumps(row["grades"])
+        content = pandas.DataFrame(data)
+        
+        content.to_csv("/data/datasets/fuel/Cars-server.csv", quotechar='"')
+
+        return queryset
 class CarMileageReportListAPIView(ListAPIView):
     serializer_class = CarMileageReportOutputSerializer
     pagination_class = StandardResultsSetPagination

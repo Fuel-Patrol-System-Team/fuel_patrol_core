@@ -64,7 +64,7 @@ class MileageCalculationService:
 
 
             status, df = provider.parse_raw_data("mileage", True, car)
-            if df is None or df.is_empty() or status:
+            if df is None or df.is_empty() or not status:
 
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 result = make_empty_mileage_result(mode)

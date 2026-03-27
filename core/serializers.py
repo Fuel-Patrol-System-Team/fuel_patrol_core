@@ -103,6 +103,39 @@ class CarOutputSerializer(serializers.ModelSerializer):
 
         return sensors_data
 
+class AutoDataOutputSerializer(serializers.ModelSerializer):
+    car_unit = serializers.SerializerMethodField()
+    fuel_sensor = serializers.CharField()
+
+    class Meta:
+        model = Car
+        fields = [
+            "id",
+            "id_in_provider_system",
+            "name",
+            "car_unit",
+            "description",
+            "engine_type",
+            "input",
+            "output",
+            "created_at",
+            "last_processed_date",
+            "is_tarrified",
+            "is_active",
+            "fuel_sensor",
+            "grades"
+        ]
+
+    def get_car_unit(self, obj):
+        if hasattr(self.context, 'car_unit_info'):
+            return self.context['car_unit_info']
+
+        if obj.car_unit:
+            return obj.car_unit.name
+            
+        return None
+    
+    
 
 class DriverOutputSerializer(serializers.ModelSerializer):
     car_id = CarOutputSerializer(many=True, read_only=True)

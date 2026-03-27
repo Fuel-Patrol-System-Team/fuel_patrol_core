@@ -267,7 +267,10 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     key_part = parameter_name.split(";")[0]
                     if input_type == "FMS":
                         key_part = "ign"
-                    sensors_mapping["ign"] = f"parameters.{key_part}"
+                    if key_part.startswith("iobits"):
+                        sensors_mapping["ign"] = f"parameters.iobits"
+                    else:
+                        sensors_mapping["ign"] = f"parameters.{key_part}"
             elif (
                     sensor_type == "Motohours"
                     or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2

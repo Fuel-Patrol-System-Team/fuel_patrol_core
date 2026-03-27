@@ -411,7 +411,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save
         logger.warning(f"Машина не найдена {car_id}")
         return
     if car is not None:
-        datetime_for_stats = datetime_now - timedelta(days=360)
+        datetime_for_stats = datetime_now - timedelta(days=180)
         # primary computing
         parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now, default_period_days=10)
         try:
@@ -690,7 +690,8 @@ def calculate_leaks_cron_one(
     self,
     provider_name: str,
     car_id: str,
-    is_save_bad_data: bool = False
+    is_save_bad_data: bool = False,
+    ignore_last_processed: bool = False
 ):
     provider = DataProvider.objects.get(name=provider_name)
     
@@ -706,7 +707,7 @@ def calculate_leaks_cron_one(
         parser = GlonassGeneralProvider([car], None, provider, now, now)
         total_leaks = 0
         try:
-            last_date_for_processing =  car.last_processed_date if car.last_processed_date else (now.now() - timedelta(365))
+            last_date_for_processing =  car.last_processed_date if car.last_processed_date and not ignore_last_processed else (now.now() - timedelta(365))
             datetime_parsing = cast(datetime,  last_date_for_processing)
             datetime_parsing = datetime_parsing.astimezone(tz)
 
@@ -724,6 +725,8 @@ def calculate_leaks_cron_one(
                 auto_data = CarDataService.prepare_auto_data(car)
                 leak_service = leaks_service.LeaksService()
                 leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                if isinstance(leaks_result, pl.DataFrame):
+                    leaks_result = leaks_result.with_columns(pl.col("grades").cast(pl.String))
             if leaks_result is None or leaks_result.is_empty():
                 error_msg = f"Не обнаружены сливы для машины {car.id}"
                 logger.error(error_msg)

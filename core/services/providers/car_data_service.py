@@ -6,6 +6,7 @@ from typing import Optional
 from pathlib import Path
 from django.conf import settings
 
+from app.tasks import SensorsValues
 from core.models import CarPrimary, Car
 
 logger = logging.getLogger(__name__)
@@ -153,6 +154,7 @@ class CarDataService:
     def prepare_auto_data(car) -> pl.DataFrame:
         """Подготавливает auto DataFrame для расчета норм"""
         try:
+            fuel_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level").first()
             auto_data = [{
                 "id": str(car.id),
                 "auto": str(car.id),
@@ -161,7 +163,8 @@ class CarDataService:
                 "grades": car.grades,
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,
-                "is_tarrified": car.is_tarrified
+                "is_tarrified": car.is_tarrified,
+                "fuel_sensor": fuel_sensor if fuel_sensor is None else fuel_sensor.value
             }]
 
             auto_df = pl.DataFrame(auto_data).with_columns([
