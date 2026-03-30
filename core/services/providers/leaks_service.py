@@ -299,11 +299,13 @@ class LeaksService(BaseLeaksCalculator):
         grades = cars["grades"]
         unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
         fp_pos = len(unique) // 3
+        mp = unique[0]
         fp = unique[fp_pos]
         sp = unique[-1]
         slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
         b = fp["output"] - slope * fp["input"]
 
+        df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
         df = df.with_columns(
             [
                 pl.max("calc_sensors_voltage")
@@ -346,16 +348,23 @@ class LeaksService(BaseLeaksCalculator):
                 .fill_null(0)
                 .cast(pl.Float32)
                 .alias("pos_a"),
-                pl.when(
+                
+            ]
+        )
+        if "flex_adc" in cars["fuel_sensor"]:
+            df = df.with_columns(
+                pl.col("calc_sensors_fuel_level").alias("fuel_level_standing")
+            )
+        else:
+            df = df.with_columns(pl.when(
                     (~pl.lit(primary["is_special_car"]) & (pl.col("pos_s") == 0))
                     | ((pl.col("ign") == 0) & pl.lit(primary["is_special_car"]))
                 )
                 .then(pl.col("calc_sensors_fuel_level"))
                 .otherwise(pl.lit(None, dtype=pl.Float32))
                 .forward_fill()
-                .alias("fuel_level_standing"),
-            ]
-        )
+                .alias("fuel_level_standing"))
+            
         logger.debug("Рассчитаны spent_fuel, pos_a, fuel_level_standing")
 
         df = df.with_columns(
