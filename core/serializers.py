@@ -14,7 +14,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
-    CarUnit, UserCarList, CarMileageReport, TelegramUser,
+    CarUnit, UserCarList, CarMileageReport, TelegramUser, CarFuelReport,
 )
 
 
@@ -152,6 +152,16 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
         model = CarReport
         fields = ["id", "car_id", "speed", "datetime", "volume", "status"]
 
+class CarFuelReportSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car_id.name', read_only=True)
+
+    class Meta:
+        model = CarFuelReport
+        fields = [
+            'id', 'car_id', 'car_name', 'start_moment',
+            'end_moment', 'fuel_start', 'fuel_end', 'fuel_filled'
+        ]
+
 class CarUnitSerializer(serializers.ModelSerializer):
     class Meta:
         model = CarUnit
@@ -177,6 +187,17 @@ class DataProviderOutputSerializer(serializers.ModelSerializer):
     class Meta:
         model = DataProvider
         fields = ["id", "name", "metadata"]
+
+
+class DataProviderUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DataProvider
+        fields = ['name', 'metadata', 'cars']
+
+    def validate_metadata(self, value):
+        if value is not None and not isinstance(value, dict):
+            raise serializers.ValidationError("Metadata must be a valid JSON object.")
+        return value
 
 class ReportQueryDetailsSerializer(serializers.ModelSerializer):
     class Meta:

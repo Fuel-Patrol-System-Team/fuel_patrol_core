@@ -483,7 +483,6 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
     
     if len(cars_primary) != 0:
         datetime_for_stats = datetime_now - timedelta(days=365)
-        # primary computing
         parser = GlonassGeneralProvider(cars_primary, None, provider, datetime_for_stats, datetime_now)
         for car in cars_primary:
             try:
@@ -503,7 +502,6 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                             report_type=ReportQuery.ReportType.PRIMARY,
                             is_save_bad_data=is_save_bad_data
                         )
-                        # TODO: один отчет на все машины
                         ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
                         ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                         continue
@@ -523,7 +521,6 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                             report_type=ReportQuery.ReportType.NORMS,
                             is_save_bad_data=is_save_bad_data
                         )
-                        # TODO: один отчет на все машины
                         ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
                         ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                         continue

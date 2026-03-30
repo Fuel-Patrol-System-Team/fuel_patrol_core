@@ -224,7 +224,7 @@ class CarConsumption(models.Model):
     speed_etalon = models.FloatField(default=60.0)
     max_fuel = models.FloatField(default=2000.0)
     valid_period = models.DateField(**NULLABLE)
-    json_data = models.JSONField()
+    json_data = models.JSONField(**NULLABLE)
 
     class Meta:
         verbose_name = "Car Consumption"
@@ -312,6 +312,25 @@ class ParsingCarStats(models.Model):
     primary_last_proccessed = models.DateTimeField(**NULLABLE)
     preffered_period_days = models.IntegerField(default=90)
 
+
+class CarFuelReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="car_fuel_reports")
+    start_moment = models.DateTimeField()
+    end_moment = models.DateTimeField()
+    fuel_start = models.FloatField(**NULLABLE)
+    fuel_end = models.FloatField(**NULLABLE)
+    fuel_filled = models.FloatField(**NULLABLE)
+
+    class Meta:
+        verbose_name = "Car Fuel Report"
+        verbose_name_plural = "Car Fuel Reports"
+        ordering = ["car_id"]
+
+    def __str__(self):
+        return f"{self.car_id.name} Fuel Report"
+
+##TODO: Переименовать в CarLeakReport
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="reports")

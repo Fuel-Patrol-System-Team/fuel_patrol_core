@@ -14,12 +14,8 @@ from datetime import timedelta
 from pathlib import Path
 import warnings
 
-import redis
-from django.conf.global_settings import APPEND_SLASH, STATIC_ROOT
 from django.urls import reverse_lazy
 from dotenv import load_dotenv
-from influxdb_client import WriteOptions
-from influxdb_client.client import influxdb_client
 from influxdb_client.client.warnings import MissingPivotFunction
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -364,6 +360,11 @@ UNFOLD = {
                         "title": "Отчёты автомобилей",
                         "icon": "summarize",
                         "link": reverse_lazy("admin:core_carreport_changelist"),
+                    },
+                    {
+                        "title": "Отчёты по топливу/заправке",
+                        "icon": "summarize",
+                        "link": reverse_lazy("admin:core_carfuelreport_changelist"),
                     },
                     {
                         "title": "Отчёты по пробегам",
