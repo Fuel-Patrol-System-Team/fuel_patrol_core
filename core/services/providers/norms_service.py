@@ -386,7 +386,6 @@ class NormsService:
             df_processed = df_processed.with_columns(
                 [
                     pl.max("calc_sensors_voltage").over(["auto", col_dtime_2hour]).alias("voltage_max"),
-                    (pl.col("calc_sensors_fuel_level").mul(slope).add(b) ).alias("calc_sensors_fuel_level"),
                 ]
             )
 

@@ -298,24 +298,21 @@ class LeaksService(BaseLeaksCalculator):
         logger.debug("Рассчитано скользящее среднее")
         grades = cars["grades"]
         unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
-        fp_pos = len(unique) // 3
+        pairs = list(zip(unique, unique[1:]))
         mp = unique[0]
-        fp = unique[fp_pos]
-        sp = unique[-1]
-        slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
-        b = fp["output"] - slope * fp["input"]
+        lp = unique[-1]
+        for fp, sp in pairs:
+            slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
+            b = fp["output"] - slope * fp["input"]
+            df = df.with_columns(
+                pl.when(
+                    pl.col("calc_sensors_fuel_level").is_between(fp["input"], sp["input"])
+                )
+                .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
+                .otherwise(pl.col("calc_sensors_fuel_level"))
+            )
 
         df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
-        df = df.with_columns(
-            [
-                pl.max("calc_sensors_voltage")
-                .over(["auto", col_dtime_2hour])
-                .alias("voltage_max"),
-                (
-                    pl.col("calc_sensors_fuel_level").mul(slope).add(b)
-                ).alias("calc_sensors_fuel_level"),
-            ]
-        )
         logger.debug("Рассчитаны voltage_max и тарированное топливо")
 
         initial_count = len(df)
