@@ -313,6 +313,13 @@ class LeaksService(BaseLeaksCalculator):
             )
 
         df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
+        df = df.with_columns(
+            [
+                pl.max("calc_sensors_voltage")
+                .over(["auto", col_dtime_2hour])
+                .alias("voltage_max"),
+            ]
+        )
         logger.debug("Рассчитаны voltage_max и тарированное топливо")
 
         initial_count = len(df)
