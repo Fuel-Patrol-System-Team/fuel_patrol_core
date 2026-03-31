@@ -195,7 +195,7 @@ class GlonassGeneralProvider:
         elif mode == "fuel":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.tarify_car), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
         elif mode == "motohours":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
         elif mode == "raw":

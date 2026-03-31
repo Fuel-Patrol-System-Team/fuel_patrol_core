@@ -43,6 +43,7 @@ class GL_ACTION_KEYS(Enum):
     tarify_car = "tarify"
     auto_column = "auto"
     amtr_merge = "amtr_merge"
+    chart_preprocess = "chart_preprocess"
 
 GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
@@ -74,8 +75,36 @@ def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str]):
     mapping.remove("amtr_z")
     mapping.append("amtr")
     return df
+
+def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str]):
+    grades = car.grades
+    unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+    pairs = list(zip(unique, unique[1:]))
+    mp = unique[0]
+    lp = unique[-1]
+    for fp, sp in pairs:
+        slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
+        b = fp["output"] - slope * fp["input"]
+        df = df.with_columns(
+            pl.when(
+                pl.col("calc_sensors_fuel_level").is_between(fp["input"], sp["input"])
+            )
+            .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
+            .otherwise(pl.col("calc_sensors_fuel_level"))
+        )
+    df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
+    return df
+
+def _default(df: pl.DataFrame, car: Car, mapping: list[str]):
+    return df
+
+def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str]):
+    df = df.with_columns(pl.col("calc_sensors_fuel_level").gt(0))
+    return df
+    
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {
-    GL_ACTION_KEYS.tarify_car: lambda df, car, mapping: df.with_columns(pl.col("calc_sensors_fuel_level").mul(car.output).truediv(car.input)) ,
+    GL_ACTION_KEYS.tarify_car: _tarify_car,
     GL_ACTION_KEYS.auto_column: _modify_auto,
     GL_ACTION_KEYS.amtr_merge: _merge_amtr,
+    GL_ACTION_KEYS.chart_preprocess: _chart_preprocess,
 }
