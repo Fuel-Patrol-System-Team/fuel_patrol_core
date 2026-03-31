@@ -1159,6 +1159,7 @@ class CarSensorsRawDataAPIView(APIView):
             car_id = data.get('car_id')
             start_date_str = data.get('start_date')
             end_date_str = data.get('end_date')
+            agg = data.get("agg")
             mode = data.get('mode', 'mileage')
 
             validation_rsp = self._validate_request_params(car_id, start_date_str, end_date_str, mode)
@@ -1179,7 +1180,7 @@ class CarSensorsRawDataAPIView(APIView):
 
             provider = car_r.data_providers.first()
             result, parser, parse_error = CarSensorsHelper.parse_raw_data(
-                car, provider, start_date, end_date, mode
+                car, provider, start_date, end_date, agg, mode
             )
             if parse_error:
                 error_status = (

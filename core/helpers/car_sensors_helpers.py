@@ -2,6 +2,7 @@ import logging
 from typing import Dict, Tuple, Optional
 from datetime import datetime
 import pytz
+import polars as pl
 
 from rest_framework import status
 
@@ -91,27 +92,36 @@ class CarSensorsHelper:
                 id=car_id,
                 data_providers__org_id=user.org.id
             )
-            car
             return car, None
         except Car.DoesNotExist:
             return None, "Машина не найдена или не принадлежит вашей организации"
         except Exception as e:
             logger.error(f"Ошибка получения автомобиля {car_id}: {e}")
             return None, "Ошибка получения данных об автомобиле"
-
+    @staticmethod
+    def preprocess_car_data_charts(df: pl.DataFrame, agg: str | None):
+        if agg is not None and agg != "":
+            col_agg_required = pl.col("timestamp").dt.truncate(f"{agg}")
+            df = df.with_columns(
+                pl.col("calc_sensors_fuel_level").mean().over(["auto", col_agg_required])
+            )
+        return df
     @staticmethod
     def parse_raw_data(
             car: Car,
             provider: DataProvider,
             start_date: datetime,
             end_date: datetime,
+            agg: str,
             mode: str
     ) -> Tuple[Optional[Dict], Optional[CarSensorsRawParser], Optional[str]]:
         """Парсинг сырых данных с использованием CarSensorsRawParser."""
         try:
             parser = GlonassGeneralProvider(None, car, provider, start_date, end_date, mode)
 
-            status, result = parser.parse_raw_data(mode, False, car)
+            status, result = parser.parse_raw_data(mode, True, car)
+            result = CarSensorsHelper.preprocess_car_data_charts(result, agg)
+            result = result.to_dicts()
             return result, parser, None
 
         except ValueError as e:

@@ -10,7 +10,7 @@ class GlonassCastProtocol(Protocol):
     def __call__(self, df: pl.DataFrame) -> pl.DataFrame:
         ...
 class GlonassAfterParsingProtocol(Protocol):
-    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str]) ->pl.DataFrame:
+    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]) ->pl.DataFrame:
         ...
 @dataclass
 class GlonassParameter:
@@ -63,12 +63,12 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None), }
 
 
-def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str]):
+def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
     df = df.with_columns(pl.lit(str(car.id)).alias("auto").cast(pl.Categorical)) 
     mapping.append("auto")
     return df
 
-def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str]):
+def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
     df = df.with_columns(pl.col("amtr_x").add(pl.col("amtr_y")).add(pl.col("amtr_z")).alias("amtr")) 
     mapping.remove("amtr_x")
     mapping.remove("amtr_y")
@@ -76,7 +76,7 @@ def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str]):
     mapping.append("amtr")
     return df
 
-def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str]):
+def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
     grades = car.grades
     unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
     pairs = list(zip(unique, unique[1:]))
@@ -93,13 +93,20 @@ def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str]):
             .otherwise(pl.col("calc_sensors_fuel_level"))
         )
     df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
+    df = df.filter(pl.col("calc_sensors_fuel_level").le(lp["input"]))
     return df
 
-def _default(df: pl.DataFrame, car: Car, mapping: list[str]):
+def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
+    if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
+        df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
+    print(sensor_mapping)
     return df
 
-def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str]):
+def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
     df = df.filter(pl.col("calc_sensors_fuel_level").gt(0))
+    if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
+        df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
+    df = _tarify_car(df, car, mapping, sensor_mapping)
     return df
     
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {
