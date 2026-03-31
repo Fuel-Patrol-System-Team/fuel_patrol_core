@@ -99,7 +99,7 @@ def _default(df: pl.DataFrame, car: Car, mapping: list[str]):
     return df
 
 def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str]):
-    df = df.with_columns(pl.col("calc_sensors_fuel_level").gt(0))
+    df = df.filter(pl.col("calc_sensors_fuel_level").gt(0))
     return df
     
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {
