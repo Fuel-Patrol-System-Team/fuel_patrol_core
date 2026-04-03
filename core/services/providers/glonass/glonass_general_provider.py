@@ -171,6 +171,70 @@ class GlonassGeneralProvider:
         self.i += 1
         return self.car 
     
+    def parse_refill_data_full(self, car: Car, start_date: datetime ,end_date: datetime):
+        result = self._parse_refill_data(car, start_date, end_date)
+        if result is not None:
+           refill_data = self._preprocess_refill_data(result, car)
+           return refill_data
+        return None
+
+    
+    def _parse_refill_data(self, car: Car, start_date: datetime, end_date: datetime):
+        """Запрашивает сообщения за конкретный период"""
+        self._enforce_rate_limit()
+
+        url = f"{self.base_url}/vehicles/fuelInOut"
+        payload = {
+            "vehicleIds":[ car.id_in_provider_system],
+            "from": start_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+            "to": end_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
+            "timezone": 0
+        }
+        headers = {"X-Auth": self.auth_token}
+
+        try:
+            response = requests.post(url, json=payload, headers=headers, timeout=(10, 180), stream=True)
+            response.raise_for_status()
+
+            data = orjson.loads(response.content)
+            
+            if not isinstance(data, list):
+                logger.error(f"Некорректный формат ответа для {car.id_in_provider_system}")
+                return None
+            if len(data) == 0:
+                logger.warning(f"Нет данных по заправкам для {car.id_in_provider_system}")
+                return None
+            fuels = data[0]
+
+            logger.info(
+                f"Получено {len(fuels["fuels"])} заправок для {car.id_in_provider_system} за период {start_date.date()} - {end_date.date()}")
+            return fuels
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка запроса данных для {car.id_in_provider_system} {car.name}: {e}")
+            return None
+    
+    def _preprocess_refill_data(self, data: Dict[str, Any], car: Car):
+        day_refill = {}
+
+        for item in data["fuels"]:
+            if item["event"] == "FuelIn":
+                refill_amount = item["valueFuel"]
+                refill_date = datetime.fromisoformat(item["startDate"]).date()
+                refill_date = datetime(refill_date.year, refill_date.month, refill_date.day)
+                if refill_date in day_refill:
+                    day_refill[refill_date] += refill_amount 
+                else:
+                    day_refill[refill_date] = refill_amount 
+        return pl.DataFrame(
+            {
+                "timestamp": day_refill.keys(),
+                "refill": day_refill.values(),
+            }
+        )
+
+
+
     def parse_raw_data(self, mode: str, return_df=False, car : Car | None = None, start_date: datetime | None = None, end_date: datetime | None = None) -> tuple[ bool, pl.DataFrame | List[Dict[str, Any]] | None]:
         """Основной метод парсинга данных"""
         car_to_use = car if car is not None else self._pick_car()

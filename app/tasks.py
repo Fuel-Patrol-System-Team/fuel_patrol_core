@@ -11,6 +11,7 @@ from celery import chain, shared_task
 from app.celery import app as celery_app
 
 from core.admin import CarPrimary, SensorsValues
+from core.helpers.fuel import fuel_spent_calculate
 from core.models import (
     CarMileageReport,
     ReportQuery,
@@ -24,6 +25,7 @@ import os
 import psutil
 import time
 
+from core.services.fuelrepot_service import FuelReportService
 from core.services.notifications.tg_notifier import notify_organization
 from core.services.providers import leaks_service
 from core.services.providers.car_consumption_service import CarConsumptionService
@@ -724,6 +726,17 @@ def calculate_leaks_cron_one(
                 leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
                 if isinstance(leaks_result, pl.DataFrame):
                     leaks_result = leaks_result.with_columns(pl.col("grades").cast(pl.String))
+                    spent_report = fuel_spent_calculate(leaks_result)
+                    try:
+                        refill = parser.parse_refill_data_full(car, datetime_parsing, now)
+                        if refill is not None:
+                            df_to_report = FuelReportService.build_right_history(spent_report, refill)
+                            FuelReportService.make_reports_from_df(df_to_report)
+                    except BaseException as err:
+                        logger.error(f"Can't make fuel reports for car {car.id}")
+                    
+                    
+            
             if leaks_result is None or leaks_result.is_empty():
                 error_msg = f"Не обнаружены сливы для машины {car.id}"
                 logger.error(error_msg)

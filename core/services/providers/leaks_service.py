@@ -489,6 +489,56 @@ class LeaksService(BaseLeaksCalculator):
             .alias("spent_fuel_rolling")
         )
         logger.debug("Рассчитано скользящее среднее расхода")
+            # повышение уровня топлива
+        df = df.with_columns(
+            (
+                (pl.col("spent_fuel").gt(0) & pl.col("pos_s").lt(1 / 16))
+                .alias("is_refuel")
+                .cast(pl.Int8)
+            )
+        )
+        df = df.with_columns(
+            pl.col("is_refuel")
+            .ne(pl.col("is_refuel").shift())
+            .cum_sum()
+            .alias("refuel_group")
+        )
+        df = df.with_columns(
+            pl.col("dtime").sum().over(["refuel_group"]).alias("dtime_refuel")
+        )
+
+        df = df.with_columns(
+            pl.col("spent_fuel")
+            .mul(pl.col("is_refuel"))
+            .sum()
+            .over(["refuel_group"])
+            .alias("refuel")
+        )
+
+        df = df.with_columns(
+            pl.col("dtime_refuel").count().over(["dtime_refuel"]).alias("refuel_count")
+        )
+
+        df = df.with_columns(
+            pl.col("refuel").sum().over([col_dtime_half]),
+            pl.col("dtime_refuel").sum().over([col_dtime_half]),
+        )
+        df = df.with_columns(
+            (
+                pl.col("dtime_refuel").gt(60)
+                & pl.col("refuel").gt(1)
+                & pl.col("refuel_count").gt(1)
+            )
+            .cast(pl.Int8)
+            .alias("is_refuel_eligble")
+        )
+        df = df.with_columns(
+            pl.col("is_refuel_eligble")
+            .mul(pl.col("refuel"))
+            .max()
+            .over([col_dtime_half])
+            .alias("refuel")
+        )
 
         logger.info(f"✅ Базовая предобработка завершена: {len(df)} записей")
         return df
@@ -558,6 +608,8 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("no_sat_data").alias("no_sat_data"),
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
+                pl.first("calc_sensors_fuel_level").alias("fuel_first"),
+                pl.last("calc_sensors_fuel_level").alias("fuel_last"),
                 pl.sum("ign"),
                 pl.sum("ptime")
             ]
@@ -610,7 +662,9 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
                 pl.sum("ign"),
-                pl.sum("ptime")
+                pl.sum("ptime"),
+                pl.first("calc_sensors_fuel_level").alias("fuel_first"),
+                pl.last("calc_sensors_fuel_level").alias("fuel_last"),
             ]
         )
         final_count = len(result)
