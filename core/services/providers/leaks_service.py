@@ -663,8 +663,8 @@ class LeaksService(BaseLeaksCalculator):
                 pl.max("ign").alias("ign_max"),
                 pl.sum("ign"),
                 pl.sum("ptime"),
-                pl.first("calc_sensors_fuel_level").alias("fuel_first"),
-                pl.last("calc_sensors_fuel_level").alias("fuel_last"),
+                pl.first("fuel_first"),
+                pl.last("fuel_last"),
             ]
         )
         final_count = len(result)
