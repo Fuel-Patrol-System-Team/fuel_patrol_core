@@ -311,6 +311,12 @@ class LeaksService(BaseLeaksCalculator):
                 .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
                 .otherwise(pl.col("calc_sensors_fuel_level"))
             )
+            # последния тарировка (у некоторых машин есть адекватные значения выше тарировки JCB 3797 15c7e16f-355e-4b9d-bbaf-452f915863b3_day.csv)
+        df = df.with_columns(
+                pl.when(pl.col("calc_sensors_fuel_level").gt(lp["input"]))
+                .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
+                .otherwise(pl.col("calc_sensors_fuel_level"))
+        )
 
         df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
         df = df.with_columns(
