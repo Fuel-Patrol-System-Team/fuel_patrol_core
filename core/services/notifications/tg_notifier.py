@@ -8,9 +8,7 @@ from core.models import Organization, TelegramUser
 
 logger = logging.getLogger(__name__)
 
-
 def get_telegram_bot() -> TeleBot:
-    """Возвращает singleton экземпляр Telegram бота"""
     if hasattr(get_telegram_bot, 'bot'):
         return get_telegram_bot.bot
 
@@ -18,6 +16,12 @@ def get_telegram_bot() -> TeleBot:
     if not token:
         logger.error("ALERT_BOT_TOKEN not found in environment variables")
         raise ValueError("ALERT_BOT_TOKEN is required")
+
+    proxy = os.getenv('HTTPS_PROXY') or os.getenv('ALL_PROXY')
+    if proxy:
+        from telebot import apihelper
+        apihelper.proxy = {'https': proxy}
+        logger.info(f"Telegram bot using proxy: {proxy}")
 
     get_telegram_bot.bot = TeleBot(token)
     logger.info("Telegram bot initialized")
