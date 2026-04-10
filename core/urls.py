@@ -14,7 +14,7 @@ from core.views import AutoDataListAPIView, CarListBySensorGroupAPIView, Organiz
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
-    CarFuelReportListAPIView, CarFuelReportDetailAPIView
+    CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView
 
 urlpatterns = [
 
@@ -25,6 +25,8 @@ urlpatterns = [
     path('client/token/refresh', TokenRefreshView.as_view(), name='token_refresh'),
 
     path('user/info', UserInfoAPIView.as_view(), name='user_info'),
+
+    path('timezones', TimezoneListAPIView.as_view(), name='timezone-list'),
 
     path('register', UserRegistrationAPIView.as_view(), name='register'),
     path('register/telegram', TelegramRegisterAPIView.as_view(), name='telegram-register'),

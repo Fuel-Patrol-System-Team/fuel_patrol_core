@@ -14,6 +14,7 @@ from django.db.models import Q, Count, OuterRef, Subquery
 from django.shortcuts import render
 
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg import openapi
 
 from rest_framework.filters import SearchFilter
 from rest_framework.permissions import IsAuthenticated
@@ -39,6 +40,7 @@ from .helpers.data_provider import validate_provider_cars, \
     create_data_provider
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
+from .mixins.convert_utc_mixin import TimestampTimezoneConverterMixin
 from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser, CarFuelReport
 from core.helpers.pagination import StandardResultsSetPagination
@@ -51,7 +53,8 @@ from core.helpers.rest import (
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer, OrganizationOutputSerializer,
+    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer,
+    OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
@@ -176,8 +179,88 @@ class UserInfoAPIView(APIView):
             'username': user.username,
             'organization': user.org.name,
             'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.org.id}",
+            'timezone': user.timezone,  # ← добавили
         })
         return user_response(serializer.data, status.HTTP_200_OK)
+
+    @swagger_auto_schema(
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'timezone': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    description='UTC-зона (например: Europe/Moscow, Asia/Yekaterinburg)',
+                    example='Europe/Moscow'
+                )
+            },
+            required=['timezone']
+        ),
+        responses={
+            200: UserOutputSerializer(),
+            400: "Bad Request",
+            401: "Unauthorized"
+        }
+    )
+    def patch(self, request):
+        user = request.user
+        if not user:
+            logger.error("Пользователь не авторизован")
+            return error_response("Unauthorized", status.HTTP_401_UNAUTHORIZED)
+
+        new_timezone = request.data.get('timezone')
+
+        if not new_timezone or new_timezone not in pytz.common_timezones:
+            logger.error(f"Некорректный часовой пояс: {new_timezone}")
+            return error_response(
+                "Invalid timezone. Use one of pytz.common_timezones",
+                status.HTTP_400_BAD_REQUEST
+            )
+
+        user.timezone = new_timezone
+        user.save(update_fields=['timezone'])
+
+        serializer = UserOutputSerializer({
+            'id': user.id,
+            'username': user.username,
+            'organization': user.org.name,
+            'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.org.id}",
+            'timezone': user.timezone,
+        })
+
+        return user_response(serializer.data, status.HTTP_200_OK)
+
+
+class TimezoneListAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_summary="Список всех доступных UTC-зон",
+        operation_description="Возвращает список всех часовых поясов из pytz.common_timezones для заполнения выпадающего списка на клиенте.",
+        responses={
+            200: openapi.Response(
+                description="Успешный ответ",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'timezones': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(type=openapi.TYPE_STRING),
+                            description="Список строк с названиями зон (например: Europe/Moscow)",
+                            example=["UTC", "Europe/Moscow", "Asia/Yekaterinburg", "America/New_York"]
+                        )
+                    }
+                )
+            ),
+            401: "Unauthorized"
+        }
+    )
+    def get(self, request):
+        return user_response(
+            {
+                "timezones": pytz.common_timezones
+            },
+            status.HTTP_200_OK
+        )
 
 
 class VehicleSyncAPIView(APIView):
@@ -343,7 +426,8 @@ class MileageCalculationAPIView(APIView):
     def post(self, request):
         car_id = request.data.get("car_id")
         agg = request.data.get("agg")
-        alg = MileageAlgorithms.__members__.get( request.data.get("alg", ""), MileageAlgorithms.compute) # пока fraud очень тестовый
+        alg = MileageAlgorithms.__members__.get(request.data.get("alg", ""),
+                                                MileageAlgorithms.compute)  # пока fraud очень тестовый
         start_date = request.data.get("start_date")
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
@@ -363,7 +447,7 @@ class MileageCalculationAPIView(APIView):
         result, status_code = MileageCalculationService.calculate_mileage(
             car_id=car_id,
             agg=agg,
-            alg = alg,
+            alg=alg,
             start_date=start_date,
             end_date=end_date,
             is_save_bad_data=is_save_bad_data
@@ -497,28 +581,32 @@ class CarListAPIView(ListAPIView):
         ).annotate(bad_data_count=Count('bad_data')).order_by('id')
         return result
 
+
 class CarListBySensorGroupAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarByGroupSensorsValuesOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
     search_fields = ["car_id__name"]
+
     @swagger_auto_schema(manual_parameters=[CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA])
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
         key_value = self.request.query_params.get("key")
-        if key_value == "motohours": 
-            result = SensorsValues.objects.select_related("car_id", 'key' ).filter(
+        if key_value == "motohours":
+            result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id
             ).filter(Q(key__key="motohours") | Q(key__key="ignition"))
         else:
-            result = SensorsValues.objects.select_related("car_id", 'key' ).filter(
+            result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value
             )
         return result.annotate(
             bad_data_count=Count("car_id__bad_data")
         ).order_by("id")
+
 
 class AutoDataListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -528,7 +616,7 @@ class AutoDataListAPIView(ListAPIView):
 
     def get(self, request, *args, **kwargs):
         return super().get(request, *args, **kwargs)
-    
+
     def get_queryset(self):
         if self.request.user.is_staff:
             fuel_subquery = Subquery(
@@ -538,15 +626,17 @@ class AutoDataListAPIView(ListAPIView):
                 ).values("value")[:1]
             )
             cars = Car.objects.annotate(
-                fuel_sensor = fuel_subquery
+                fuel_sensor=fuel_subquery
             )
             return cars
         return []
+
 
 import csv
 from django.http import StreamingHttpResponse
 from django.db.models import OuterRef, Subquery
 from rest_framework.generics import ListAPIView
+
 
 class AutoDataListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -559,7 +649,7 @@ class AutoDataListAPIView(ListAPIView):
                     key__key="calc_sensors_fuel_level"
                 ).values("value")[:1]
             )
-            
+
             return Car.objects.annotate(
                 fuel_sensor=fuel_subquery
             )
@@ -573,10 +663,12 @@ class AutoDataListAPIView(ListAPIView):
             if "grades" in row:
                 row["grades"] = json.dumps(row["grades"])
         content = pandas.DataFrame(data)
-        
+
         content.to_csv("/data/datasets/fuel/Cars-server.csv", quotechar='"')
 
         return queryset
+
+
 class CarMileageReportListAPIView(ListAPIView):
     serializer_class = CarMileageReportOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -682,7 +774,6 @@ class ReportQueryListAPIView(ListAPIView):
         ).select_related('provider_id')
 
 
-
 class ReportQueryDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
@@ -694,7 +785,7 @@ class ReportQueryDetailAPIView(RetrieveAPIView):
         ).select_related('provider_id', 'report_query_details')
 
 
-class CarReportListAPIView(ListAPIView):
+class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -707,8 +798,18 @@ class CarReportListAPIView(ListAPIView):
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id').order_by('datetime')
 
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
 
-class CarReportDetailAPIView(RetrieveAPIView):
+        user_timezone = getattr(request.user, 'timezone', 'UTC')
+        response.data = self.convert_timestamps_to_user_timezone(
+            response.data, user_timezone
+        )
+
+        return response
+
+
+class CarReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     lookup_field = 'pk'
@@ -717,6 +818,17 @@ class CarReportDetailAPIView(RetrieveAPIView):
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         )
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+
+        user_timezone = getattr(request.user, 'timezone', 'UTC')
+        response.data = self.convert_timestamps_to_user_timezone(
+            response.data, user_timezone
+        )
+
+        return response
+
 
 class CarFuelReportListAPIView(ListAPIView):
     serializer_class = CarFuelReportSerializer
@@ -837,6 +949,7 @@ class DataProviderListAPIView(ListAPIView):
             org_id=self.request.user.org
         ).order_by('id')
 
+
 class DataProviderDetailAPIView(RetrieveUpdateDestroyAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DataProviderUpdateSerializer
@@ -849,7 +962,6 @@ class DataProviderDetailAPIView(RetrieveUpdateDestroyAPIView):
 
     def perform_destroy(self, instance):
         super().perform_destroy(instance)
-
 
 
 class CarLeaksAPIView(ListAPIView):
@@ -1075,8 +1187,8 @@ class StartTerminalMessagesParsingView(APIView):
                     )
             if parse_all:
                 try:
-                    car_ids = list(map(lambda car: car.id,  list(provider.cars.all())))
-                    
+                    car_ids = list(map(lambda car: car.id, list(provider.cars.all())))
+
                 except (ValueError, TypeError) as e:
                     return Response(
                         {'error': f'Неверный формат car_ids: {str(e)}'},
@@ -1123,7 +1235,7 @@ class LanguageListAPIView(ListAPIView):
     pagination_class = None
 
 
-class CarSensorsRawDataAPIView(APIView):
+class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
     """
     API для получения сырых данных по машине для построения графиков.
 
@@ -1173,10 +1285,10 @@ class CarSensorsRawDataAPIView(APIView):
                 return error_response(date_error, status.HTTP_400_BAD_REQUEST)
 
             car, car_error = CarSensorsHelper.get_car_for_user(car_id, request.user)
-            
+
             if car_error:
                 return error_response(car_error, status.HTTP_404_NOT_FOUND)
-            car_r =  Car.objects.select_related('car_unit').get(id=car_id)
+            car_r = Car.objects.select_related('car_unit').get(id=car_id)
 
             provider = car_r.data_providers.first()
             result, parser, parse_error = CarSensorsHelper.parse_raw_data(
@@ -1199,6 +1311,9 @@ class CarSensorsRawDataAPIView(APIView):
                 result=result,
                 parser=parser
             )
+
+            user_timezone = getattr(request.user, 'timezone', 'UTC')
+            response_data = self.convert_timestamps_to_user_timezone(response_data, user_timezone)
 
             return success_response(response_data, status.HTTP_200_OK)
 
@@ -1303,6 +1418,7 @@ class TelegramRegisterAPIView(APIView):
         output_serializer = TelegramUserOutputSerializer(user)
         status_code = 201 if created else 200
         return success_response(output_serializer.data, status_code)
+
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

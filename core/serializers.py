@@ -221,6 +221,7 @@ class UserOutputSerializer(serializers.Serializer):
     username = serializers.CharField()
     organization = OrganizationOutputSerializer(read_only=True, source="org")
     organization_tg_link = serializers.URLField()
+    timezone = serializers.CharField(required=False)
 
 
 class OrgUserOutputSerializer(serializers.ModelSerializer):

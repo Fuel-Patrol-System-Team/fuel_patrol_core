@@ -3,6 +3,7 @@ import subprocess
 import uuid
 from pathlib import Path
 
+import pytz
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
@@ -113,6 +114,14 @@ class OrgUser(AbstractUser):
     last_login = models.DateTimeField(**NULLABLE)
     date_joined = models.DateTimeField(auto_now_add=True)
     active_language = models.ForeignKey(Language, on_delete=models.SET_NULL, **NULLABLE)
+    timezone = models.CharField(
+        max_length=50,
+        choices=[(tz, tz) for tz in pytz.common_timezones],
+        default='UTC',
+        **NULLABLE,
+        verbose_name="Часовой пояс (UTC)",
+        help_text="Часовой пояс пользователя (например: Europe/Moscow)",
+    )
 
     class Meta:
         verbose_name = "Org User"
