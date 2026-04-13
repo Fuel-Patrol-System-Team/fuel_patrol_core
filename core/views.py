@@ -830,7 +830,7 @@ class CarReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
         return response
 
 
-class CarFuelReportListAPIView(ListAPIView):
+class CarFuelReportListAPIView(TimestampTimezoneConverterMixin,ListAPIView):
     serializer_class = CarFuelReportSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -842,8 +842,17 @@ class CarFuelReportListAPIView(ListAPIView):
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct().order_by('-start_moment')
 
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
 
-class CarFuelReportDetailAPIView(RetrieveAPIView):
+        user_timezone = getattr(request.user, 'timezone', 'UTC')
+        response.data = self.convert_timestamps_to_user_timezone(
+            response.data, user_timezone
+        )
+
+        return response
+
+class CarFuelReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
     serializer_class = CarFuelReportSerializer
     lookup_field = 'pk'
 
@@ -851,6 +860,17 @@ class CarFuelReportDetailAPIView(RetrieveAPIView):
         return CarFuelReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
+
+    def retrieve(self, request, *args, **kwargs):
+        response = super().retrieve(request, *args, **kwargs)
+
+        user_timezone = getattr(request.user, 'timezone', 'UTC')
+        response.data = self.convert_timestamps_to_user_timezone(
+            response.data, user_timezone
+        )
+
+        return response
+
 
 
 class UserCarListListView(ListCreateAPIView):
