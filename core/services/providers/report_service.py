@@ -1,9 +1,8 @@
 import logging
 import traceback
 from typing import Dict, Any, Optional, Tuple, Union
-from django.utils import timezone
 from django.db import transaction
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 import polars as pl
 
 from core.models import (
@@ -263,6 +262,7 @@ class ReportService:
                 try:
                     car_id = record["auto"]
                     timestamp = record["timestamp"]
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
                     speed = record["pos_s"]
                     leak_volume = record["leak"]
                     is_leak = record["is_leak"]
