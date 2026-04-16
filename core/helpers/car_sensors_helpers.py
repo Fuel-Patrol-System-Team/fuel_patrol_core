@@ -121,6 +121,7 @@ class CarSensorsHelper:
 
             status, result = parser.parse_raw_data(mode, True, car)
             result = CarSensorsHelper.preprocess_car_data_charts(result, agg)
+            result = result.with_columns(pl.col("timestamp").dt.convert_time_zone("UTC"))
             result = result.to_dicts()
             return result, parser, None
 
