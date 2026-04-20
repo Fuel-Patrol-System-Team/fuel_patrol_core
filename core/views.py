@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Dict
 from uuid import UUID
 
+from distlib.util import resolve
 from django.http import StreamingHttpResponse
 import pandas
 import polars
@@ -740,6 +741,7 @@ class CarUnitListAPIView(ListAPIView):
             car__data_providers__org_id=self.request.user.org.id
         ).distinct().order_by('name')
 
+
 class CarConsumptionListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarConsumptionOutputSerializer
@@ -752,9 +754,11 @@ class CarConsumptionListAPIView(ListAPIView):
         user = self.request.user
         if user.org is None:
             return CarConsumption.objects.none()
-        return CarConsumption.objects.filter(
-            car_id__list_id__user__org=user.org
+        result = CarConsumption.objects.filter(
+            car_id__data_providers__org_id__users=self.request.user
         ).select_related('car_id').order_by('id')
+        return result
+
 
 class CarConsumptionDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
@@ -833,7 +837,7 @@ class CarReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
         return response
 
 
-class CarFuelReportListAPIView(TimestampTimezoneConverterMixin,ListAPIView):
+class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
     serializer_class = CarFuelReportSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -855,6 +859,7 @@ class CarFuelReportListAPIView(TimestampTimezoneConverterMixin,ListAPIView):
 
         return response
 
+
 class CarFuelReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
     serializer_class = CarFuelReportSerializer
     lookup_field = 'pk'
@@ -873,7 +878,6 @@ class CarFuelReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIVie
         )
 
         return response
-
 
 
 class UserCarListListView(ListCreateAPIView):
