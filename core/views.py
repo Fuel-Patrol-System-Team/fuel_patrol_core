@@ -740,7 +740,6 @@ class CarUnitListAPIView(ListAPIView):
             car__data_providers__org_id=self.request.user.org.id
         ).distinct().order_by('name')
 
-
 class CarConsumptionListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarConsumptionOutputSerializer
@@ -750,8 +749,12 @@ class CarConsumptionListAPIView(ListAPIView):
     search_fields = ['car_id__name', 'valid_period']
 
     def get_queryset(self):
-        return CarConsumption.objects.filter(car_id__in=Car.objects.all()).select_related('car_id').order_by('id')
-
+        user = self.request.user
+        if user.org is None:
+            return CarConsumption.objects.none()
+        return CarConsumption.objects.filter(
+            car_id__list_id__user__org=user.org
+        ).select_related('car_id').order_by('id')
 
 class CarConsumptionDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
