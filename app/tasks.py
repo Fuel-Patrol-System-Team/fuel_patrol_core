@@ -973,7 +973,7 @@ def parse_cars_computed_data_task(
     is_save_bad_data: bool,
 ):
     provider = DataProvider.objects.filter(id=provider_id).first()
-    cars_for_computing = provider.cars.select_related("carprimary").prefetch_related("consumptions").filter(consumptions_isnull=False, carprimary_isnull=False, is_active=True ).select_related(
+    cars_for_computing = provider.cars.select_related("carprimary").prefetch_related("consumptions").filter(consumptions__isnull=False, carprimary__isnull=False, is_active=True ).select_related(
         "parsingcar_stats"
     )
     
