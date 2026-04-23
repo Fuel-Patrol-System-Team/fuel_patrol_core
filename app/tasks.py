@@ -1038,6 +1038,8 @@ def internal_migrate_to_new_processing_system(self):
     for provider in providers:
         cars = list(provider.cars.all())
         for car in cars:
+            if ParsingCarStats.objects.filter(car_id__id=car.id).exists():
+                continue
             ParsingCarStats.objects.create(
                 car_id=car.id,
                 norms_last_proccessed=car.last_processed_date, 
