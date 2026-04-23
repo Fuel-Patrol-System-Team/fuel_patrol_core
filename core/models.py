@@ -317,9 +317,9 @@ class ReportQueryDetails(models.Model):
 
 class ParsingCarStats(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    car_id=models.ForeignKey(Car, on_delete=models.CASCADE, related_name="parsingcar_stats")
+    car = models.OneToOneField(Car, null=True, on_delete=models.CASCADE, related_name="parsingcar_stats")  # Changed to OneToOneField
     norms_last_proccessed = models.DateTimeField(**NULLABLE)
-    fuel_last_proccessed = models.DateTimeField(**NULLABLE) # начало/конец 
+    fuel_last_proccessed = models.DateTimeField(**NULLABLE)  # начало/конец 
     computed_last_processed = models.DateTimeField(blank=True, null=True)
     leaks_last_processed = models.DateTimeField(**NULLABLE)
     primary_last_proccessed = models.DateTimeField(**NULLABLE)

@@ -973,12 +973,9 @@ def parse_cars_computed_data_task(
     is_save_bad_data: bool,
 ):
     provider = DataProvider.objects.filter(id=provider_id).first()
-    cars_for_computing = provider.cars.select_related("carprimary").prefetch_related("consumptions").filter(consumptions__isnull=False, carprimary__isnull=False, is_active=True ).select_related(
-        "parsingcar_stats"
-    )
+    cars_for_computing = provider.cars.select_related("carprimary", "parsingcar_stats").prefetch_related("consumptions").filter(consumptions__isnull=False, carprimary__isnull=False, is_active=True )
     
     now = datetime.now().astimezone(timezone.utc)
-    day_start = datetime.combine(now, datetime.min.time()).astimezone(pytz.utc)
         
     if len(cars_for_computing) != 0:
         for car in cars_for_computing:
@@ -1018,6 +1015,9 @@ def parse_cars_computed_data_task(
                         error_msg = f"Не обнаружены данные для машины {car.id}"
                         logger.error(error_msg)
                         ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
+                computed_service = ComputedDataService()
+                saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
+                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
 
             except Exception as err:
                 report_query, report_details = ReportService.create_report(
@@ -1039,7 +1039,7 @@ def internal_migrate_to_new_processing_system(self):
         cars = list(provider.cars.all())
         for car in cars:
             ParsingCarStats.objects.create(
-                car_id_id=car.id,
+                car_id=car.id,
                 norms_last_proccessed=car.last_processed_date, 
                 fuel_last_proccessed=None,
                 computed_last_processed=None,
