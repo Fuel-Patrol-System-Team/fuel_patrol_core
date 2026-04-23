@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from core.views import AutoDataListAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
+from core.views import AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ReportQueryListAPIView, ReportQueryDetailAPIView, \
     CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
@@ -84,6 +84,8 @@ urlpatterns = [
     path('parsing/cars', VehicleSyncAPIView.as_view(), name='parsing-cars'),
 
     path('parsing/terminal-messages', CarDataRequestAPIView.as_view(), name='parsing-terminal-messages'),
+    
+    path("charts/leaks", CarLeaksChartsAPIView.as_view(), name="charts-leaks"),
 
     path(
         'parsing/parse-terminal-messages',

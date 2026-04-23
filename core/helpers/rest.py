@@ -579,6 +579,59 @@ CAR_SENSORS_RAW_DATA_SCHEMA = {
     }
 }
 
+CAR_LEAKS_CHARTS_SCHEMA = {
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['car_id', 'days', 'leak_id'],
+        properties={
+            'car_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='uuid',
+                description='ID машины (UUID)'
+            ),
+            'days': openapi.Schema(
+                type=openapi.TYPE_INTEGER,
+                description='Количество дней для выборки данных'
+            ),
+            'leak_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='uuid',
+                description=''
+            )
+        }
+    ),
+    'responses': {
+        200: openapi.Response(
+            description='Данные успешно получены',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'data': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                        description='Основные данные'
+                    ),
+                    'histo_data': openapi.Schema(
+                        type=openapi.TYPE_ARRAY,
+                        items=openapi.Schema(type=openapi.TYPE_OBJECT),
+                        description='Исторические данные'
+                    ),
+                }
+            )
+        ),
+        400: openapi.Response(
+            description='Неверные параметры запроса',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'message': openapi.Schema(type=openapi.TYPE_STRING),
+                    'errors': openapi.Schema(type=openapi.TYPE_OBJECT)
+                }
+            )
+        )
+    }
+}
+
 TELEGRAM_REGISTER_SCHEMA = {
     'operation_description': "Регистрация/обновление пользователя Telegram",
     'request_body': openapi.Schema(

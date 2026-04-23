@@ -2,6 +2,7 @@ import json
 import logging
 import polars as pl
 from typing import Any, Dict, Optional, Tuple
+from core.helpers.fuel import preprocess_basic_one
 from core.services.providers.leaks_base import BaseLeaksCalculator
 
 logger = logging.getLogger(__name__)
@@ -195,360 +196,6 @@ class LeaksService(BaseLeaksCalculator):
         )
         return result_df
 
-    def _preprocess_basic(
-        self,
-        df: pl.DataFrame,
-        cars: Dict[str, Any],
-        primary: Dict[str, Any],
-        VOLTAGE_LIMIT: float = 0.16,
-        FUEL_JUMP_BARRIER_PERC: float = 0.05,
-        ANTI_BUG_TIME_SECONDS: int = 30,
-        REFUELING_LIMIT: int = 4000,
-        PRE_PERIOD_TIME: int = 3,
-        DTIME_LIMIT: int = 5,
-    ) -> pl.DataFrame:
-        """Базовая предобработка данных"""
-        logger.debug("🛠️ Начало базовой предобработки")
-        logger.debug(f"Входные данные: {len(df)} записей, колонки: {df.columns}")
-
-        if "rpm" not in df.columns:
-            df = df.with_columns(pl.lit(65535).alias("rpm"))
-            logger.debug("Добавлена колонка rpm")
-        if "satellites" not in df.columns:
-            df = df.with_columns(pl.lit(20).alias("satellites"))
-            logger.debug("Добавлена колонка satellites")
-
-        df = df.with_columns(
-            pl.when(pl.col("calc_sensors_fuel_level") > primary["max_fuel"])
-            .then(None)
-            .otherwise(pl.col("calc_sensors_fuel_level"))
-            .cast(pl.Float32)
-            .alias("calc_sensors_fuel_level"),
-        )
-        logger.debug("Применено ограничение максимального уровня топлива")
-
-        df = df.with_columns(pl.col("timestamp").cast(pl.Datetime))
-        logger.debug("Преобразован timestamp")
-
-        col_dtime_half = pl.col("timestamp").dt.truncate("30m")
-        col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
-
-        df = df.with_columns(
-            pl.col("calc_sensors_fuel_level")
-            .is_not_nan()
-            .over(["auto", col_dtime_half])
-            .cast(pl.Int16)
-            .alias("fuel_level_nan")
-        )
-        logger.debug("Рассчитан fuel_level_nan")
-
-        initial_count = len(df)
-        df = df.filter(
-            [
-                pl.col("calc_sensors_fuel_level").is_not_nan(),
-                pl.col("calc_sensors_fuel_level").is_not_null(),
-            ]
-        )
-        filtered_count = len(df)
-        logger.debug(f"Фильтрация NaN: {initial_count} -> {filtered_count} записей")
-
-        df = df.with_columns(
-            pl.col("calc_sensors_fuel_level")
-            .diff()
-            .over("auto", col_dtime_2hour)
-            .fill_null(0)
-            .alias("spent_fuel_clean")
-        )
-        logger.debug("Рассчитан spent_fuel_clean")
-
-        df = df.with_columns(
-            pl.col("timestamp")
-            .diff()
-            .dt.total_seconds()
-            .abs()
-            .cast(pl.Int16)
-            .over(["auto", pl.col("timestamp").dt.truncate("30m")])
-            .fill_nan(1)
-            .fill_null(1)
-            .clip(upper_bound=DTIME_LIMIT * 60)
-            .alias("dtime"),
-            pl.col("rpm").fill_null(0),
-        )
-        df = df.with_columns(
-            pl.when(pl.col("dtime") > 5 * 60).then(0).otherwise(pl.col("dtime")).alias("ptime")
-        )
-        logger.debug("Рассчитан dtime")
-
-        df = df.with_columns(
-            (pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps")
-        )
-        logger.debug("Рассчитан fps")
-
-        initial_count = len(df)
-        filtered_count = len(df)
-        logger.debug(
-            f"Фильтрация spent_fuel_clean: {initial_count} -> {filtered_count} записей"
-        )
-
-        df = df.with_columns(
-            pl.col("calc_sensors_fuel_level").rolling_mean_by(
-                "timestamp", window_size="2m"
-            )
-        )
-        logger.debug("Рассчитано скользящее среднее")
-        grades = cars["grades"]
-        unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
-        pairs = list(zip(unique, unique[1:]))
-        mp = unique[0]
-        lp = unique[-1]
-        for fp, sp in pairs:
-            slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
-            b = fp["output"] - slope * fp["input"]
-            df = df.with_columns(
-                pl.when(
-                    pl.col("calc_sensors_fuel_level").is_between(fp["input"], sp["input"])
-                )
-                .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
-                .otherwise(pl.col("calc_sensors_fuel_level"))
-            )
-            # последния тарировка (у некоторых машин есть адекватные значения выше тарировки JCB 3797 15c7e16f-355e-4b9d-bbaf-452f915863b3_day.csv)
-        df = df.with_columns(
-                pl.when(pl.col("calc_sensors_fuel_level").gt(lp["input"]))
-                .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
-                .otherwise(pl.col("calc_sensors_fuel_level"))
-        )
-
-        df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
-        df = df.with_columns(
-            [
-                pl.max("calc_sensors_voltage")
-                .over(["auto", col_dtime_2hour])
-                .alias("voltage_max"),
-            ]
-        )
-        logger.debug("Рассчитаны voltage_max и тарированное топливо")
-
-        initial_count = len(df)
-        df = df.filter(
-            (pl.col("voltage_max") - pl.col("calc_sensors_voltage"))
-            / pl.col("voltage_max")
-            < VOLTAGE_LIMIT,
-        )
-        filtered_count = len(df)
-        logger.debug(
-            f"Фильтрация по напряжению: {initial_count} -> {filtered_count} записей"
-        )
-        df = df.with_columns(
-            pl.col("pos_s").cast(pl.Float32),
-            pl.col("calc_sensors_fuel_level").cast(pl.Float32)
-        )
-
-        logger.debug(df.schema)
-        df = df.with_columns(
-            [
-                pl.col("calc_sensors_fuel_level")
-                .diff()
-                .over(["auto", col_dtime_2hour])
-                .fill_null(0)
-                .cast(pl.Float32)
-                .alias("spent_fuel"),
-                pl.col("pos_s")
-                .diff()
-                .over(["auto", col_dtime_2hour])
-                .fill_null(0)
-                .cast(pl.Float32)
-                .alias("pos_a"),
-                
-            ]
-        )
-        if "flex_adc" in cars["fuel_sensor"]:
-            df = df.with_columns(
-                pl.col("calc_sensors_fuel_level").alias("fuel_level_standing")
-            )
-        else:
-            df = df.with_columns(pl.when(
-                    (~pl.lit(primary["is_special_car"]) & (pl.col("pos_s") == 0))
-                    | ((pl.col("ign") == 0) & pl.lit(primary["is_special_car"]))
-                )
-                .then(pl.col("calc_sensors_fuel_level"))
-                .otherwise(pl.lit(None, dtype=pl.Float32))
-                .forward_fill()
-                .alias("fuel_level_standing"))
-            
-        logger.debug("Рассчитаны spent_fuel, pos_a, fuel_level_standing")
-
-        df = df.with_columns(
-            [
-                pl.col("spent_fuel").clip(upper_bound=0).alias("spent_fuel_2"),
-                pl.col("spent_fuel").abs().alias("spent_fuel_abs"),
-                pl.when(pl.col("spent_fuel") > 0)
-                .then(pl.col("spent_fuel"))
-                .otherwise(0)
-                .cast(pl.Float32)
-                .alias("recover_fuel"),
-                pl.when(pl.col("pos_a").is_null())
-                .then(pl.col("pos_s"))
-                .otherwise(pl.col("pos_a"))
-                .alias("pos_a"),
-                pl.col("pos_s").rolling_max(window_size=4).alias("pos_s"),
-                pl.when(pl.col("spent_fuel") <= 0)
-                .then(1)
-                .otherwise(0)
-                .cast(pl.Int16)
-                .alias("fd"),
-                pl.when((pl.col("satellites") == 0))
-                .then(1)
-                .otherwise(0)
-                .cast(pl.Int16)
-                .alias("no_sat_data"),
-                pl.when(
-                    pl.col("spent_fuel").abs()
-                    > primary["max_fuel"] * FUEL_JUMP_BARRIER_PERC
-                )
-                .then(1)
-                .otherwise(0)
-                .cast(pl.Int16)
-                .alias("jumps"),
-            ]
-        )
-        logger.debug("Выполнены дополнительные расчеты")
-
-        print(df.head())
-
-        df = df.with_columns(
-            [
-                ((pl.col("pos_s") / pl.lit(primary["norm_speed"])) * pl.col("dtime"))
-                .fill_nan(0)
-                .alias("load"),
-            ]
-        )
-        logger.debug("Рассчитана нагрузка")
-
-        df = df.with_columns(
-            pl.when((pl.col("no_sat_data") == 1) & (pl.col("spent_fuel") != 0))
-            .then(0)
-            .otherwise(pl.col("spent_fuel"))
-            .alias("spent_fuel")
-        )
-        logger.debug("Скорректирован расход при отсутствии спутников")
-
-        df = df.with_columns(pl.lit(1).alias("count"))
-        logger.debug("Добавлен счетчик")
-
-        initial_count = len(df)
-        df = df.group_by_dynamic(
-            index_column="timestamp", every=f"{ANTI_BUG_TIME_SECONDS}s", group_by="auto"
-        ).agg(
-            [
-                pl.col("calc_sensors_fuel_level").mean(),
-                pl.col("pos_s").mean(),
-                pl.col("pos_s").max().alias("pos_s_max"),
-                pl.col("spent_fuel").sum(),
-                pl.col("spent_fuel_2").sum(),
-                pl.col("fuel_level_standing").first().alias("f1"),
-                pl.col("fuel_level_standing").last().alias("f2"),
-                pl.col("dtime").sum(),
-                pl.col("jumps").sum(),
-                pl.col("amtr").sum(),
-                pl.col("rpm").mean(),
-                pl.col("load").sum(),
-                pl.col("fd").sum(),
-                pl.col("fuel_level_nan").sum(),
-                pl.col("no_sat_data").sum(),
-                pl.col("count").sum(),
-                pl.col("ign").max().alias("ign_max"),
-                pl.col("ign").sum(),
-                pl.sum("ptime")
-            ]
-        )
-        grouped_count = len(df)
-        logger.debug(
-            f"Группировка по {ANTI_BUG_TIME_SECONDS}с: {initial_count} -> {grouped_count} записей"
-        )
-
-        df = df.with_columns(
-            pl.when(
-                (
-                    ~pl.lit(primary["is_special_car"])
-                    & (pl.col("pos_s") == 0)
-                    & (pl.col("spent_fuel") > 0)
-                    & (pl.col("spent_fuel") < REFUELING_LIMIT)
-                )
-                | (
-                    pl.lit(primary["is_special_car"])
-                    & pl.lit(primary["ign_working"])
-                    & (pl.col("ign") == 0)
-                    & (pl.col("pos_s") == 0)
-                    & (pl.col("spent_fuel") > 0)
-                    & (pl.col("spent_fuel") < REFUELING_LIMIT)
-                )
-            )
-            .then(0)
-            .otherwise(pl.col("spent_fuel"))
-            .alias("spent_fuel")
-        )
-        logger.debug("Скорректирован расход при заправке")
-
-        df = df.with_columns(
-            pl.col("spent_fuel")
-            .rolling_mean_by("timestamp", window_size="30m", closed="both")
-            .alias("spent_fuel_rolling")
-        )
-        logger.debug("Рассчитано скользящее среднее расхода")
-            # повышение уровня топлива
-        df = df.with_columns(
-            (
-                (pl.col("spent_fuel").gt(0) & pl.col("pos_s").lt(1 / 16))
-                .alias("is_refuel")
-                .cast(pl.Int8)
-            )
-        )
-        df = df.with_columns(
-            pl.col("is_refuel")
-            .ne(pl.col("is_refuel").shift())
-            .cum_sum()
-            .alias("refuel_group")
-        )
-        df = df.with_columns(
-            pl.col("dtime").sum().over(["refuel_group"]).alias("dtime_refuel")
-        )
-
-        df = df.with_columns(
-            pl.col("spent_fuel")
-            .mul(pl.col("is_refuel"))
-            .sum()
-            .over(["refuel_group"])
-            .alias("refuel")
-        )
-
-        df = df.with_columns(
-            pl.col("dtime_refuel").count().over(["dtime_refuel"]).alias("refuel_count")
-        )
-
-        df = df.with_columns(
-            pl.col("refuel").sum().over([col_dtime_half]),
-            pl.col("dtime_refuel").sum().over([col_dtime_half]),
-        )
-        df = df.with_columns(
-            (
-                pl.col("dtime_refuel").gt(60)
-                & pl.col("refuel").gt(1)
-                & pl.col("refuel_count").gt(1)
-            )
-            .cast(pl.Int8)
-            .alias("is_refuel_eligble")
-        )
-        df = df.with_columns(
-            pl.col("is_refuel_eligble")
-            .mul(pl.col("refuel"))
-            .max()
-            .over([col_dtime_half])
-            .alias("refuel")
-        )
-
-        logger.info(f"✅ Базовая предобработка завершена: {len(df)} записей")
-        return df
-
     def _preprocess(
         self,
         df: pl.DataFrame,
@@ -572,7 +219,7 @@ class LeaksService(BaseLeaksCalculator):
         anti_bug = None
         if initial_df is None:
             logger.debug("Используется базовая предобработка")
-            anti_bug = self._preprocess_basic(
+            anti_bug = preprocess_basic_one(
                 df,
                 cars,
                 norms,
@@ -617,7 +264,8 @@ class LeaksService(BaseLeaksCalculator):
                 pl.first("calc_sensors_fuel_level").alias("fuel_first"),
                 pl.last("calc_sensors_fuel_level").alias("fuel_last"),
                 pl.sum("ign"),
-                pl.sum("ptime")
+                pl.sum("ptime"),
+                pl.sum("es"),
             ]
         )
         grouped_count = len(anti_bug)
@@ -671,6 +319,7 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("ptime"),
                 pl.first("fuel_first"),
                 pl.last("fuel_last"),
+                pl.sum("es")
             ]
         )
         final_count = len(result)
@@ -831,6 +480,19 @@ class LeaksService(BaseLeaksCalculator):
         leak_count = df_values.filter(pl.col("is_leak")).height
         logger.info(
             f"✅ Расчет утечек завершен: всего утечек {leak_count} из {len(df_values)} записей"
+        )
+
+        # 
+        df_values = df_values.with_columns(
+            ((pl.col("spent_fuel") - pl.col("norma_rasx_per_travel")) / norma["norma_std"]).alias("z_values"),
+        )
+
+        df_values = df_values.with_columns(
+            pl.when(pl.col("ign").gt(0)).then(1).otherwise(0).alias("ign_spread")
+        )
+
+        df_values = df_values.with_columns(
+            pl.col("spent_fuel").truediv(pl.col("dtime")).mul(60).alias("fpm")
         )
 
         if is_save_bad_data:

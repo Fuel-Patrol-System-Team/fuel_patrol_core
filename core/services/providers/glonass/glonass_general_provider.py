@@ -63,7 +63,7 @@ class GlonassGeneralProvider:
         """Соблюдение rate limit (1 запрос в секунду)"""
         global_rate_limiter.wait_for_rate_limit()
 
-    def _get_sensors_mapping(self, car: Car) -> Dict[str, str]:
+    def _get_sensors_mapping(self, car: Car) -> Dict[str, list[str]]:
         """Получает маппинг сенсоров для машины"""
         if self.old_car_id is None or self.old_car_id != car.id:
             self.old_car_id = car.id
@@ -73,10 +73,11 @@ class GlonassGeneralProvider:
             right_car = Car.objects.only("id").get(id_in_provider_system=car.id_in_provider_system)
             sensors = SensorsValues.objects.filter(car_id=right_car.id)
             try:
-                sensors_mapping = {
-                    sv.key.key: sv.value
-                    for sv in sensors
-                }
+                sensors_mapping = {sv.key.key: [] for sv in sensors}
+                for sv in sensors:
+                    if sv.key.key in sensors_mapping:
+                        sensors_mapping[sv.key.key].append(sv.value)
+
                 self.sensors_mapping_cache = sensors_mapping
                 logger.debug(f"Загружен маппинг для {car.name}: {len(sensors_mapping)} сенсоров")
             except Exception as e:
@@ -268,7 +269,7 @@ class GlonassGeneralProvider:
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
@@ -355,7 +356,7 @@ class GlonassGeneralProvider:
             logger.error(f"Ошибка запроса данных для {vehicle_id}: {e}")
             return None
 
-    def _build_use_cols(self, required_columns, sensors_mapping ):
+    def _build_use_cols(self, required_columns, sensors_mapping: Dict[str, list[str]] ):
         usecols = ["auto"]
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -364,6 +365,9 @@ class GlonassGeneralProvider:
                 if param.is_dynamic:
                     path_to_param = sensors_mapping.get(col.value, param.default_key)
                 if path_to_param == "":
+                    continue
+                if isinstance(path_to_param, list):
+                    usecols.extend(path_to_param)
                     continue
                 usecols.append(path_to_param)
         return usecols
@@ -432,37 +436,61 @@ class GlonassGeneralProvider:
         result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
         result = result.with_columns(pl.lit(str(car.id)).alias("auto"))
         return result
+    
+    def _build_required_columns(self, required_columns: List[GP], multi_sensor_info: Dict[str, int]):
+        result = []
+        for col in required_columns:
+            el = GLOBAL_GLONASS_PARAMS.get(col).label
+            target = multi_sensor_info[el]
+            if target > 1:
+                result.extend(list(map(lambda x: f"{el}_{x}", range(0, target ) ) ))
+            else:
+                result.append(el)
+        return result
 
-    def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, str], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
+
+    def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, list[str]], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
         use_cols = self._build_use_cols(required_columns, sensors_mapping )
         result = self._process_unmapped(car, messages, use_cols)
         
 
+        parameters_count = {}
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
+
             if param:
                 "test"
-                path_to_param = ""
+                path_to_params = [""]
+                msensor = False
                 if param.is_dynamic:
-                    path_to_param = sensors_mapping.get(col.value, param.default_key)
-                    
+                    path_to_params = sensors_mapping.get(col.value, param.default_key)
+                    path_to_params = [path_to_params] if isinstance(path_to_params, str) else path_to_params
                 else:
                     if param.default_key in result.columns:
-                        path_to_param = param.default_key
-                if path_to_param == "" or path_to_param not in result.columns:
-                    # заменить спец значением весь столбец
-                    result = result.with_columns(pl.lit(param.default_on_absence).alias(param.label))
-                else:
-                    # переименовываем столбец
-                    result = result.rename({path_to_param: param.label})
-                    if param.cast: # если есть каст, кастуем
-                        result = param.cast(result)
-                    if param.default_value is not None:
-                        result = result.with_columns(pl.col(param.label).fill_null(param.default_value))
-                    if param.filter_on_absence:
-                        result = result.filter(pl.col(param.label).is_not_null())
-
-        mapped_required_columns = list(map(lambda x: GLOBAL_GLONASS_PARAMS.get(x).label ,required_columns))
+                        path_to_params = [param.default_key]
+                
+                msensor = len(path_to_params) > 1
+                # должен быть один, иначе идем по каждому
+                for index, path_to_param in enumerate(path_to_params):
+                    true_label = param.label + f"_{index}" if msensor else param.label 
+                    if path_to_param == "" or path_to_param not in result.columns:
+                        # заменить спец значением весь столбец
+                        
+                        result = result.with_columns(pl.lit(param.default_on_absence).alias(true_label))
+                    else:
+                        # переименовываем столбец
+                        
+                        result = result.rename({path_to_param: true_label})
+                        if param.cast: # если есть каст, кастуем
+                            result = param.cast(result)
+                        if param.default_value is not None:
+                            result = result.with_columns(pl.col(true_label).fill_null(param.default_value))
+                        if param.filter_on_absence:
+                            result = result.filter(pl.col(true_label).is_not_null())
+                    parameters_count[param.label] = len(path_to_params)
+        # mapped_required_columns = list(map(lambda x: GLOBAL_GLONASS_PARAMS.get(x).label, required_columns))
+        mapped_required_columns = self._build_required_columns(required_columns, parameters_count)
+    
         
         if required_actions is not None:
             for action in required_actions:

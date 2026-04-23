@@ -1,8 +1,9 @@
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict
 from uuid import UUID
+import polars as pl
 
 from distlib.util import resolve
 from django.http import StreamingHttpResponse
@@ -35,6 +36,7 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
+from core.tests.test_parser_calc import LeaksService
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
 from .helpers.data_provider import validate_provider_cars, \
@@ -42,11 +44,11 @@ from .helpers.data_provider import validate_provider_cars, \
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .mixins.convert_utc_mixin import TimestampTimezoneConverterMixin
-from .models import Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
+from .models import ComputedData, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser, CarFuelReport
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
+    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
@@ -54,7 +56,7 @@ from core.helpers.rest import (
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, UserRegistrationSerializer,
+    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -1262,6 +1264,98 @@ class LanguageListAPIView(ListAPIView):
     pagination_class = None
 
 
+class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
+    
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Получение данных о графике для слива",
+        operation_description="""
+            Получение данных о графиках для слива
+            
+            ***Ограничения***
+            - Максимальный период: 365 дней
+        """,
+        request_body=CAR_LEAKS_CHARTS_SCHEMA["request_body"],
+        responses=CAR_LEAKS_CHARTS_SCHEMA["responses"],
+    )
+    def post(self, request):
+        serializer = CarLeaksChartsRequestSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+        
+        data = serializer.validated_data
+        car_id = data["car_id"]
+        days = data["days"]
+        leak_id = data.get("leak_id")
+
+        
+
+        start_date = (datetime.now() - timedelta(days)).astimezone(pytz.utc)
+        start_date_month = (datetime.now() - timedelta(31)).astimezone(pytz.utc)
+        computed_data = ComputedData.objects.filter(
+            auto__id=car_id,
+            timestamp__gte=start_date
+        ).order_by('timestamp')
+        if len(computed_data)  == 0:
+            return error_response("Нет данных для этой машины",  status.HTTP_400_BAD_REQUEST)
+        leaks = CarReport.objects.filter(car_id__id=car_id, datetime__gte=start_date)
+        leaks_df = polars.DataFrame(list(leaks.values()))
+        # fpm, pos_s
+        df = polars.DataFrame(list(computed_data.values()))
+        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values", "ign_spread", "rpm_mean",  "spent_fuel"])
+        tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
+        tmp = tmp.filter(polars.col("spent_fuel").gt(0))
+        tmp = tmp.with_columns(pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias("color"))
+        tmp = tmp.with_columns(pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
+
+        data_fast = tmp.filter(polars.col("pos_s").gt(1)).select(["timestamp", "pos_s", "spent_fuel", "fpm", "color"])
+        is_rpm = SensorsValues.objects.filter(key__key="rpm", car_id__id=car_id).count() > 0
+        target_column = "rpm_mean" if is_rpm else "ign_spread"
+        data_slow =tmp.filter(polars.col("pos_s").lt(1)).select(["timestamp", "pos_s", target_column, "fpm", "color"])
+        data_agg = tmp.filter(
+            polars.col("spent_fuel").gt(0)
+        )
+        month = data_agg.group_by_dynamic(
+            index_column="timestamp",
+            every="1mo"
+        ).agg([
+            polars.mean("z_values"),
+            polars.mean("fpm"),
+            polars.first("spent_fuel"),
+        ]).with_columns(polars.lit("month").alias("color"))
+        year = data_agg.group_by_dynamic(
+            index_column="timestamp",
+            every="1y"
+        ).agg([
+            polars.mean("z_values"),
+            polars.mean("fpm"),
+            polars.first("spent_fuel"),
+        ]).with_columns(polars.lit("year").alias("color"))
+        data_bar = [
+          *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "spent_fuel"]).with_columns(polars.lit("leaks").alias("color")).with_columns(polars.col("timestamp").dt.to_string("iso:strict")).to_dicts(),   
+          year.row(0, named=True),
+          month.row(0, named=True)
+        ]
+            
+        
+
+        
+        print(data_slow.columns)
+        print(data_fast.columns)
+        logger.info(f"{len(data_slow)} - {len(data_fast)} - {len(data_bar)}")
+        response_data = {
+            "data_slow": data_slow.with_columns(polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
+            "slow_type": "rpm" if is_rpm else "ign",
+            "data_fast": data_fast.with_columns(polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
+            "data_bar": data_bar,
+        }
+
+        return success_response(response_data, status.HTTP_200_OK)
+
+            
+
 class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
     """
     API для получения сырых данных по машине для построения графиков.
@@ -1389,7 +1483,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     max_age=60 * 60 * 24 * 7,
                 )
 
-        return response
+        return response  
 
 
 class CustomTokenRefreshView(TokenRefreshView):

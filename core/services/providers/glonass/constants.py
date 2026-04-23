@@ -10,7 +10,7 @@ class GlonassCastProtocol(Protocol):
     def __call__(self, df: pl.DataFrame) -> pl.DataFrame:
         ...
 class GlonassAfterParsingProtocol(Protocol):
-    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]) ->pl.DataFrame:
+    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]) ->pl.DataFrame:
         ...
 @dataclass
 class GlonassParameter:
@@ -63,12 +63,13 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None), }
 
 
-def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
+def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
     df = df.with_columns(pl.lit(str(car.id)).alias("auto").cast(pl.Categorical)) 
     mapping.append("auto")
     return df
 
-def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
+
+def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
     df = df.with_columns(pl.col("amtr_x").add(pl.col("amtr_y")).add(pl.col("amtr_z")).alias("amtr")) 
     mapping.remove("amtr_x")
     mapping.remove("amtr_y")
@@ -76,37 +77,50 @@ def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: 
     mapping.append("amtr")
     return df
 
-def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
-    grades = car.grades
-    unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
-    pairs = list(zip(unique, unique[1:]))
-    mp = unique[0]
-    lp = unique[-1]
-    for fp, sp in pairs:
-        slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
-        b = fp["output"] - slope * fp["input"]
-        df = df.with_columns(
-            pl.when(
-                pl.col("calc_sensors_fuel_level").is_between(fp["input"], sp["input"])
+def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+
+    sensors = filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns)
+
+    for sensor in sensors:
+        grades = car.grades
+        unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+        pairs = list(zip(unique, unique[1:]))
+        mp = unique[0]
+        lp = unique[-1]
+        for fp, sp in pairs:
+            slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
+            b = fp["output"] - slope * fp["input"]
+            df = df.with_columns(
+                pl.when(
+                    pl.col(sensor).is_between(fp["input"], sp["input"])
+                )
+                .then(pl.col(sensor).mul(slope).add(b))
+                .otherwise(pl.col(sensor))
             )
-            .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
-            .otherwise(pl.col("calc_sensors_fuel_level"))
-        )
-    df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
-    df = df.filter(pl.col("calc_sensors_fuel_level").le(lp["input"]))
+        df = df.filter(pl.col(sensor).ge(mp["input"]))
+        df = df.filter(pl.col(sensor).le(lp["input"]))
     return df
 
-def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
+def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
     if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
         df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
     print(sensor_mapping)
     return df
+def _reconcile_multisensor(df: pl.DataFrame, sensors: list[str]):
+    # TODO: обсудить на встрече. Из-за того, что часто бывает только один датчик, неясно как лучше сделать 
+    pass
+    
 
-def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, str]):
-    df = df.filter(pl.col("calc_sensors_fuel_level").gt(0))
-    if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
-        df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
+def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+    sensors = list(filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns))
+
+    for sensor in sensors:
+        df = df.filter(pl.col(sensor).gt(0))
+        if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
+            df = df.filter(~pl.col(sensor).is_in([9, 4]))
     df = _tarify_car(df, car, mapping, sensor_mapping)
+    if len(sensors) > 1:
+        df = df.with_columns(pl.col(sensors[0]).add(pl.col(sensors[1])).alias("calc_sensors_fuel_level"))
     return df
     
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {

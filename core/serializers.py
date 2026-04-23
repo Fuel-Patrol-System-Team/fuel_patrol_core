@@ -524,3 +524,16 @@ class UserCarListCreateUpdateSerializer(serializers.ModelSerializer):
 
         instance.save()
         return instance
+
+class CarLeaksChartsRequestSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField(
+    )
+    days = serializers.IntegerField(
+        required=False,
+        default=365,
+        min_value=1,
+        max_value=365
+    )
+    leak_id = serializers.UUIDField(
+        required=True,
+    )

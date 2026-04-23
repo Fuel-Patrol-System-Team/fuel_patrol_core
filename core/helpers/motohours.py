@@ -58,7 +58,18 @@ def _compute_motohours_by_motohours(
         pl.col("motohours")
         .diff()
         .over(["auto", col_dtime_2hour])
-        .alias("motohours_diff")
+        .alias("motohours_diff"),
+        pl.col("timestamp")
+        .diff()
+        .dt.total_seconds()
+        .cast(pl.Int64)
+        .abs()
+        .fill_null(0)
+        .alias("dtime"),
+    )
+
+    df = df.with_columns(
+        pl.when(pl.col("motohours_diff").ne(0)).then(pl.col("dtime")).otherwise(0)
     )
 
     df = df.with_columns(
@@ -80,25 +91,25 @@ def _compute_motohours_by_motohours(
                 pl.lit("motohours").alias("criterion"),
                 pl.col("motohours").first().alias("motohours_first"),
                 pl.col("motohours").last().alias("motohours_last"),
+                pl.sum("dtime"),
                 pl.lit("hours").alias("units"),
             ]
         )
 
-    # hours = (df["timestamp"].last() - df["timestamp"].first()).total_seconds() / 3600
-    # motohours = df["motohours"].max()
-    # print(hours, motohours)
-    # if motohours > hours:
-    #     motohours /= 3600
-    #     if AGG_PERIOD is not None:
-    #         data = data.with_columns(
-    #             [
-    #                 pl.col("motohours_first") / 3600,
-    #                 pl.col("motohours_last") / 3600,
-    #                 pl.col("motohours_fraud") / 3600,
-    #                 pl.col("motohours") / 3600,
-    #                 pl.lit("seconds").alias("units"),
-    #             ]
-    #         )
+    test_batch = data.filter(pl.col("motohours").gt(0))
+    test_record = test_batch.row(index=0, named=True)
+    if test_record["motohours"] > test_record["dtime"] * 0.75:
+
+        if AGG_PERIOD is not None:
+            data = data.with_columns(
+                [
+                    pl.col("motohours_first") / 3600,
+                    pl.col("motohours_last") / 3600,
+                    pl.col("motohours_fraud") / 3600,
+                    pl.col("motohours") / 3600,
+                    pl.lit("seconds").alias("units"),
+                ]
+            )
 
     return {
         "motohours_start": df["motohours"].first(),

@@ -154,7 +154,8 @@ class CarDataService:
     def prepare_auto_data(car) -> pl.DataFrame:
         """Подготавливает auto DataFrame для расчета норм"""
         try:
-            fuel_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level").first()
+            fuel_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).first()
+            fuel_sensors_amount= SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).count()
             auto_data = [{
                 "id": str(car.id),
                 "auto": str(car.id),
@@ -164,7 +165,8 @@ class CarDataService:
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,
                 "is_tarrified": car.is_tarrified,
-                "fuel_sensor": fuel_sensor if fuel_sensor is None else fuel_sensor.value
+                "fuel_sensor": fuel_sensor if fuel_sensor is None else fuel_sensor.value,
+                "fuel_sensors_amount": fuel_sensors_amount
             }]
 
             auto_df = pl.DataFrame(auto_data).with_columns([

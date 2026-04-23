@@ -36,23 +36,6 @@ class BaseLeaksCalculator(ABC):
             Tuple с результатами и промежуточными данными
         """
         pass
-
-    @abstractmethod
-    def _preprocess_basic(
-            self,
-            df: pl.DataFrame,
-            cars: Dict[str, Any],
-            primary: Dict[str, Any],
-            VOLTAGE_LIMIT: float,
-            FUEL_JUMP_BARRIER_PERC: float,
-            ANTI_BUG_TIME_SECONDS: int,
-            REFUELING_LIMIT: int,
-            PRE_PERIOD_TIME: int,
-            DTIME_LIMIT: int
-    ) -> pl.DataFrame:
-        """Базовая предобработка данных"""
-        pass
-
     @abstractmethod
     def _preprocess(
             self,

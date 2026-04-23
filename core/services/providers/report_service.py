@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional, Tuple, Union
 from django.db import transaction
 from datetime import timedelta, datetime, timezone
 import polars as pl
+import pytz
 
 from core.models import (
     ReportQuery,
@@ -39,7 +40,7 @@ class ReportService:
             )
 
             report_details = ReportQueryDetails.objects.create(
-                report_query=report_query, start_time=timezone.now()
+                report_query=report_query, start_time=datetime.now().astimezone(pytz.utc)
             )
 
             logger.info(f"Создан отчет {report_query.id} типа {report_type}")
@@ -101,7 +102,7 @@ class ReportService:
         Завершает отчет с ошибкой
         """
         try:
-            end_time = timezone.now()
+            end_time = datetime.now(pytz.utc)
             start_time = report_query.report_query_details.start_time
 
             if start_time:
@@ -111,7 +112,7 @@ class ReportService:
 
             traceback_data = {
                 "error": error_message,
-                "timestamp": timezone.now().isoformat(),
+                "timestamp": datetime.now(pytz.utc).isoformat(),
             }
 
             if exception:

@@ -2,7 +2,9 @@ import logging
 from typing import Literal, Optional, List, cast
 from zoneinfo import ZoneInfo
 
+from charset_normalizer.utils import is_emoticon
 from django.db.models import Q
+from django_celery_beat.utils import now
 import polars as pl
 from datetime import datetime, timedelta, timezone
 import pytz
@@ -14,6 +16,8 @@ from core.admin import CarPrimary, SensorsValues
 from core.helpers.fuel import fuel_spent_calculate
 from core.models import (
     CarMileageReport,
+    ComputedData,
+    ParsingCarStats,
     ReportQuery,
     Organization,
     Car,
@@ -30,6 +34,7 @@ from core.services.notifications.tg_notifier import notify_organization
 from core.services.providers import leaks_service
 from core.services.providers.car_consumption_service import CarConsumptionService
 from core.services.providers.car_data_service import CarDataService
+from core.services.providers.computed_data_service import ComputedDataService
 from core.services.providers.filtering_service import FilteringService
 
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
@@ -702,9 +707,9 @@ def calculate_leaks_cron_one(
 
     
                 
+    total_leaks = 0
     if car is not None:
         parser = GlonassGeneralProvider([car], None, provider, now, now)
-        total_leaks = 0
         try:
             last_date_for_processing =  car.last_processed_date if car.last_processed_date and not ignore_last_processed else (now.now() - timedelta(365))
             datetime_parsing = cast(datetime,  last_date_for_processing)
@@ -734,20 +739,20 @@ def calculate_leaks_cron_one(
                             FuelReportService.make_reports_from_df(df_to_report)
                     except BaseException as err:
                         logger.error(f"Can't make fuel reports for car {car.id}")
+                if leaks_result is None or leaks_result.is_empty():
+                    error_msg = f"Не обнаружены сливы для машины {car.id}"
+                    logger.error(error_msg)
+                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
+                    return
+                computed_service = ComputedDataService()
+                saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
+                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
+                filtering_service = FilteringService()
+                filtering_result = filtering_service.apply_filters(leaks_result)
+                report = ReportService.save_car_reports_batch(filtering_result)
+                total_leaks += filtering_result.shape[0]
                     
-                    
-            
-            if leaks_result is None or leaks_result.is_empty():
-                error_msg = f"Не обнаружены сливы для машины {car.id}"
-                logger.error(error_msg)
-                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
-                return
-            filtering_service = FilteringService()
-            filtering_result = filtering_service.apply_filters(leaks_result)
-            report = ReportService.save_car_reports_batch(filtering_result)
-            total_leaks += filtering_result.shape[0]
-                
-            logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
+                logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
             Car.objects.filter(id=car.id).update(last_processed_date=now)
         except Exception as err:
             report_query, report_details = ReportService.create_report(
@@ -893,6 +898,157 @@ def parse_cars_milleage_task(
             meta={'error': str(e)}
         )
         raise
+@shared_task(bind=True)
+def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_save_bad_data: bool, ignore_last_processed = False):
+    provider = DataProvider.objects.get(id=provider_id)
+    
+    tz = pytz.UTC
+    now = datetime.now().astimezone(tz)
+    day_start= datetime.combine(now, datetime.min.time()).astimezone(tz)
+
+    car = Car.objects.filter(id=car_id).select_related("carprimary").prefetch_related("consumptions").first()
+
+    
+                
+    total_leaks = 0
+    if car is not None:
+        parser = GlonassGeneralProvider([car], None, provider, now, now)
+        try:
+            p_stats = ParsingCarStats.objects.filter(car_id__id=car.id).first()
+            last_date_for_processing =  p_stats.computed_last_processed if p_stats.computed_last_processed is not None and not ignore_last_processed else (now.now() - timedelta(365))
+            datetime_parsing = cast(datetime,  last_date_for_processing)
+            datetime_parsing = datetime_parsing.astimezone(tz)
+
+            report_query, report_details = ReportService.create_report(
+                str(provider.id),
+                ReportQuery.ReportType.LEAKS,
+                is_save_bad_data=is_save_bad_data
+            )
+            status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
+            if status and isinstance(data_df, pl.DataFrame):
+                primary_df = pl.DataFrame(car.carprimary.primary, schema_overrides={
+                    "auto": pl.Categorical
+                })
+                norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
+                auto_data = CarDataService.prepare_auto_data(car)
+                leak_service = leaks_service.LeaksService()
+                leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                if isinstance(leaks_result, pl.DataFrame):
+                    leaks_result = leaks_result.with_columns(pl.col("grades").cast(pl.String))
+                    spent_report = fuel_spent_calculate(leaks_result)
+                    try:
+                        refill = parser.parse_refill_data_full(car, datetime_parsing, now)
+                        if refill is not None:
+                            df_to_report = FuelReportService.build_right_history(spent_report, refill)
+                            FuelReportService.make_reports_from_df(df_to_report)
+                    except BaseException as err:
+                        logger.error(f"Can't make fuel reports for car {car.id}")
+                if leaks_result is None or leaks_result.is_empty():
+                    error_msg = f"Не данные для машины {car.id}"
+                    logger.error(error_msg)
+                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
+                    return
+                computed_service = ComputedDataService()
+                saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
+                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
+            ParsingCarStats.objects.filter(car_id=car.id).update(computed_last_processed=now)
+        except Exception as err:
+            report_query, report_details = ReportService.create_report(
+                        provider_id=str(provider.id),
+                        report_type=ReportQuery.ReportType.LEAKS,
+                        is_save_bad_data=is_save_bad_data
+                    )
+            error_msg = f"Внутренняя ошибка {car.id}"
+            ReportService.create_bad_data_record(car, error_msg, report_query, now, now) # нужно придумать как прокинуть реальную дату для каждой машины
+            ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+            return
+    if total_leaks > 0:
+        notify_organization(str(provider.org_id.id), f"Найдено сливов {total_leaks}")
+    else:
+        logger.info("Нет сливов")
+@shared_task(bind=True)
+def parse_cars_computed_data_task(
+    self,
+    provider_id: str,
+    is_save_bad_data: bool,
+):
+    provider = DataProvider.objects.filter(id=provider_id).first()
+    cars_for_computing = provider.cars.select_related("carprimary").prefetch_related("consumptions").filter(consumptions_isnull=False, carprimary_isnull=False, is_active=True ).select_related(
+        "parsingcar_stats"
+    )
+    
+    now = datetime.now().astimezone(timezone.utc)
+    day_start = datetime.combine(now, datetime.min.time()).astimezone(pytz.utc)
+        
+    if len(cars_for_computing) != 0:
+        for car in cars_for_computing:
+            parser = GlonassGeneralProvider(cars_for_computing, None, provider, now, now )
+
+            try:
+                last_date_for_processing = car.parsingcar_stats.computed_last_processed if car.parsingcar_stats.computed_last_processed else (now - timedelta(365))
+                datetime_parsing = cast(datetime,  last_date_for_processing)
+                datetime_parsing = datetime_parsing.astimezone(pytz.utc)
+
+                report_query, report_details = ReportService.create_report(
+                    str(provider_id),
+                    ReportQuery.ReportType.COMPUTED_DATA
+                )
+                status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
+                if status and isinstance(data_df, pl.DataFrame):
+                    if data_df.is_empty():
+                        result_msg = f"Нет данных за период {datetime_parsing} {last_date_for_processing}"
+                        result_data = {
+                            "result": {
+                                
+                            },
+                            "empty_data": True,
+                            "rows_processed": 0
+                        }
+                        ReportService.complete_report_success(report_query, result_data)
+                        logger.warning(result_msg)
+                        continue
+                    primary_df = pl.DataFrame(car.carprimary.primary, schema_overrides={
+                        "auto": pl.Categorical
+                    })
+                    norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
+                    auto_data = CarDataService.prepare_auto_data(car)
+                    leak_service = leaks_service.LeaksService()
+                    leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                    if leaks_result is None or leaks_result.is_empty():
+                        error_msg = f"Не обнаружены данные для машины {car.id}"
+                        logger.error(error_msg)
+                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
+
+            except Exception as err:
+                report_query, report_details = ReportService.create_report(
+                provider_id=str(provider.id),
+                    report_type=ReportQuery.ReportType.LEAKS,
+                    is_save_bad_data=is_save_bad_data
+                )
+                error_msg = f"Внутренняя ошибка {car.id}"
+                ReportService.create_bad_data_record(car, error_msg, report_query, now, now) # нужно придумать как прокинуть реальную дату для каждой машины
+                ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+                continue
+        
+
+
+@shared_task(bind=True)
+def internal_migrate_to_new_processing_system(self):
+    providers = DataProvider.objects.all()
+    for provider in providers:
+        cars = list(provider.cars.all())
+        for car in cars:
+            ParsingCarStats.objects.create(
+                car_id_id=car.id,
+                norms_last_proccessed=car.last_processed_date, 
+                fuel_last_proccessed=None,
+                computed_last_processed=None,
+                leaks_last_processed=car.last_processed_date,
+                primary_last_proccessed=car.last_processed_date,
+                mileage_last_processed=None,
+                preffered_period_days=90
+            )
+
 
 
 @shared_task(bind=True)

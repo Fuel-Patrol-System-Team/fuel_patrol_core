@@ -1,5 +1,6 @@
 import os
 import subprocess
+from typing import Any
 import uuid
 from pathlib import Path
 
@@ -270,6 +271,7 @@ class ReportQuery(models.Model):
         LEAKS = "leaks", "Анализ утечек топлива"
         PRIMARY = "primary", "Расчет превичных данных"
         NORMS = "norms", "Расчет норм расхода"
+        COMPUTED_DATA = "computed_data", "Предобработанные данные"
 
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -317,8 +319,11 @@ class ParsingCarStats(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id=models.ForeignKey(Car, on_delete=models.CASCADE, related_name="parsingcar_stats")
     norms_last_proccessed = models.DateTimeField(**NULLABLE)
-    fuel_last_proccessed = models.DateTimeField(**NULLABLE)
+    fuel_last_proccessed = models.DateTimeField(**NULLABLE) # начало/конец 
+    computed_last_processed = models.DateTimeField(blank=True, null=True)
+    leaks_last_processed = models.DateTimeField(**NULLABLE)
     primary_last_proccessed = models.DateTimeField(**NULLABLE)
+    mileage_last_processed = models.DateTimeField(blank=True, null=True)
     preffered_period_days = models.IntegerField(default=90)
 
 
@@ -356,6 +361,35 @@ class CarReport(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
+
+class ComputedData(models.Model):
+    id = models.AutoField(primary_key=True)
+    timestamp = models.DateTimeField()
+    pos_s = models.FloatField()
+    spent_fuel = models.FloatField()
+    z_values = models.FloatField()
+    rpm_mean = models.FloatField()
+    ign_spread = models.IntegerField()
+    fpm = models.FloatField()
+    auto = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="computed_data", db_index=True)
+    dtime = models.IntegerField()
+    fuel_first = models.FloatField()
+    fuel_last = models.FloatField()
+    es = models.FloatField()
+    class Meta:
+        verbose_name = "Computed Data"
+        ordering = ["-timestamp"]
+        
+    @classmethod
+    def make_one(example: dict[str, Any]):
+        columns = ComputedData.get_required_columns()
+        return ComputedData.objects.create(
+            **example
+        )
+
+    @classmethod
+    def get_required_columns(cls):
+        return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime", "fuel_first", "fuel_last"]
 
 class CarMileageReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -423,6 +457,7 @@ class SensorsValues(models.Model):
     key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name="values")
     value = models.CharField(max_length=255)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="values")
+    is_active = models.BooleanField(default=True) # TODO: для будующей системы нахождения датчиков + мультисенсорного анализа
 
     class Meta:
         verbose_name = "SensorsValues"
