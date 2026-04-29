@@ -8,6 +8,8 @@ import pytz
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.utils import timezone
+from django.dispatch import receiver
+from django.db.models.signals import post_save
 import polars
 
 NULLABLE = {"blank": True, "null": True}
@@ -318,13 +320,19 @@ class ReportQueryDetails(models.Model):
 class ParsingCarStats(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car = models.OneToOneField(Car, null=True, on_delete=models.CASCADE, related_name="parsingcar_stats")  # Changed to OneToOneField
-    norms_last_proccessed = models.DateTimeField(**NULLABLE)
-    fuel_last_proccessed = models.DateTimeField(**NULLABLE)  # начало/конец 
+    norms_last_processed = models.DateTimeField(**NULLABLE)
+    fuel_last_processed = models.DateTimeField(**NULLABLE)  # начало/конец 
     computed_last_processed = models.DateTimeField(blank=True, null=True)
     leaks_last_processed = models.DateTimeField(**NULLABLE)
-    primary_last_proccessed = models.DateTimeField(**NULLABLE)
+    primary_last_processed = models.DateTimeField(**NULLABLE)
     mileage_last_processed = models.DateTimeField(blank=True, null=True)
     preffered_period_days = models.IntegerField(default=90)
+
+# Signal to auto-create ParsingCarStats
+@receiver(post_save, sender=Car)
+def create_parsing_car_stats(sender, instance, created, **kwargs):
+    if created:  # Only create if the Car instance is newly created
+        ParsingCarStats.objects.create(car=instance, norms_last_processed=None, fuel_last_processed=None, computed_last_processed=None, leaks_last_processed=None, primary_last_processed=None, mileage_last_processed=None)
 
 
 class CarFuelReport(models.Model):

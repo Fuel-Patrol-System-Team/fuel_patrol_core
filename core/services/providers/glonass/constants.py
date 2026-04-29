@@ -51,7 +51,7 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.fuel_level: GlonassParameter(True, "", "calc_sensors_fuel_level", None, False, None, None ),
     GL_PARAM_KEYS.mileage: GlonassParameter(True, "", "mileage", None, False, 0, None),
     GL_PARAM_KEYS.motohours: GlonassParameter(True, "", "motohours", None, False, None, None),
-    GL_PARAM_KEYS.ignition: GlonassParameter(True, "", "ign", lambda df: df.with_columns(pl.col("ign").cast(pl.Int32).clip(upper_bound=1)), False, 0, None),
+    GL_PARAM_KEYS.ignition: GlonassParameter(True, "", "ign", lambda df: df.with_columns(pl.col("ign").str.slice(-1, 1).cast(pl.Int32).clip(upper_bound=1)), False, 0, None),
     GL_PARAM_KEYS.rpm: GlonassParameter(True, "", "rpm", None, False, None, None),
     GL_PARAM_KEYS.engine_temp: GlonassParameter(True, "", "engine_temp", None, False, 0, None),
     GL_PARAM_KEYS.voltage: GlonassParameter(False, "voltage", "calc_sensors_voltage", None, False, None, None),

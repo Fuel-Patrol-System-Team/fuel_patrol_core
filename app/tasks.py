@@ -321,7 +321,7 @@ def process_single_car_data_task(
             "timestamps": {
                 "start": start_dt.isoformat() if start_dt else None,
                 "end": end_dt.isoformat() if end_dt else None,
-                "processed": timezone.now().isoformat(),
+                "processed": datetime.now().astimezone().isoformat(),
             },
         }
 
@@ -856,7 +856,6 @@ def parse_terminal_messages_task(
 def parse_cars_milleage_task(
         self,
         provider_name: str,
-        aggregation: int,
         is_save_bad_data : bool = False,
         is_parse_mileage = False,
         start_date_manual = None
@@ -870,25 +869,55 @@ def parse_cars_milleage_task(
         end_date = start_date + timedelta(days=1)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
-        cars = list(provider.cars.all())
+        cars = list(provider.cars.select_related("carparsing_stats").filter(is_active=True, carparsing_stats__mileage_last_processed__lt=start_date) )
+
+        if len(cars) == 0:
+            logger.info("Нет машин для обработки пробега")
+            self.update_state(
+                state='SUCCESS',
+                meta={
+                    'message': 'Нет машин для обработки пробега',
+                    'provider_name': provider_name,
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                }
+            )
+            return
 
         ##TODO: Тут ЮЛИК прошелся по циклу и вызвал для машины свой сервис
         parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date)
         anomalies = 0
         for car in cars:
-            is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="mileage"))
-            if is_sensor == 0:
-                continue
-            is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime = start_date, car_id__id = car.id))
-            if is_no_need_to_parse > 0:
-                continue
-            result, status  = MileageCalculationService.calculate_mileage(car.id, MileageAlgorithms.fraud, None, start_date, end_date, parser=parser, is_save_bad_data=is_save_bad_data)
-            if status == 200:
-                if result["result"]["travel_fraud"] is not None and abs( result["result"]["travel_fraud"]) > 0:
-                    anomalies += 1
-                CarMileageReport.objects.update_or_create(car_id_id=car.id, datetime=start_date, mileage_start=result["result"]["first_mileage"], mileage_end=result["result"]["last_mileage"], travel=result["result"]["travel"], fraud=result["result"]["travel_fraud"] )
-            else:
-                logger.error("Статус репорта не успешный")
+            try:
+                is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="mileage"))
+                # всегда должен быть
+                last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
+                if last_datetime is None:
+                    last_datetime = start_date
+                
+                if is_sensor == 0:
+                    parser._skip_car(car)
+                    continue
+                is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime = start_date, car_id__id = car.id))
+                if is_no_need_to_parse > 0:
+                    parser._skip_car(car)
+                    continue
+                for i in range((end_date - last_datetime).days):
+                    current_date = last_datetime + timedelta(days=i)
+                    tmp_end_date = min(current_date + timedelta(days=1), end_date)
+                    result, status  = MileageCalculationService.calculate_mileage(car.id, MileageAlgorithms.fraud, None, current_date, tmp_end_date, parser=parser, is_save_bad_data=is_save_bad_data)
+                    data = result["result"]
+                    if status == 200:
+                        if data["travel_fraud"] is not None and abs( data["travel_fraud"]) > 0:
+                            anomalies += 1
+                        CarMileageReport.objects.update_or_create(car_id_id=car.id, datetime=start_date, mileage_start=data["first_mileage"], mileage_end=data["last_mileage"], travel=data["travel"], fraud=data["travel_fraud"] )
+                    else:
+                        logger.error("Статус репорта не успешный")
+                ParsingCarStats.objects.update_or_create(car_id_id=car.id, defaults={"mileage_last_processed": start_date})
+            except Exception as err:
+                    logger.error(f"Ошибка при обработке пробега для машины {car.id}: {err}")
+                    continue
+                    
         notify_organization(str(provider.org_id.id), f"Отчет по пробегу за {start_date.date().isoformat()} завершен кол-во накруток {anomalies}")
                     
     except Exception as e:
@@ -1042,11 +1071,11 @@ def internal_migrate_to_new_processing_system(self):
                 continue
             ParsingCarStats.objects.create(
                 car_id=car.id,
-                norms_last_proccessed=car.last_processed_date, 
-                fuel_last_proccessed=None,
+                norms_last_processed=car.last_processed_date, 
+                fuel_last_processed=None,
                 computed_last_processed=None,
                 leaks_last_processed=car.last_processed_date,
-                primary_last_proccessed=car.last_processed_date,
+                primary_last_processed=car.last_processed_date,
                 mileage_last_processed=None,
                 preffered_period_days=90
             )

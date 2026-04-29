@@ -171,6 +171,11 @@ class GlonassGeneralProvider:
         self.car = self.cars[self.i]
         self.i += 1
         return self.car 
+
+    def _skip_car(self, car: Car):
+        self.car = self.cars[self.i]
+        self.i += 1
+        return True
     
     def parse_refill_data_full(self, car: Car, start_date: datetime ,end_date: datetime):
         result = self._parse_refill_data(car, start_date, end_date)

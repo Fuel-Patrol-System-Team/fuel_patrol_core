@@ -84,21 +84,11 @@ class VehicleService:
         """Проверяет данные автомобиля на критические ошибки"""
         errors = []
 
-        input_val = vehicle_data.get("input")
-        output_val = vehicle_data.get("output")
+        grades = vehicle_data.get("grades", None)
 
-        is_tarrified = not (
-                (input_val is None or input_val == 1.0) and
-                (output_val is None or output_val == 1.0)
-        )
-
-        if not is_tarrified:
-            errors.append("Нетарированное ТС")
+        is_tarrified = grades is not None and len(grades) > 2
 
         sensors_mapping = vehicle_data.get("sensorsMapping", {})
-
-        if not sensors_mapping.get("calc_sensors_fuel_level"):
-            errors.append("Нет датчика уровня топлива")
 
         sensor_paths = list(sensors_mapping.values())
         if len(sensor_paths) != len(set(sensor_paths)):

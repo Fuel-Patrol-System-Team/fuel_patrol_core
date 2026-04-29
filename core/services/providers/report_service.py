@@ -62,7 +62,7 @@ class ReportService:
         Завершает отчет успешно
         """
         try:
-            end_time = timezone.now()
+            end_time = datetime.now().astimezone()
             start_time = report_query.report_query_details.start_time
 
             if start_time:
@@ -221,7 +221,7 @@ class ReportService:
             CarBadData.objects.create(
                 car_id=car,
                 reason=full_reason,
-                datetime=timezone.now()
+                datetime=datetime.now().astimezone()
             )
 
             logger.warning(

@@ -1,7 +1,7 @@
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, final
 
-from core.models import DataProvider, Organization
+from core.models import Car, DataProvider, Organization
 
 from core.services.providers.provider_factory import ProviderFactory
 from core.services.providers.report_service import ReportService
@@ -59,6 +59,9 @@ class VehicleSyncService:
 
             stats = self._process_vehicles(vehicles, report_query)
 
+            current_cars = self.provider.cars.values_list("id_in_provider_system", flat=True)
+            cars_to_inactivate =  set(current_cars) - set(stats["vehicles_ids"]) if len(current_cars) > 0 else set()
+            self._deacrivate_missing_cars(cars_to_inactivate)
             result = {
                 "success": True,
                 "total_vehicles": len(vehicles),
@@ -89,14 +92,26 @@ class VehicleSyncService:
                 "success": False,
                 "error": error_msg
             }
+    
+    def _deacrivate_missing_cars(self, cars_to_inactivate: set):
+        """Деактивирует автомобили, которые отсутствуют в новом списке от провайдера"""
+        for car_id in cars_to_inactivate:
+            try:
+                car = Car.objects.get(id_in_provider_system=car_id, provider=self.provider)
+                car.is_active = False
+                car.save()
+                logger.info(f"Деактивирован автомобиль {car.name} (ID: {car.id}) - отсутствует у провайдера")
+            except Car.DoesNotExist:
+                logger.warning(f"Не найден автомобиль с id_in_provider_system={car_id} для деактивации")
 
-    def _process_vehicles(self, vehicles: list, report_query=None) -> Dict[str, int]:
+    def _process_vehicles(self, vehicles: list, report_query=None) -> Dict[str, Any]:
         """Обрабатывает список транспортных средств с созданием CarBadData записей"""
         stats = {
             "created": 0,
             "updated": 0,
             "failed": 0,
-            "inactivated": 0
+            "inactivated": 0,
+            "vehicles_ids": [],
         }
 
         for i, vehicle in enumerate(vehicles, 1):
@@ -149,5 +164,8 @@ class VehicleSyncService:
                 stats["failed"] += 1
                 logger.error(f"Ошибка обработки vehicleId={vehicle_id}: {e}")
                 continue
+
+            finally:
+                stats["vehicles_ids"].append(vehicle_id)
 
         return stats

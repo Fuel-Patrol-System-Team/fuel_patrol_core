@@ -36,7 +36,6 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
-from core.tests.test_parser_calc import LeaksService
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
 from .helpers.data_provider import validate_provider_cars, \
