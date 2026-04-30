@@ -889,7 +889,7 @@ def parse_cars_milleage_task(
         anomalies = 0
         for car in cars:
             try:
-                logger.warning(f"Обработка пробега для машины {car.id}")
+                logger.info(f"Обработка пробега для машины {car.id}")
                 is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="mileage"))
                 # всегда должен быть
                 last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
@@ -912,6 +912,7 @@ def parse_cars_milleage_task(
                         if data["travel_fraud"] is not None and abs( data["travel_fraud"]) > 0:
                             anomalies += 1
                         CarMileageReport.objects.update_or_create(car_id_id=car.id, datetime=start_date, mileage_start=data["first_mileage"], mileage_end=data["last_mileage"], travel=data["travel"], fraud=data["travel_fraud"] )
+                        logger.info(f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. Пройдено км: {data['travel']}, подозрительный пробег: {data['travel_fraud']}")
                     else:
                         logger.error("Статус репорта не успешный")
                 ParsingCarStats.objects.update_or_create(car_id_id=car.id, defaults={"mileage_last_processed": start_date})
