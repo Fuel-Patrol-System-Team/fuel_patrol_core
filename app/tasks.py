@@ -889,6 +889,7 @@ def parse_cars_milleage_task(
         anomalies = 0
         for car in cars:
             try:
+                logger.warning(f"Обработка пробега для машины {car.id}")
                 is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="mileage"))
                 # всегда должен быть
                 last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
