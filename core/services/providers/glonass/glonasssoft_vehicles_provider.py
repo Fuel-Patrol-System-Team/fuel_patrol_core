@@ -244,6 +244,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     key_part = parameter_name.split(";")[0]
                     if key_part == "can_mileage":
                         sensors_mapping["mileage"] = f"parameters.mileage" # пока так
+                    elif key_part.startswith("impuls"):
+                        sensors_mapping["mileage"] = f"parameters.mileage" # тоже пока так
                     elif key_part.startswith("can_") and input_number:
                         sensors_mapping["mileage"] = f"parameters.can{input_number}"
                     else:

@@ -869,7 +869,7 @@ def parse_cars_milleage_task(
         end_date = start_date + timedelta(days=1)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
-        cars = list(provider.cars.select_related("carparsing_stats").filter(is_active=True, carparsing_stats__mileage_last_processed__lt=start_date) )
+        cars = list(provider.cars.select_related("parsingcar_stats").filter(Q(is_active=True) & (  Q(parsingcar_stats__mileage_last_processed__lt=start_date) | Q(parsingcar_stats__mileage_last_processed__isnull=True)) ) )
 
         if len(cars) == 0:
             logger.info("Нет машин для обработки пробега")
@@ -915,7 +915,7 @@ def parse_cars_milleage_task(
                         logger.info(f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. Пройдено км: {data['travel']}, подозрительный пробег: {data['travel_fraud']}")
                     else:
                         logger.error("Статус репорта не успешный")
-                ParsingCarStats.objects.update_or_create(car_id_id=car.id, defaults={"mileage_last_processed": start_date})
+                ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"mileage_last_processed": start_date})
             except Exception as err:
                     logger.error(f"Ошибка при обработке пробега для машины {car.id}: {err}")
                     continue
