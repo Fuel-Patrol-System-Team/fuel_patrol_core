@@ -1,6 +1,9 @@
+import datetime
 import logging
 from typing import Dict, Any, Tuple, List
+from venv import create
 from django.db import transaction
+from pytz import utc
 from core.models import Car, DataProvider, SensorsValues, SensorsKey, CarUnit
 
 logger = logging.getLogger(__name__)
@@ -55,7 +58,7 @@ class VehicleService:
                     "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                     "engine_type": engine_type,
                     "input": vehicle_data.get("input"),
-                    "grades": vehicle_data.get("grades"),
+                    "grades": vehicle_data.get("gradeMapping", {}).get("calc_sensors_fuel_level", None),
                     "output": vehicle_data.get("output"),
                     "is_tarrified": VehicleService._calculate_is_tarrified(vehicle_data),
                     "is_active": len(critical_errors) == 0,
@@ -65,7 +68,8 @@ class VehicleService:
             provider.cars.add(car)
 
             sensors_mapping = vehicle_data.get("sensorsMapping", {})
-            VehicleService._save_sensors_mapping(car, sensors_mapping)
+            grade_mapping = vehicle_data.get("gradeMapping", {})
+            VehicleService._save_sensors_mapping(car, sensors_mapping, grade_mapping)
 
             logger.info(
                 f"Сохранены данные для vehicleId={vehicle_id}. "
@@ -117,15 +121,16 @@ class VehicleService:
         )
 
     @staticmethod
-    def _save_sensors_mapping(car: Car, sensors_mapping: Dict[str, str]) -> None:
+    def _save_sensors_mapping(car: Car, sensors_mapping: Dict[str, str], grade_mapping: Dict[str, List[Dict[str, Any]]]) -> None:
         """Сохраняет маппинг сенсоров в БД"""
         for label, value in sensors_mapping.items():
             try:
                 sensor_key, _ = SensorsKey.objects.get_or_create(key=label)
-                SensorsValues.objects.update_or_create(
+                grade_table = grade_mapping.get(label, None)
+                value, status =  SensorsValues.objects.update_or_create(
                     car_id=car,
                     key=sensor_key,
-                    defaults={"value": str(value)}
+                    defaults={"value": str(value), "grades": grade_table, "created_at": datetime.datetime.now().astimezone(tz=utc)},
                 )
             except Exception as e:
                 logger.error(f"Ошибка при сохранении сенсора {label}: {e}")

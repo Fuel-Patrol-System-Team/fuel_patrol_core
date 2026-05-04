@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Dict
 from uuid import UUID
+from zoneinfo import ZoneInfo
 import polars as pl
 
 from distlib.util import resolve
@@ -36,6 +37,9 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
+import pytz.zoneinfo
+
+import pytz.zoneinfo.Brazil
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
 from .helpers.data_provider import validate_provider_cars, \
@@ -435,14 +439,19 @@ class MileageCalculationAPIView(APIView):
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
         try:
+            target_timezone = ZoneInfo(request.user.timezone) if request.user.timezone in pytz.common_timezones else ZoneInfo("UTC")
             if start_date:
-                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+                start_date = datetime.fromisoformat(start_date).replace(tzinfo=target_timezone)
             if end_date:
-                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+                end_date = datetime.fromisoformat(end_date).replace(tzinfo=target_timezone)
             else:
                 end_date = datetime.now()
         except ValueError as e:
+            logger.error(f"Неверный формат даты: {e}")
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
+        except Exception as e:
+            logger.error(f"Ошибка обработки дат: {e}")
+            return Response({"error": f"Ошибка обработки дат: {e}"}, status=400)
         if (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 

@@ -869,7 +869,7 @@ def parse_cars_milleage_task(
         end_date = start_date + timedelta(days=1)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
-        cars = list(provider.cars.select_related("parsingcar_stats").filter(Q(is_active=True) & (  Q(parsingcar_stats__mileage_last_processed__lt=start_date) | Q(parsingcar_stats__mileage_last_processed__isnull=True)) ) )
+        cars = list(provider.cars.select_related("parsingcar_stats").filter(Q(is_active=True) & (  Q(parsingcar_stats__mileage_last_processed__isnull=True)) ) )
 
         if len(cars) == 0:
             logger.info("Нет машин для обработки пробега")
@@ -891,6 +891,11 @@ def parse_cars_milleage_task(
             try:
                 logger.info(f"Обработка пробега для машины {car.id}")
                 is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="mileage"))
+                is_already_computed = len(CarMileageReport.objects.filter(datetime = start_date, car_id__id = car.id))
+                if is_already_computed > 0:
+                    logger.info(f"Пробег для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработан, пропускаем")
+                    parser._skip_car(car)
+                    continue
                 # всегда должен быть
                 last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
                 if last_datetime is None:

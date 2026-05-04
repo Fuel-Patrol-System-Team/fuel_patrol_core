@@ -466,6 +466,8 @@ class SensorsValues(models.Model):
     value = models.CharField(max_length=255)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="values")
     is_active = models.BooleanField(default=True) # TODO: для будующей системы нахождения датчиков + мультисенсорного анализа
+    grades = models.JSONField(**NULLABLE)
+    created_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         verbose_name = "SensorsValues"

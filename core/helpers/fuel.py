@@ -12,7 +12,7 @@ def fuel_spent_calculate(result: pl.DataFrame):
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
-def _internal_tarify(df: pl.DataFrame, cars: dict[str, Any]):
+def tarify_car_by_sensor(df: pl.DataFrame, cars: dict[str, Any], column = "calc_sensors_fuel_level", grading = "grades"):
     grades = cars["grades"]
     unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
     pairs = list(zip(unique, unique[1:]))
@@ -23,18 +23,24 @@ def _internal_tarify(df: pl.DataFrame, cars: dict[str, Any]):
         b = fp["output"] - slope * fp["input"]
         df = df.with_columns(
             pl.when(
-                pl.col("calc_sensors_fuel_level").is_between(fp["input"], sp["input"])
+                pl.col(column).is_between(fp["input"], sp["input"])
             )
-            .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
-            .otherwise(pl.col("calc_sensors_fuel_level"))
+            .then(pl.col(column).mul(slope).add(b))
+            .otherwise(pl.col(column))
         )
         # последния тарировка (у некоторых машин есть адекватные значения выше тарировки JCB 3797 15c7e16f-355e-4b9d-bbaf-452f915863b3_day.csv)
     df = df.with_columns(
-            pl.when(pl.col("calc_sensors_fuel_level").gt(lp["input"]))
-            .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
-            .otherwise(pl.col("calc_sensors_fuel_level"))
+            pl.when(pl.col(column).gt(lp["input"]))
+            .then(pl.col(column).mul(slope).add(b))
+            .otherwise(pl.col(column))
     )
-    df = df.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
+    df = df.filter(pl.col(column).ge(mp["input"]))
+    
+    df = df.with_columns(
+        pl.when(pl.col(column).gt(lp["input"]))
+        .then(pl.col(column).mul(slope).add(b))
+        .otherwise(pl.col(column))
+    )
     return df, lp, b, slope
     
 
@@ -127,7 +133,7 @@ def preprocess_basic_one(
         pl.col("calc_sensors_fuel_level").rolling_mean_by("timestamp", window_size="2m")
     )
 
-    df, lp, b, slope = _internal_tarify(df, cars)
+    df, lp, b, slope = tarify_car_by_sensor(df, cars)
     # clean для отсчения резких прыжков (с игнорированием записей)
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
@@ -140,11 +146,7 @@ def preprocess_basic_one(
     df = df.with_columns((pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps"))
 
     df = df.filter(pl.col("fps").gt(-1))
-    df = df.with_columns(
-        pl.when(pl.col("calc_sensors_fuel_level").gt(lp["input"]))
-        .then(pl.col("calc_sensors_fuel_level").mul(slope).add(b))
-        .otherwise(pl.col("calc_sensors_fuel_level"))
-    )
+
 
     if df["calc_sensors_fuel_level"].gt(lp["input"]).any():
         print("Car has problems")

@@ -7,7 +7,7 @@ import pytz
 import textdistance
 from typing import Dict, Any, Optional, List
 
-from core.models import CarUnit
+from core.models import CarUnit, DataProvider
 from core.services.providers.rate_limited_provider import (
     RateLimitedProvider,
     VehicleRateLimitedProvider,
@@ -94,7 +94,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             return None
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
-    def get_vehicle_details(self, vehicle_id: int) -> Optional[Dict[str, Any]]:
+    def get_vehicle_details(self, vehicle_id: int, provider: DataProvider | None = None) -> Optional[Dict[str, Any]]:
         self._enforce_rate_limit()
         url = f"{self.base_url}/vehicles/{vehicle_id}"
         headers = {"X-Auth": self.auth_token}
@@ -113,7 +113,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             response.raise_for_status()
             vehicle_data = orjson.loads(response.content)
 
-            enriched_data = self._enrich_with_sensors_mapping(vehicle_data)
+            enriched_data = self._enrich_with_sensors_mapping(vehicle_data, provider)
             return enriched_data
 
         except requests.exceptions.HTTPError as e:
@@ -139,7 +139,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 
         
     def _enrich_with_sensors_mapping(
-            self, vehicle_data: Dict[str, Any]
+            self, vehicle_data: Dict[str, Any], provider: DataProvider | None = None
     ) -> Dict[str, Any]:
         input_value, output_value = None, None
         sensors_mapping = {}
@@ -160,7 +160,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             vehicle_data["car_unit_id"] = str(car_unit.id)
         vehicle_data["unit_name"] = unit_name
 
-        gradeTable = None
+        grade_mapping = {}
+        fuelGradeTable = None
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
             sensor_name = sensor.get("name", "")
@@ -179,7 +180,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     grades_tables = sensor.get("gradesTables", [{}])
                     if grades_tables and grades_tables[-1]:
                         grades = grades_tables[-1].get("grades", [{}])
-                        gradeTable = grades
+                        grade_mapping["calc_sensors_fuel_level"] = grades
                         if grades:
                             record = self._get_right_grade(grades)
                             input_value = record.get("input")
@@ -243,13 +244,19 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part == "can_mileage":
-                        sensors_mapping["mileage"] = f"parameters.mileage" # пока так
-                    elif key_part.startswith("impuls"):
-                        sensors_mapping["mileage"] = f"parameters.mileage" # тоже пока так
+                        if provider and provider.metadata.get("mileage_source") == "can":
+                            sensors_mapping["mileage"] = f"parameters.can_mileage"
+                        else:
+                            sensors_mapping["mileage"] = f"parameters.mileage" # пока так
                     elif key_part.startswith("can_") and input_number:
                         sensors_mapping["mileage"] = f"parameters.can{input_number}"
                     else:
                         sensors_mapping["mileage"] = f"parameters.{key_part}"
+                    if sensor.get("gradeType") == "GradeTable":
+                        grades_tables = sensor.get("gradesTables")
+                        grade_mapping["mileage"] = grades_tables[-1].get("grades",) if grades_tables else None
+                    else:
+                        grade_mapping["mileage"] = None
             elif sensor_type == "Temperature":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
@@ -290,7 +297,6 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             sensors_mapping["speed"] = "speed"
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
-        vehicle_data["grades"] = {"grades": gradeTable } if gradeTable is not None else None
         vehicle_data["sensorsMapping"] = sensors_mapping
-
+        vehicle_data["gradeMapping"] = grade_mapping
         return vehicle_data

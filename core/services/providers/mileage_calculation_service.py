@@ -3,11 +3,12 @@ import logging
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 
+import polars as pl
 from pandas import DataFrame
 import polars
 
-from core.admin import SensorsValues
-from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud, mileage_test_fraud_new
+from app.tasks import CarDataService
+from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud_new
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_mileage_provider import GlonassSoftMileageProvider
@@ -93,12 +94,13 @@ class MileageCalculationService:
 
                 return {"result": result}, 200
             if isinstance(df, polars.DataFrame):
-            
+                auto = CarDataService.prepare_auto_data(car)
+                auto_record = auto.filter(pl.col("auto") == car_id).to_dicts()[0]
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 if alg == MileageAlgorithms.compute:
-                    result = mileage_test_compute(df, agg, mode)
+                    result = mileage_test_compute(df, auto_record, agg, mode)
                 else:
-                    result = mileage_test_fraud_new(car_id, df,agg, mode)
+                    result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode)
 
                 report_data = {
                     "result": result,

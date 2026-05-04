@@ -1,6 +1,8 @@
 from enum import Enum
-from typing import cast
+from typing import Any, Dict, List, cast
 import polars as pl
+
+from core.helpers.fuel import tarify_car_by_sensor
 
 class MileageModes(str, Enum):
     standart = "standart"
@@ -24,8 +26,15 @@ def make_empty_mileage_result(mode: MileageModes):
         "data": [] if mode is not MileageModes.agg else None
     }
 
-def mileage_test_compute(df: pl.DataFrame, AGG: int | None, regime: MileageModes = MileageModes("standart"), AGG_MINUTES_DEFAULT = 60):
+
+def mileage_test_compute(df: pl.DataFrame, auto_record: Dict[str, Any], AGG: int | None, regime: MileageModes = MileageModes("standart"), AGG_MINUTES_DEFAULT = 60):
     agg = AGG_MINUTES_DEFAULT if AGG is None else AGG
+    if auto_record["mileage_grading"] is not None:
+        input = auto_record["mileage_grading"][0]["input"]
+        output = auto_record["mileage_grading"][0]["output"]
+        df = df.with_columns(
+            pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
+        )
     col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
     df = df.filter(
         pl.col("mileage").is_not_nan()
@@ -40,7 +49,7 @@ def mileage_test_compute(df: pl.DataFrame, AGG: int | None, regime: MileageModes
         [
             pl.when(pl.col("travel").lt(0)).then(pl.col("travel").abs()).otherwise(0).alias("travel_fraud")
         ]
-    )
+    )       
              
     df = (
         df.group_by_dynamic(index_column="timestamp", every=f"{agg}m", group_by="auto").agg([
@@ -65,6 +74,7 @@ def mileage_test_compute(df: pl.DataFrame, AGG: int | None, regime: MileageModes
 def mileage_test_fraud(
     auto: str,
     df: pl.DataFrame,
+    auto_record: Dict[str, Any],
     AGG: int | None,
     regime: MileageModes = MileageModes("standart"),
     AGG_DEFAULT_MIN = 720,
@@ -80,6 +90,12 @@ def mileage_test_fraud(
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
 
+    if auto_record["mileage_grading"] is not None:
+        input = auto_record["mileage_grading"][0]["input"]
+        output = auto_record["mileage_grading"][0]["output"]
+        df = df.with_columns(
+            pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
+        )
     df = df.with_columns(
         [
             pl.col("mileage")
@@ -217,6 +233,7 @@ def mileage_test_fraud(
 def mileage_test_fraud_new(
     auto: str,
     df: pl.DataFrame,
+    auto_record: Dict[str, Any],
     AGG_PERIOD_MINUTES: int | None =1,
     regime:  MileageModes = MileageModes.standart,
     TIME_PERIOD=24,
@@ -242,7 +259,12 @@ def mileage_test_fraud_new(
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
-
+    if auto_record["mileage_grading"] is not None:
+        input = auto_record["mileage_grading"][0]["input"]
+        output = auto_record["mileage_grading"][0]["output"]
+        df = df.with_columns(
+            pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
+        )
     df = df.with_columns(
         [
             pl.col("mileage")

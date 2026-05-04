@@ -18,7 +18,7 @@ class CarSensorsHelper:
 
     VALID_MODES = ['mileage', 'fuel', "fuel_charts", 'motohours']
     MAX_PERIOD_DAYS = 30 
-    DATE_FORMAT = "%Y-%m-%d"
+    DATE_FORMAT = "%Y-%m-%d"  # ISO 8601 с часовым поясом``
 
     MODE_NAMES = {
         'mileage': 'Пробег',
