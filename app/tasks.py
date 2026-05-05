@@ -870,7 +870,11 @@ def parse_cars_milleage_task(
         end_date = start_date + timedelta(days=1)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
-        cars = list(provider.cars.select_related("parsingcar_stats").filter(Q(is_active=True) & (  Q(parsingcar_stats__mileage_last_processed__isnull=True)) ) )
+        cars =provider.cars.select_related("parsingcar_stats").filter(Q(is_active=True) ) 
+        if not force:
+            cars = cars.filter(Q(parsingcar_stats__mileage_last_processed__isnull=True) | Q(parsingcar_stats__mileage_last_processed__lt=start_date))
+        cars = list(cars)
+
 
         if len(cars) == 0:
             logger.info("Нет машин для обработки пробега")
