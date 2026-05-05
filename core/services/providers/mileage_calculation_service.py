@@ -95,7 +95,7 @@ class MileageCalculationService:
                 return {"result": result}, 200
             if isinstance(df, polars.DataFrame):
                 auto = CarDataService.prepare_auto_data(car)
-                auto_record = auto.filter(pl.col("auto") == car_id).to_dicts()[0]
+                auto_record = auto.filter(pl.col("auto") == str(car_id)).to_dicts()[0]
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 if alg == MileageAlgorithms.compute:
                     result = mileage_test_compute(df, auto_record, agg, mode)
