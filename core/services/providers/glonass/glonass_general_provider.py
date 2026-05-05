@@ -2,7 +2,7 @@ from enum import Enum
 import logging
 import os
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, Any, Optional, List
 from uuid import UUID
 import zipfile
@@ -30,6 +30,7 @@ class GlonassGeneralProvider:
     mode: str
     old_car_id: UUID | None
     i = 0
+    last_auth: datetime 
 
     def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage", default_period_days=90):
         if cars is None and car is not None:
@@ -54,6 +55,7 @@ class GlonassGeneralProvider:
             self.base_path.mkdir(parents=True)
         self.mode = mode
         self.sensors_mapping_cache = {}
+        self.last_auth = datetime(1999, 1, 1, 0, 0, 0, 0)
 
         self.total_messages = 0
         self.processed_messages = 0
@@ -88,30 +90,34 @@ class GlonassGeneralProvider:
 
     def authenticate(self) -> bool:
         """Аутентификация в GlonassSoft API"""
-        self._enforce_rate_limit()
+        now = datetime.now()
+        if (now - self.last_auth).total_seconds() > 60 * 15:
+            self._enforce_rate_limit()
 
-        url = f"{self.base_url}/auth/login"
-        payload = {
-            "login": self.metadata.get("login"),
-            "password": self.metadata.get("password"),
-        }
+            url = f"{self.base_url}/auth/login"
+            payload = {
+                "login": self.metadata.get("login"),
+                "password": self.metadata.get("password"),
+            }
 
-        try:
-            response = requests.post(url, json=payload, timeout=(10, 120))
-            response.raise_for_status()
-            data = orjson.loads(response.content)
-            self.auth_token = data.get("AuthId")
+            try:
+                response = requests.post(url, json=payload, timeout=(10, 120))
+                response.raise_for_status()
+                data = orjson.loads(response.content)
+                self.auth_token = data.get("AuthId")
 
-            if not self.auth_token:
-                logger.error("AuthId не найден в ответе")
+                if not self.auth_token:
+                    logger.error("AuthId не найден в ответе")
+                    return False
+                self.last_auth = datetime.now()
+
+                logger.info("Аутентификация успешна")
+                return True
+
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Ошибка аутентификации: {e}")
                 return False
-
-            logger.info("Аутентификация успешна")
-            return True
-
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка аутентификации: {e}")
-            return False
+        return True
         
     def parse_raw_data_all(self, return_df=False ):
         if self.cars is None:

@@ -858,7 +858,8 @@ def parse_cars_milleage_task(
         provider_name: str,
         is_save_bad_data : bool = False,
         is_parse_mileage = False,
-        start_date_manual = None
+        start_date_manual = None,
+        force = False
 ):
     try:
 
@@ -898,7 +899,7 @@ def parse_cars_milleage_task(
                     continue
                 # всегда должен быть
                 last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
-                if last_datetime is None:
+                if last_datetime is None or force:
                     last_datetime = start_date
                 
                 if is_sensor == 0:

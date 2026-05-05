@@ -19,12 +19,14 @@ test_end_date =  datetime.datetime(2025, 6, 1)
 
 @pytest.mark.django_db
 def test_parser_raw_simple():
-    provider = DataProvider.objects.first()
+    provider = DataProvider.objects.last()
     car = provider.cars.filter(input__gt=1).first()
     assert car is not None
     assert provider is not None
     parser = GlonassGeneralProvider(None, car, provider, test_start_date, test_end_date, "raw"  )
-    status, result = parser.parse_raw_data("raw", True)
+    status, result = parser.parse_raw_data("raw", True, car)
+    status, result = parser.parse_raw_data("raw", True, car)
+    status, result = parser.parse_raw_data("raw", True, car)
     assert status == True
     assert isinstance( result , pl.DataFrame)
     assert "auto" in result.columns
