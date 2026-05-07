@@ -129,6 +129,9 @@ def mileage_test_fraud(
         [(pl.col("dmileage") / pl.col("dtime")).abs().fill_nan(0).alias("du")]
     )
 
+    
+
+
     df = df.filter([~((pl.col("du") > 225) & (pl.col("satellites") == 0))])
 
     df = df.with_columns(
@@ -300,6 +303,8 @@ def mileage_test_fraud_new(
         [(pl.col("dmileage") / pl.col("dtime")).abs().fill_nan(0).alias("du")]
     )
 
+    df = df.with_columns(pl.col("du").rolling_mean_by(by="timestamp", window_size="3s"))
+
     # плохо так как из-за чистой случайности колебания могут унести расчетные значения в минус
     # df = df.filter(
     #     [~((pl.col("du") > MAX_SPEED_FOR_CHECK) & (pl.col("satellites") == 0))]
@@ -414,6 +419,9 @@ def mileage_test_fraud_new(
             ]
         )
         agg = agg.to_dicts()
+    df = df.with_columns(
+        pl.col("dmileage").sub(pl.col("dmileage_r")).mean().alias("dmileage_diff")
+    )
     df = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
@@ -433,6 +441,7 @@ def mileage_test_fraud_new(
             pl.sum("jumps"),
             pl.max("sensor_mileage_broken"),
             pl.sum("dmileage_factor"),
+            pl.first("dmileage_diff")
         ]
     )
 
@@ -485,10 +494,11 @@ def mileage_test_fraud_new(
     )
     last_mileage = cast(float , df["last_mileage"].last())
     first_mileage = cast(float, df["first_mileage"].first())
-    travel = cast(float, df["travel"].sum() if is_zero_one_sensor else df["travel_r"].sum())
+    travel = cast(float, df["travel"].sum() if is_zero_one_sensor else df["travel"].sum())
     if last_mileage is not None:
         if last_mileage < first_mileage:
             last_mileage = first_mileage + travel
+    target_for_diff = "travel" if df["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
     return {
         "travel":travel,
         "travel_fraud": df["true_mileage_fraud"].sum(),
