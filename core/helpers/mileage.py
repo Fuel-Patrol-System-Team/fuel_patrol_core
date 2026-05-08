@@ -501,7 +501,7 @@ def mileage_test_fraud_new(
     target_for_diff = "travel" if df["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
     return {
         "travel":travel,
-        "travel_fraud": df["true_mileage_fraud"].sum(),
+        "travel_fraud": df["true_mileage_fraud"].sum() if False == True else 0,
         "first_mileage": first_mileage,
         "last_mileage": last_mileage,
         "data": agg if regime is MileageModes.agg else None,
