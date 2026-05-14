@@ -3,7 +3,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from core.views import AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
-    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ReportQueryListAPIView, ReportQueryDetailAPIView, \
+    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ReportQueryListAPIView, ReportQueryDetailAPIView, \
     CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, \
     CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
@@ -74,6 +74,7 @@ urlpatterns = [
     path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status'),
 
     # path('sensors', SensorsMappingListByCardAPIView.as_view(), name='sensors'), ##TODO: Переписать
+    path('parsing-stats/switch', ParsingStatsParsingSwitch.as_view(), name='parsing-stats-switch'),
 
     path('sensors/keys', SensorsKeyListAPIView.as_view(), name='sensors-keys-list'),
 

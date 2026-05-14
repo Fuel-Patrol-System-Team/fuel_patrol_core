@@ -319,6 +319,47 @@ CAR_ACTIVE_STATUS_SCHEMA = {
     }
 }
 
+PARSING_STATS_SWITCH_SCHEMA = {
+    "tags": ["cars"],
+    "operation_description": "Переключает статус парсинга выбранного параметра автомобиля (mileage, fuel, motohours).",
+    "request_body": openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["car_id", "parameter"],
+        properties={
+            "car_id": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                description="ID автомобиля (UUID)",
+                example="550e8400-e29b-41d4-a716-446655440000",
+            ),
+            "parameter": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="Параметр для переключения",
+                enum=["mileage", "fuel", "motohours"],
+                example="mileage",
+            ),
+        },
+    ),
+    "responses": {
+        200: openapi.Response(
+            description="Успешный ответ",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="Сообщение об успешном обновлении",
+                        example="Параметр успешно обновлён",
+                    )
+                },
+            ),
+        ),
+        400: openapi.Response(description="Неверные параметры запроса"),
+        404: openapi.Response(description="Автомобиль не найден"),
+    },
+}
+
+
 CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA = openapi.Parameter(
     name="key",
     in_=openapi.IN_QUERY,

@@ -327,6 +327,15 @@ class ParsingCarStats(models.Model):
     primary_last_processed = models.DateTimeField(**NULLABLE)
     mileage_last_processed = models.DateTimeField(blank=True, null=True)
     preffered_period_days = models.IntegerField(default=90)
+    is_parse_mileage = models.BooleanField(default=True)
+    is_parse_motohours= models.BooleanField(default=False)
+    is_parse_fuel = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = "Stats for parsing car"
+        verbose_name_plural = "Stats for parsing car"
+        ordering = ["-id"]
+
 
 # Signal to auto-create ParsingCarStats
 @receiver(post_save, sender=Car)
@@ -468,6 +477,7 @@ class SensorsValues(models.Model):
     is_active = models.BooleanField(default=True) # TODO: для будующей системы нахождения датчиков + мультисенсорного анализа
     grades = models.JSONField(**NULLABLE)
     created_at = models.DateTimeField(default=timezone.now)
+
 
     class Meta:
         verbose_name = "SensorsValues"

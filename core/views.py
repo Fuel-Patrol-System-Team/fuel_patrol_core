@@ -5,6 +5,7 @@ from typing import Dict
 from uuid import UUID
 from zoneinfo import ZoneInfo
 import polars as pl
+from django.db.models import F 
 
 from distlib.util import resolve
 from django.http import StreamingHttpResponse
@@ -47,19 +48,19 @@ from .helpers.data_provider import validate_provider_cars, \
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .mixins.convert_utc_mixin import TimestampTimezoneConverterMixin
-from .models import ComputedData, Organization, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
+from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
     CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser, CarFuelReport
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
+    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA
 )
 from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
 from .serializers import (
-    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer, UserRegistrationSerializer,
+    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer, ParsingStatsSwitchSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -441,9 +442,9 @@ class MileageCalculationAPIView(APIView):
         try:
             target_timezone = ZoneInfo(request.user.timezone) if request.user.timezone in pytz.common_timezones else ZoneInfo("UTC")
             if start_date:
-                start_date = datetime.fromisoformat(start_date).replace(tzinfo=target_timezone)
+                start_date = datetime.fromisoformat(start_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
             if end_date:
-                end_date = datetime.fromisoformat(end_date).replace(tzinfo=target_timezone)
+                end_date = datetime.fromisoformat(end_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
             else:
                 end_date = datetime.now()
         except ValueError as e:
@@ -702,6 +703,30 @@ class CarMileageReportDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id__users=self.request.user
         ).select_related('car_id')
 
+class ParsingStatsParsingSwitch(APIView):
+    
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**PARSING_STATS_SWITCH_SCHEMA)
+    def post(self, request):
+
+        serializer = ParsingStatsSwitchSerializer(data=request.data)
+        if not serializer.is_valid():
+            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        parameter =data.get("parameter")
+        true_parameter = f"is_parse_{parameter}"
+        car_id =data.get("car_id")
+        try:
+            target = ParsingCarStats.objects.filter(car_id=car_id)
+        except BaseException:
+            return error_response(f"Объект с id {car_id} не существует", status.HTTP_400_BAD_REQUEST)
+        result = target.update(**{true_parameter: ~F(true_parameter)})
+        return success_response({"updated": result}, 200)
+
+        
+          
 
 class CarDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]

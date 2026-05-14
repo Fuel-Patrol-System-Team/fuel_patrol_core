@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import (
     Organization,
+    ParsingCarStats,
     ReportQuery,
     OrgUser,
     Driver,
@@ -48,6 +49,7 @@ class CarByGroupSensorsValuesOutputSerializer(serializers.ModelSerializer):
 class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
     car_unit = serializers.SerializerMethodField()
+    parsing_stats = serializers.SerializerMethodField()
 
     class Meta:
         model = Car
@@ -65,6 +67,7 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "is_tarrified",
             "is_active",
             "sensors",
+            "parsing_stats"
         ]
 
     def get_car_unit(self, obj):
@@ -102,6 +105,16 @@ class CarOutputSerializer(serializers.ModelSerializer):
             )
 
         return sensors_data
+    def get_parsing_stats(self, obj):
+        parsing_stats, status = ParsingCarStats.objects.get_or_create(car=obj, defaults={
+            "car_id": obj.id
+        })
+        return {
+            "is_parse_mileage": parsing_stats.is_parse_mileage,
+            "is_parse_fuel": parsing_stats.is_parse_fuel,
+            "is_parse_motohours": parsing_stats.is_parse_motohours
+        }
+        
 
 class AutoDataOutputSerializer(serializers.ModelSerializer):
     car_unit = serializers.SerializerMethodField()
@@ -537,3 +550,8 @@ class CarLeaksChartsRequestSerializer(serializers.Serializer):
     leak_id = serializers.UUIDField(
         required=True,
     )
+
+# API
+class ParsingStatsSwitchSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField()
+    parameter = serializers.ChoiceField(["mileage", "fuel", "motohours"])
