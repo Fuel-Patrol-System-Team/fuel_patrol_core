@@ -89,6 +89,11 @@ def mileage_test_fraud(
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
+    
+    if "ign" not in df.columns:
+        df = df.with_columns(pl.lit(1).alias("ign"))
+    if df["ign"].is_null().all():
+        df = df.with_columns(pl.lit(1).alias("ign"))
 
     if auto_record["mileage_grading"] is not None:
         input = auto_record["mileage_grading"][0]["input"]
@@ -178,6 +183,10 @@ def mileage_test_fraud(
     )
     df = df.filter(pl.col("ncm").is_not_null())
 
+    df = df.with_columns(
+        pl.col("ign").mul(pl.col("dmileage")).alias("dmileage_active")
+    )
+
     df = df.group_by_dynamic(
         index_column="timestamp", every=f"{agg}m", group_by="auto"
     ).agg(
@@ -195,6 +204,7 @@ def mileage_test_fraud(
             pl.col("dmileage_big").sum(),
             pl.max("spikes"),
             pl.sum("jumps"),
+            pl.sum("dmileage_active")
         ]
     )
 
@@ -225,9 +235,10 @@ def mileage_test_fraud(
     #     pl.col("travel_fraud_2").std().over(["auto"]).alias("fraud_std"),
     # )
     show_df = df.select(["timestamp", "travel", "first_mileage", "last_mileage"]).to_dicts()
+    ign_diff = df["travel"].sum() - df["dmileage_active"].sum()
     return {
         "travel": df["travel_r"].sum(),
-        "travel_fraud": df["mileage_fraud"].sum(),
+        "travel_fraud": df["mileage_fraud"].sum() + ign_diff,
         "first_mileage": df["first_mileage"].first(),
         "last_mileage": df["last_mileage"].last(),
         "data": show_df if regime is MileageModes.agg else None,
@@ -268,6 +279,10 @@ def mileage_test_fraud_new(
         df = df.with_columns(
             pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
         )
+    if "ign" not in df.columns:
+        df = df.with_columns(pl.lit(1).alias("ign"))
+    if df["ign"].is_null().all():
+        df = df.with_columns(pl.lit(1).alias("ign"))
     df = df.with_columns(
         [
             pl.col("mileage")
@@ -395,6 +410,9 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.col("dmileage").mul(pl.col("time_factor")).alias("dmileage_factor")
     )
+    df = df.with_columns(
+        pl.col("ign").mul(pl.col("dmileage")).alias("dmileage_active")
+    )
     agg = None
     if regime == MileageModes.agg:
         agg = df.group_by_dynamic(
@@ -416,6 +434,7 @@ def mileage_test_fraud_new(
                 pl.sum("jumps"),
                 pl.max("sensor_mileage_broken"),
                 pl.sum("dmileage_factor"),
+                pl.sum("dmileage_active")
             ]
         )
         agg = agg.to_dicts()
@@ -441,7 +460,8 @@ def mileage_test_fraud_new(
             pl.sum("jumps"),
             pl.max("sensor_mileage_broken"),
             pl.sum("dmileage_factor"),
-            pl.first("dmileage_diff")
+            pl.first("dmileage_diff"),
+            pl.sum("dmileage_active")
         ]
     )
 
@@ -499,9 +519,11 @@ def mileage_test_fraud_new(
         if last_mileage < first_mileage:
             last_mileage = first_mileage + travel
     target_for_diff = "travel" if df["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
+    ign_miss = df["travel"].sum() - df["dmileage_active"].sum()
+
     return {
         "travel":travel,
-        "travel_fraud": df["true_mileage_fraud"].sum() if False == True else 0,
+        "travel_fraud": df["true_mileage_fraud"].sum() if False == True else ign_miss,
         "first_mileage": first_mileage,
         "last_mileage": last_mileage,
         "data": agg if regime is MileageModes.agg else None,
