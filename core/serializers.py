@@ -15,7 +15,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
-    CarUnit, UserCarList, CarMileageReport, TelegramUser, CarFuelReport,
+    CarUnit, UserCarList, CarMileageReport, TelegramUser, CarFuelReport, APICalculationLog,
 )
 
 
@@ -555,3 +555,20 @@ class CarLeaksChartsRequestSerializer(serializers.Serializer):
 class ParsingStatsSwitchSerializer(serializers.Serializer):
     car_id = serializers.UUIDField()
     parameter = serializers.ChoiceField(["mileage", "fuel", "motohours"])
+
+# LOGS
+class APICalculationLogOutputSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car.name', read_only=True, default=None)
+
+    class Meta:
+        model = APICalculationLog
+        fields = [
+            'id',
+            'view_name',
+            'car',
+            'car_name',
+            'request_data',
+            'response_data',
+            'status_code',
+            'created_at'
+        ]

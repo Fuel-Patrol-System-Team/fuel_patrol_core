@@ -391,6 +391,11 @@ UNFOLD = {
                         "icon": "error_outline",
                         "link": reverse_lazy("admin:core_carbaddata_changelist"),
                     },
+                    {
+                        "title": "Логи расчетов API",
+                        "icon": "terminal",
+                        "link": reverse_lazy("admin:core_apicalculationlog_changelist"),
+                    },
                 ],
             },
             {

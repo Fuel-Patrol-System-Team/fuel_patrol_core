@@ -1,3 +1,4 @@
+import json
 import os
 from django.contrib import admin, messages
 from django.db.models import Count, Q
@@ -20,7 +21,7 @@ from core.models import (
     ReportQuery, DataProvider, CarBadData, Language,
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails,
     UnitService, CarUnit, UserCarList, CarPrimary, CarMileageReport,
-    TelegramUser, CarFuelReport, CoreNotification, ParsingCarStats, ComputedData,
+    TelegramUser, CarFuelReport, CoreNotification, ParsingCarStats, ComputedData, APICalculationLog,
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -1940,3 +1941,65 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
                  name='core_unitservice_disable'),
         ]
         return custom_urls + urls
+
+
+# ─────────────────────────────────────────────────────────────
+# LOGS
+# ─────────────────────────────────────────────────────────────
+@admin.register(APICalculationLog)
+class APICalculationLogAdmin(ModelAdmin):
+    list_display = (
+        'created_at', 'view_name', 'user', 'car', 'status_display'
+    )
+    list_filter = ('view_name', 'status_code', 'created_at')
+
+    search_fields = (
+        'view_name', 'user__username', 'user__email', 'car__id', 'car__name', 'car__id_in_provider_system')
+
+    readonly_fields = (
+        'created_at', 'view_name', 'user', 'car',
+        'status_display', 'request_content_display', 'response_content_display'
+    )
+
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('created_at', 'view_name', 'user', 'car', 'status_display'),
+        }),
+        ('Данные запроса и ответа', {
+            'fields': ('request_content_display', 'response_content_display'),
+        }),
+    )
+
+    def status_display(self, obj):
+        status = obj.status_code
+        if status and 200 <= status < 300:
+            return format_html(f'<span style="color: #00ff00; font-weight: bold;">{status} OK</span>')
+        elif status and status >= 400:
+            return format_html(f'<span style="color: #ff0000; font-weight: bold;">{status} Error</span>')
+        return format_html(f'<span style="color: #ff9900;">{status}</span>')
+
+    status_display.short_description = "Статус"
+
+    def request_content_display(self, obj):
+        if obj.request_data:
+            formatted_json = json.dumps(obj.request_data, indent=2, ensure_ascii=False)
+            return format_html(
+                '<pre style="font-family: monospace; font-size: 12px; background-color: #000000; '
+                'color: #00ff00; padding: 10px; border-radius: 3px; max-height: 300px; '
+                'overflow-y: auto; line-height: 1.3; white-space: pre;">{}</pre>', formatted_json
+            )
+        return "Нет данных"
+
+    request_content_display.short_description = "Тело запроса (Request Data)"
+
+    def response_content_display(self, obj):
+        if obj.response_data:
+            formatted_json = json.dumps(obj.response_data, indent=2, ensure_ascii=False)
+            return format_html(
+                '<pre style="font-family: monospace; font-size: 12px; background-color: #000000; '
+                'color: #00ff00; padding: 10px; border-radius: 3px; max-height: 500px; '
+                'overflow-y: auto; line-height: 1.3; white-space: pre;">{}</pre>', formatted_json
+            )
+        return "Нет ответа"
+
+    response_content_display.short_description = "Тело ответа (Response Data)"

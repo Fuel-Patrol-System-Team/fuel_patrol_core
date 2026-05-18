@@ -3,7 +3,8 @@ from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from core.views import AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
-    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ReportQueryListAPIView, ReportQueryDetailAPIView, \
+    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ReportQueryListAPIView, \
+    ReportQueryDetailAPIView, \
     CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, \
     CarLeaksCountAPIView, CarLeaksVolumeAPIView, \
@@ -14,7 +15,7 @@ from core.views import AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySens
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
-    CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView
+    CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView
 
 urlpatterns = [
 
@@ -82,10 +83,12 @@ urlpatterns = [
 
     path('parsing/motohours', MotohoursCalculationAPIView.as_view(), name='motohours-test'),
 
+    path('parsing/logs', APICalculationLogListAPIView.as_view(), name='calculations-logs'),
+
     path('parsing/cars', VehicleSyncAPIView.as_view(), name='parsing-cars'),
 
     path('parsing/terminal-messages', CarDataRequestAPIView.as_view(), name='parsing-terminal-messages'),
-    
+
     path("charts/leaks", CarLeaksChartsAPIView.as_view(), name="charts-leaks"),
 
     path(

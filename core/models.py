@@ -30,6 +30,7 @@ class Organization(models.Model):
     def __str__(self):
         return self.name
 
+
 class TelegramUser(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
@@ -134,6 +135,7 @@ class OrgUser(AbstractUser):
     def __str__(self):
         return self.username
 
+
 class CoreNotification(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
 
@@ -173,6 +175,7 @@ class CoreNotification(models.Model):
     def __str__(self):
         return f"{self.target} - {self.type}"
 
+
 class Car(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     id_in_provider_system = models.IntegerField(default=0)
@@ -196,8 +199,6 @@ class Car(models.Model):
 
     def __str__(self):
         return self.name
-
-
 
 
 class CarUnit(models.Model):
@@ -245,7 +246,6 @@ class CarConsumption(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} Consumption"
-    
 
 
 class DataProvider(models.Model):
@@ -265,6 +265,7 @@ class DataProvider(models.Model):
     def __str__(self):
         return self.name
 
+
 class ReportQuery(models.Model):
     class ReportType(models.TextChoices):
         VEHICLES = "vehicles", "Синхронизация транспортных средств"
@@ -274,7 +275,6 @@ class ReportQuery(models.Model):
         PRIMARY = "primary", "Расчет превичных данных"
         NORMS = "norms", "Расчет норм расхода"
         COMPUTED_DATA = "computed_data", "Предобработанные данные"
-
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     status = models.CharField(max_length=50, **NULLABLE)
@@ -317,9 +317,11 @@ class ReportQueryDetails(models.Model):
     def __str__(self):
         return f"Report {self.report_query} Details {self.id}"
 
+
 class ParsingCarStats(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    car = models.OneToOneField(Car, null=True, on_delete=models.CASCADE, related_name="parsingcar_stats")  # Changed to OneToOneField
+    car = models.OneToOneField(Car, null=True, on_delete=models.CASCADE,
+                               related_name="parsingcar_stats")  # Changed to OneToOneField
     norms_last_processed = models.DateTimeField(**NULLABLE)
     fuel_last_processed = models.DateTimeField(**NULLABLE)  # начало/конец 
     computed_last_processed = models.DateTimeField(blank=True, null=True)
@@ -328,7 +330,7 @@ class ParsingCarStats(models.Model):
     mileage_last_processed = models.DateTimeField(blank=True, null=True)
     preffered_period_days = models.IntegerField(default=90)
     is_parse_mileage = models.BooleanField(default=True)
-    is_parse_motohours= models.BooleanField(default=False)
+    is_parse_motohours = models.BooleanField(default=False)
     is_parse_fuel = models.BooleanField(default=True)
 
     class Meta:
@@ -341,7 +343,9 @@ class ParsingCarStats(models.Model):
 @receiver(post_save, sender=Car)
 def create_parsing_car_stats(sender, instance, created, **kwargs):
     if created:  # Only create if the Car instance is newly created
-        ParsingCarStats.objects.create(car=instance, norms_last_processed=None, fuel_last_processed=None, computed_last_processed=None, leaks_last_processed=None, primary_last_processed=None, mileage_last_processed=None)
+        ParsingCarStats.objects.create(car=instance, norms_last_processed=None, fuel_last_processed=None,
+                                       computed_last_processed=None, leaks_last_processed=None,
+                                       primary_last_processed=None, mileage_last_processed=None)
 
 
 class CarFuelReport(models.Model):
@@ -361,6 +365,7 @@ class CarFuelReport(models.Model):
     def __str__(self):
         return f"{self.car_id.name} Fuel Report"
 
+
 ##TODO: Переименовать в CarLeakReport
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -379,6 +384,7 @@ class CarReport(models.Model):
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
 
+
 class ComputedData(models.Model):
     id = models.AutoField(primary_key=True)
     timestamp = models.DateTimeField()
@@ -393,10 +399,11 @@ class ComputedData(models.Model):
     fuel_first = models.FloatField()
     fuel_last = models.FloatField()
     es = models.FloatField()
+
     class Meta:
         verbose_name = "Computed Data"
         ordering = ["-timestamp"]
-        
+
     @classmethod
     def make_one(example: dict[str, Any]):
         columns = ComputedData.get_required_columns()
@@ -406,7 +413,9 @@ class ComputedData(models.Model):
 
     @classmethod
     def get_required_columns(cls):
-        return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime", "fuel_first", "fuel_last"]
+        return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
+                "fuel_first", "fuel_last"]
+
 
 class CarMileageReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -414,9 +423,8 @@ class CarMileageReport(models.Model):
     datetime = models.DateTimeField()
     mileage_start = models.FloatField(**NULLABLE)
     mileage_end = models.FloatField(**NULLABLE)
-    travel =  models.FloatField(**NULLABLE)
+    travel = models.FloatField(**NULLABLE)
     fraud = models.FloatField(**NULLABLE)
-    
 
     class Meta:
         verbose_name = "Car Mileage Report"
@@ -425,6 +433,7 @@ class CarMileageReport(models.Model):
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
+
 
 class CarBadData(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -474,10 +483,10 @@ class SensorsValues(models.Model):
     key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name="values")
     value = models.CharField(max_length=255)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="values")
-    is_active = models.BooleanField(default=True) # TODO: для будующей системы нахождения датчиков + мультисенсорного анализа
+    is_active = models.BooleanField(
+        default=True)  # TODO: для будующей системы нахождения датчиков + мультисенсорного анализа
     grades = models.JSONField(**NULLABLE)
     created_at = models.DateTimeField(default=timezone.now)
-
 
     class Meta:
         verbose_name = "SensorsValues"
@@ -821,3 +830,35 @@ class UnitService(models.Model):
             return True, "Автозагрузка отключена"
         except Exception as e:
             return False, str(e)
+
+
+##LOGS MODEL
+
+class APICalculationLog(models.Model):
+    view_name = models.CharField("Название View", max_length=255)
+    user = models.ForeignKey(
+        OrgUser,
+        verbose_name="Пользователь",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    car = models.ForeignKey(
+        Car,
+        verbose_name="Автомобиль",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    request_data = models.JSONField("Параметры запроса", default=dict)
+    response_data = models.JSONField("Тело ответа / Ошибка", default=dict)
+    status_code = models.IntegerField("Статус ответа", null=True, blank=True)
+    created_at = models.DateTimeField("Дата запроса", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Лог расчетов API"
+        verbose_name_plural = "Логи расчетов API"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.view_name} - {self.car} ({self.created_at.strftime('%d.%m.%Y %H:%M')})"

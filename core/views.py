@@ -1,20 +1,18 @@
 import json
-import os
+import uuid
 from datetime import datetime, timedelta
-from typing import Dict
 from uuid import UUID
 from zoneinfo import ZoneInfo
 import polars as pl
-from django.db.models import F 
+from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.db.models import F
 
-from distlib.util import resolve
-from django.http import StreamingHttpResponse
 import pandas
 import polars
 import pytz
 from celery import group
 
-from django.db.models import Q, Count, OuterRef, Subquery
+from django.db.models import Q, Count
 from django.shortcuts import render
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -38,29 +36,32 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
-import pytz.zoneinfo
 
-import pytz.zoneinfo.Brazil
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
 from .helpers.data_provider import validate_provider_cars, \
     create_data_provider
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
+from .mixins.calculation_logs_mixin import APICalculationLoggingMixin
 from .mixins.convert_utc_mixin import TimestampTimezoneConverterMixin
-from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, OrgUser, Car, CarConsumption, CarReport, Driver, DataProvider, \
-    CarBadData, Language, CarUnit, SensorsKey, SensorsValues, UserCarList, CarMileageReport, TelegramUser, CarFuelReport
+from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, OrgUser, Car, CarConsumption, CarReport, \
+    Driver, DataProvider, \
+    CarBadData, Language, CarUnit, SensorsValues, UserCarList, CarMileageReport, TelegramUser, CarFuelReport, \
+    APICalculationLog
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
     CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA, BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
+    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA,
+    BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA
 )
-from app.tasks import sync_vehicles_task, process_single_car_data_task, parse_terminal_messages_task
+from app.tasks import sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
-    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer, ParsingStatsSwitchSerializer, UserRegistrationSerializer,
+    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer,
+    ParsingStatsSwitchSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -70,22 +71,20 @@ from .serializers import (
     DataProviderSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
-    TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer
+    TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
+    APICalculationLogOutputSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
     success_response
 from core.helpers.permissions import IsOrgMember
-from .services.providers.car_sensors_raw_parser import CarSensorsRawParser
 from .services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
-from .services.providers.report_service import ReportService
 
 logger = logging.getLogger(__name__)
 
 
 ##TODO: Декомпозиция объемных views
-
 class DailyLeaksCountAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -186,7 +185,7 @@ class UserInfoAPIView(APIView):
             'username': user.username,
             'organization': user.org.name,
             'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.org.id}",
-            'timezone': user.timezone,  # ← добавили
+            'timezone': user.timezone,
         })
         return user_response(serializer.data, status.HTTP_200_OK)
 
@@ -418,7 +417,7 @@ class CarDataRequestAPIView(APIView):
         )
 
 
-class MileageCalculationAPIView(APIView):
+class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
     @swagger_auto_schema(
         operation_description="Расчет пробега для автомобиля за период с созданием отчета",
         request_body=MILEAGE_REQUEST_SCHEMA,
@@ -434,13 +433,25 @@ class MileageCalculationAPIView(APIView):
         car_id = request.data.get("car_id")
         agg = request.data.get("agg")
         alg = MileageAlgorithms.__members__.get(request.data.get("alg", ""),
-                                                MileageAlgorithms.compute)  # пока fraud очень тестовый
+                                                MileageAlgorithms.compute)
         start_date = request.data.get("start_date")
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
         try:
-            target_timezone = ZoneInfo(request.user.timezone) if request.user.timezone in pytz.common_timezones else ZoneInfo("UTC")
+            if not car_id:
+                return Response({"error": "Параметр car_id обязателен"}, status=404)
+            uuid.UUID(str(car_id))
+        except (ValueError, TypeError):
+            return Response({"error": "Автомобиль не найден (неверный формат ID)"}, status=404)
+
+        try:
+            user = request.user
+            if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
+                target_timezone = ZoneInfo(user.timezone)
+            else:
+                target_timezone = ZoneInfo("UTC")
+
             if start_date:
                 start_date = datetime.fromisoformat(start_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
             if end_date:
@@ -453,22 +464,30 @@ class MileageCalculationAPIView(APIView):
         except Exception as e:
             logger.error(f"Ошибка обработки дат: {e}")
             return Response({"error": f"Ошибка обработки дат: {e}"}, status=400)
-        if (end_date - start_date).days > 60:
+
+        if start_date and (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 
-        result, status_code = MileageCalculationService.calculate_mileage(
-            car_id=car_id,
-            agg=agg,
-            alg=alg,
-            start_date=start_date,
-            end_date=end_date,
-            is_save_bad_data=is_save_bad_data
-        )
+        try:
+            result, status_code = MileageCalculationService.calculate_mileage(
+                car_id=car_id,
+                agg=agg,
+                alg=alg,
+                start_date=start_date,
+                end_date=end_date,
+                is_save_bad_data=is_save_bad_data
+            )
+
+            if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
+                status_code = 404
+
+        except (ObjectDoesNotExist, ValidationError, Http404):
+            return Response({"error": "Автомобиль не найден в системе"}, status=404)
 
         return Response(result, status=status_code)
 
 
-class MotohoursCalculationAPIView(APIView):
+class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
     @swagger_auto_schema(
         operation_description="Расчет моточасов для автомобиля за период с созданием отчета",
         request_body=MOTOHOURS_REQUEST_SCHEMA,
@@ -488,21 +507,37 @@ class MotohoursCalculationAPIView(APIView):
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
         try:
+            if not car_id:
+                return Response({"error": "Параметр car_id обязателен"}, status=404)
+            uuid.UUID(str(car_id))
+        except (ValueError, TypeError):
+            return Response({"error": "Автомобиль не найден (неверный формат ID)"}, status=404)
+
+        try:
             if start_date:
                 start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
             if end_date:
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
-        if (end_date - start_date).days > 60:
+
+        if start_date and end_date and (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
-        result, status_code = MotohoursCalculationService.calculate_motohours(
-            car_id=car_id,
-            agg=agg,
-            start_date=start_date,
-            end_date=end_date,
-            is_save_bad_data=is_save_bad_data
-        )
+
+        try:
+            result, status_code = MotohoursCalculationService.calculate_motohours(
+                car_id=car_id,
+                agg=agg,
+                start_date=start_date,
+                end_date=end_date,
+                is_save_bad_data=is_save_bad_data
+            )
+
+            if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
+                status_code = 404
+
+        except (ObjectDoesNotExist, ValidationError, Http404):
+            return Response({"error": "Автомобиль не найден в системе"}, status=404)
 
         return Response(result, status=status_code)
 
@@ -645,7 +680,7 @@ class AutoDataListAPIView(ListAPIView):
 
 
 import csv
-from django.http import StreamingHttpResponse
+from django.http import StreamingHttpResponse, Http404
 from django.db.models import OuterRef, Subquery
 from rest_framework.generics import ListAPIView
 
@@ -703,8 +738,8 @@ class CarMileageReportDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id__users=self.request.user
         ).select_related('car_id')
 
+
 class ParsingStatsParsingSwitch(APIView):
-    
     permission_classes = [IsOrgMember]
 
     @swagger_auto_schema(**PARSING_STATS_SWITCH_SCHEMA)
@@ -715,9 +750,9 @@ class ParsingStatsParsingSwitch(APIView):
             logger.error(f"Ошибка валидации параметров: {serializer.errors}")
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
         data = serializer.validated_data
-        parameter =data.get("parameter")
+        parameter = data.get("parameter")
         true_parameter = f"is_parse_{parameter}"
-        car_id =data.get("car_id")
+        car_id = data.get("car_id")
         try:
             target = ParsingCarStats.objects.filter(car_id=car_id)
         except BaseException:
@@ -725,8 +760,6 @@ class ParsingStatsParsingSwitch(APIView):
         result = target.update(**{true_parameter: ~F(true_parameter)})
         return success_response({"updated": result}, 200)
 
-        
-          
 
 class CarDetailAPIView(RetrieveAPIView):
     permission_classes = [IsOrgMember]
@@ -758,9 +791,6 @@ class CarDetailAPIView(RetrieveAPIView):
 
 
 class CarUnitListAPIView(ListAPIView):
-    """
-    API для получения списка всех подразделений (CarUnit) организации
-    """
     permission_classes = [IsOrgMember]
     serializer_class = CarUnitSerializer
     pagination_class = StandardResultsSetPagination
@@ -769,9 +799,6 @@ class CarUnitListAPIView(ListAPIView):
     search_fields = ['name']
 
     def get_queryset(self):
-        """
-        Возвращает только CarUnit'ы, которые связаны с машинами организации пользователя
-        """
         return CarUnit.objects.filter(
             car__data_providers__org_id=self.request.user.org.id
         ).distinct().order_by('name')
@@ -923,17 +950,14 @@ class UserCarListListView(ListCreateAPIView):
     search_fields = ['name']
 
     def get_queryset(self):
-        """Возвращает только списки текущего пользователя"""
         return UserCarList.objects.filter(user=self.request.user).order_by('name')
 
     def get_serializer_class(self):
-        """Используем разные сериализаторы для GET и POST"""
         if self.request.method == 'GET':
             return UserCarListSerializer
         return UserCarListCreateUpdateSerializer
 
     def perform_create(self, serializer):
-        """Автоматически устанавливаем текущего пользователя"""
         serializer.save(user=self.request.user)
 
 
@@ -942,17 +966,14 @@ class UserCarListDetailView(RetrieveUpdateDestroyAPIView):
     lookup_field = 'pk'
 
     def get_queryset(self):
-        """Только списки текущего пользователя"""
         return UserCarList.objects.filter(user=self.request.user)
 
     def get_serializer_class(self):
-        """Используем разные сериализаторы в зависимости от метода"""
         if self.request.method == 'GET':
             return UserCarListDetailSerializer
         return UserCarListCreateUpdateSerializer
 
     def retrieve(self, request, *args, **kwargs):
-        """Переопределяем retrieve чтобы добавить статистику"""
         instance = self.get_object()
         serializer = self.get_serializer(instance)
 
@@ -967,7 +988,6 @@ class UserCarListDetailView(RetrieveUpdateDestroyAPIView):
         return Response(data)
 
     def perform_destroy(self, instance):
-        """При удалении списка убираем связь у всех машин"""
         Car.objects.filter(list_id=instance).update(list_id=None)
 
         instance.delete()
@@ -1102,10 +1122,6 @@ class CarSensorsValuesAPIView(ListAPIView):
 
 
 class CarBadDataAPIView(ListAPIView):
-    """
-    API для получения проблемных данных автомобилей.
-    Поддерживает фильтрацию через query parameters.
-    """
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
     serializer_class = CarBadDataSerializer
@@ -1115,9 +1131,6 @@ class CarBadDataAPIView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        """
-        Получение и фильтрация queryset на основе query parameters
-        """
         org = self.request.user.org
 
         queryset = CarBadData.objects.filter(
@@ -1150,9 +1163,6 @@ class CarBadDataAPIView(ListAPIView):
         return queryset
 
     def list(self, request, *args, **kwargs):
-        """
-        Переопределяем метод list для обработки ошибок
-        """
         try:
             queryset = self.filter_queryset(self.get_queryset())
 
@@ -1191,13 +1201,6 @@ class CarBadDataAPIView(ListAPIView):
 
 
 class StartTerminalMessagesParsingView(APIView):
-    """
-    View для запуска парсинга terminalMessages
-    Поддерживает три режима:
-    1. parse_all=True - парсинг всех активных машин
-    2. parse_all=False + car_ids - парсинг конкретных машин
-    3. parse_all=False + без car_ids - старая логика (все машины провайдера)
-    """
     permission_classes = [IsOrgMember]
 
     @swagger_auto_schema(**PARSE_RAW_DATA_SCHEMA)
@@ -1289,16 +1292,12 @@ class StartTerminalMessagesParsingView(APIView):
 
 
 class LanguageListAPIView(ListAPIView):
-    """
-    API для получения списка всех доступных языков
-    """
     queryset = Language.objects.all()
     serializer_class = LanguageSerializer
     pagination_class = None
 
 
 class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
-    
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
@@ -1317,13 +1316,11 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
 
         if not serializer.is_valid():
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-        
+
         data = serializer.validated_data
         car_id = data["car_id"]
         days = data["days"]
         leak_id = data.get("leak_id")
-
-        
 
         start_date = (datetime.now() - timedelta(days)).astimezone(pytz.utc)
         start_date_month = (datetime.now() - timedelta(31)).astimezone(pytz.utc)
@@ -1331,22 +1328,25 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
             auto__id=car_id,
             timestamp__gte=start_date
         ).order_by('timestamp')
-        if len(computed_data)  == 0:
-            return error_response("Нет данных для этой машины",  status.HTTP_400_BAD_REQUEST)
+        if len(computed_data) == 0:
+            return error_response("Нет данных для этой машины", status.HTTP_400_BAD_REQUEST)
         leaks = CarReport.objects.filter(car_id__id=car_id, datetime__gte=start_date)
         leaks_df = polars.DataFrame(list(leaks.values()))
         # fpm, pos_s
         df = polars.DataFrame(list(computed_data.values()))
-        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values", "ign_spread", "rpm_mean",  "spent_fuel"])
+        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values", "ign_spread", "rpm_mean", "spent_fuel"])
         tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
         tmp = tmp.filter(polars.col("spent_fuel").gt(0))
-        tmp = tmp.with_columns(pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias("color"))
-        tmp = tmp.with_columns(pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
+        tmp = tmp.with_columns(
+            pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias(
+                "color"))
+        tmp = tmp.with_columns(
+            pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
 
         data_fast = tmp.filter(polars.col("pos_s").gt(1)).select(["timestamp", "pos_s", "spent_fuel", "fpm", "color"])
         is_rpm = SensorsValues.objects.filter(key__key="rpm", car_id__id=car_id).count() > 0
         target_column = "rpm_mean" if is_rpm else "ign_spread"
-        data_slow =tmp.filter(polars.col("pos_s").lt(1)).select(["timestamp", "pos_s", target_column, "fpm", "color"])
+        data_slow = tmp.filter(polars.col("pos_s").lt(1)).select(["timestamp", "pos_s", target_column, "fpm", "color"])
         data_agg = tmp.filter(
             polars.col("spent_fuel").gt(0)
         )
@@ -1367,37 +1367,29 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
             polars.first("spent_fuel"),
         ]).with_columns(polars.lit("year").alias("color"))
         data_bar = [
-          *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "spent_fuel"]).with_columns(polars.lit("leaks").alias("color")).with_columns(polars.col("timestamp").dt.to_string("iso:strict")).to_dicts(),   
-          year.row(0, named=True),
-          month.row(0, named=True)
+            *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "spent_fuel"]).with_columns(
+                polars.lit("leaks").alias("color")).with_columns(
+                polars.col("timestamp").dt.to_string("iso:strict")).to_dicts(),
+            year.row(0, named=True),
+            month.row(0, named=True)
         ]
-            
-        
 
-        
         print(data_slow.columns)
         print(data_fast.columns)
         logger.info(f"{len(data_slow)} - {len(data_fast)} - {len(data_bar)}")
         response_data = {
-            "data_slow": data_slow.with_columns(polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
+            "data_slow": data_slow.with_columns(
+                polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
             "slow_type": "rpm" if is_rpm else "ign",
-            "data_fast": data_fast.with_columns(polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
+            "data_fast": data_fast.with_columns(
+                polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
             "data_bar": data_bar,
         }
 
         return success_response(response_data, status.HTTP_200_OK)
 
-            
 
 class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
-    """
-    API для получения сырых данных по машине для построения графиков.
-
-    Поддерживает 3 режима:
-    1. Пробег (mileage): timestamp, mileage, pos_s, ign, rpm
-    2. Топливо (fuel_charts): timestamp, calc_sensors_fuel_level, pos_s, rpm
-    3. Моточасы (motohours): timestamp, motohours, pos_s, rpm, ign
-    """
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
@@ -1418,7 +1410,6 @@ class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
         responses=CAR_SENSORS_RAW_DATA_SCHEMA['responses']
     )
     def post(self, request):
-        """Обработка POST-запроса для получения сырых данных."""
         DAYS = 30
         try:
             data = request.data
@@ -1476,7 +1467,6 @@ class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
             return error_response(error_data["error"], error_status)
 
     def _validate_request_params(self, car_id: str, start_date: str, end_date: str, mode: str):
-        """Валидация параметров запроса."""
         is_valid, required_error = CarSensorsHelper.validate_required_params(car_id, start_date, end_date)
         if not is_valid:
             return error_response(required_error, status.HTTP_400_BAD_REQUEST)
@@ -1516,7 +1506,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     max_age=60 * 60 * 24 * 7,
                 )
 
-        return response  
+        return response
 
 
 class CustomTokenRefreshView(TokenRefreshView):
@@ -1572,6 +1562,24 @@ class TelegramRegisterAPIView(APIView):
         output_serializer = TelegramUserOutputSerializer(user)
         status_code = 201 if created else 200
         return success_response(output_serializer.data, status_code)
+
+
+##LOGS
+class APICalculationLogListAPIView(ListAPIView):
+    serializer_class = APICalculationLogOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    permission_classes = [IsAuthenticated]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+
+    filterset_fields = ['car', 'status_code', 'view_name']
+
+    search_fields = ['view_name', 'car__id', 'car__name', 'car__id_in_provider_system']
+
+    def get_queryset(self):
+        return APICalculationLog.objects.filter(
+            user=self.request.user
+        ).select_related('car').order_by('-created_at')
 
 
 def api_docs_view(request):
