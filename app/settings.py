@@ -295,6 +295,11 @@ UNFOLD = {
                         "link": reverse_lazy("admin:core_orguser_changelist"),
                     },
                     {
+                        "title": "Уведомления",
+                        "icon": "notifications",
+                        "link": reverse_lazy("admin:core_corenotification_changelist"),
+                    },
+                    {
                         "title": "Языки",
                         "icon": "language",
                         "link": reverse_lazy("admin:core_language_changelist"),
@@ -340,6 +345,11 @@ UNFOLD = {
                         "icon": "local_gas_station",
                         "link": reverse_lazy("admin:core_carconsumption_changelist"),
                     },
+                    {
+                        "title": "Статистика парсинга",
+                        "icon": "manage_search",
+                        "link": reverse_lazy("admin:core_parsingcarstats_changelist"),
+                    },
                 ],
             },
             {
@@ -363,13 +373,18 @@ UNFOLD = {
                     },
                     {
                         "title": "Отчёты по топливу/заправке",
-                        "icon": "summarize",
+                        "icon": "local_gas_station",
                         "link": reverse_lazy("admin:core_carfuelreport_changelist"),
                     },
                     {
                         "title": "Отчёты по пробегам",
-                        "icon": "summarize",
+                        "icon": "route",
                         "link": reverse_lazy("admin:core_carmileagereport_changelist"),
+                    },
+                    {
+                        "title": "Предобработанные данные",
+                        "icon": "data_object",
+                        "link": reverse_lazy("admin:core_computeddata_changelist"),
                     },
                     {
                         "title": "Ошибочные данные",
