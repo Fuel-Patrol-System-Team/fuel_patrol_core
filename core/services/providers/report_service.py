@@ -20,32 +20,26 @@ logger = logging.getLogger(__name__)
 
 
 class ReportService:
-    """Сервис для управления отчетами и их деталями"""
-
     @staticmethod
     @transaction.atomic
     def create_report(
-            provider_id: str, report_type: str, is_save_bad_data: bool = True
+            provider_id: str,
+            report_type: str,
+            is_save_bad_data: bool = True,
     ) -> Tuple[ReportQuery, ReportQueryDetails]:
-        """
-        Создает новую заявку на отчет с деталями
-        """
         try:
-
             report_query = ReportQuery.objects.create(
                 provider_id_id=provider_id,
                 report_type=report_type,
                 is_save_bad_data=is_save_bad_data,
                 status="created",
             )
-
             report_details = ReportQueryDetails.objects.create(
-                report_query=report_query, start_time=datetime.now().astimezone(pytz.utc)
+                report_query=report_query,
+                start_time=datetime.now().astimezone(pytz.utc),
             )
-
             logger.info(f"Создан отчет {report_query.id} типа {report_type}")
             return report_query, report_details
-
         except Exception as e:
             logger.error(f"Ошибка создания отчета: {e}")
             raise
@@ -58,33 +52,23 @@ class ReportService:
             cars_proceed: int = 1,
             cars_skipped: int = 0,
     ) -> None:
-        """
-        Завершает отчет успешно
-        """
         try:
-            end_time = datetime.now().astimezone()
-            start_time = report_query.report_query_details.start_time
-
-            if start_time:
-                time_proceed = end_time - start_time
-            else:
-                time_proceed = timedelta(0)
-
-            serialized_result = serialize_for_json(result_data)
+            end_time     = datetime.now().astimezone()
+            start_time   = report_query.report_query_details.start_time
+            time_proceed = (end_time - start_time) if start_time else timedelta(0)
 
             report_query.status = "completed"
             report_query.save()
 
-            report_details = report_query.report_query_details
-            report_details.result = serialized_result
-            report_details.end_time = end_time
+            report_details             = report_query.report_query_details
+            report_details.result      = serialize_for_json(result_data)
+            report_details.end_time    = end_time
             report_details.time_proceed = time_proceed
             report_details.cars_proceed = cars_proceed
             report_details.cars_skipped = cars_skipped
             report_details.save()
 
             logger.info(f"Отчет {report_query.id} завершен успешно за {time_proceed}")
-
         except Exception as e:
             logger.error(f"Ошибка завершения отчета {report_query.id}: {e}")
             raise
@@ -98,40 +82,28 @@ class ReportService:
             cars_proceed: int = 0,
             cars_skipped: int = 1,
     ) -> None:
-        """
-        Завершает отчет с ошибкой
-        """
         try:
-            end_time = datetime.now(pytz.utc)
-            start_time = report_query.report_query_details.start_time
+            end_time     = datetime.now(pytz.utc)
+            start_time   = report_query.report_query_details.start_time
+            time_proceed = (end_time - start_time) if start_time else timedelta(0)
 
-            if start_time:
-                time_proceed = end_time - start_time
-            else:
-                time_proceed = timedelta(0)
-
-            traceback_data = {
-                "error": error_message,
+            traceback_data: Dict[str, Any] = {
+                "error":     error_message,
                 "timestamp": datetime.now(pytz.utc).isoformat(),
             }
-
             if exception:
-                traceback_data.update(
-                    {
-                        "exception_type": type(exception).__name__,
-                        "exception_message": str(exception),
-                        "traceback": traceback.format_exc(),
-                    }
-                )
-
-            serialized_traceback = serialize_for_json(traceback_data)
+                traceback_data.update({
+                    "exception_type":    type(exception).__name__,
+                    "exception_message": str(exception),
+                    "traceback":         traceback.format_exc(),
+                })
 
             report_query.status = "error"
             report_query.save()
 
-            report_details = report_query.report_query_details
-            report_details.traceback = serialized_traceback
-            report_details.end_time = end_time
+            report_details           = report_query.report_query_details
+            report_details.traceback = serialize_for_json(traceback_data)
+            report_details.end_time  = end_time
             report_details.time_proceed = time_proceed
             report_details.cars_proceed = cars_proceed
             report_details.cars_skipped = cars_skipped
@@ -140,11 +112,8 @@ class ReportService:
             logger.error(
                 f"Отчет {report_query.id} завершен с ошибкой за {time_proceed}: {error_message}"
             )
-
         except Exception as e:
-            logger.error(
-                f"Ошибка при завершении отчета с ошибкой {report_query.id}: {e}"
-            )
+            logger.error(f"Ошибка при завершении отчета с ошибкой {report_query.id}: {e}")
             raise
 
     @staticmethod
@@ -154,103 +123,100 @@ class ReportService:
             reason: str,
             report_query: Optional[ReportQuery] = None,
             start_date: Optional[Union[datetime, str]] = None,
-            end_date: Optional[Union[datetime, str]] = None
-    ) -> None:
-        """
-        Создает запись о некорректных данных с добавлением периода парсинга
+            end_date: Optional[Union[datetime, str]] = None,
+            severity: str = CarBadData.Severity.ERROR,
+            category: str = CarBadData.Category.UNKNOWN,
+            tags: Optional[list[str]] = None,
+    ) -> Optional[CarBadData]:
+        if not report_query or not report_query.is_save_bad_data:
+            return None
 
-        Args:
-            car: Машина
-            reason: Причина некорректных данных
-            report_query: Отчет (опционально)
-            start_date: Начальная дата периода парсинга (datetime или строка в формате YYYY-MM-DD)
-            end_date: Конечная дата периода парсинга (datetime или строка в формате YYYY-MM-DD)
-        """
-        try:
-            if not report_query or not report_query.is_save_bad_data:
-                return
+        period_info   = ""
+        start_date_dt = ReportService._parse_date(start_date, "start_date")
+        end_date_dt   = ReportService._parse_date(end_date, "end_date")
 
-            period_info = ""
-
-            # Преобразуем строки в datetime при необходимости
-            start_date_dt = None
-            end_date_dt = None
-
-            if start_date:
-                if isinstance(start_date, str):
-                    try:
-                        # Пробуем разные форматы дат
-                        from dateutil import parser
-                        start_date_dt = parser.parse(start_date)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Не удалось распарсить start_date: {start_date}")
-                elif isinstance(start_date, datetime):
-                    start_date_dt = start_date
-                else:
-                    logger.warning(f"Неизвестный тип start_date: {type(start_date)}")
-
-            if end_date:
-                if isinstance(end_date, str):
-                    try:
-                        from dateutil import parser
-                        end_date_dt = parser.parse(end_date)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Не удалось распарсить end_date: {end_date}")
-                elif isinstance(end_date, datetime):
-                    end_date_dt = end_date
-                else:
-                    logger.warning(f"Неизвестный тип end_date: {type(end_date)}")
-
-            # Форматируем даты для отображения
-            if start_date_dt and end_date_dt:
-                start_str = start_date_dt.strftime("%d.%m.%Y")
-                end_str = end_date_dt.strftime("%d.%m.%Y")
-                period_info = f" за период с {start_str} по {end_str}"
-            elif start_date_dt:
-                start_str = start_date_dt.strftime("%d.%m.%Y")
-                period_info = f" за период с {start_str}"
-            elif end_date_dt:
-                end_str = end_date_dt.strftime("%d.%m.%Y")
-                period_info = f" за период до {end_str}"
-            # Если переданы строки, но не удалось распарсить, добавляем их как есть
-            elif start_date or end_date:
-                period_info = f" за период {start_date or ''} {f'- {end_date}' if end_date else ''}".strip()
-
-            full_reason = f"{reason}{period_info}"
-
-            CarBadData.objects.create(
-                car_id=car,
-                reason=full_reason,
-                datetime=datetime.now().astimezone()
+        if start_date_dt and end_date_dt:
+            period_info = f" за период с {start_date_dt:%d.%m.%Y} по {end_date_dt:%d.%m.%Y}"
+        elif start_date_dt:
+            period_info = f" за период с {start_date_dt:%d.%m.%Y}"
+        elif end_date_dt:
+            period_info = f" за период до {end_date_dt:%d.%m.%Y}"
+        elif start_date or end_date:
+            period_info = (
+                f" за период {start_date or ''} {f'- {end_date}' if end_date else ''}".strip()
             )
 
-            logger.warning(
-                f"Создана запись CarBadData для {car.name}: {full_reason}"
-            )
+        if tags is None:
+            tags = [CarBadData.Tag.SERVER]
 
-        except Exception as e:
-            logger.error(f"Ошибка создания CarBadData для {car.name}: {e}")
+        valid_tags = ReportService._validate_tags(tags)
+
+        bad_data = CarBadData.objects.create(
+            car_id=car,
+            reason=f"{reason}{period_info}",
+            datetime=datetime.now().astimezone(),
+            severity=severity,
+            category=category,
+            tags=valid_tags,
+            report_query=report_query,
+        )
+
+        logger.error(
+            f"[{severity.upper()}][{category}] tags={valid_tags} "
+            f"CarBadData для {car.name}: {reason}{period_info}"
+        )
+
+        return bad_data
+
+
+    @staticmethod
+    def _validate_tags(tags: Optional[list[str]]) -> list[str]:
+        if not tags:
+            return []
+
+        valid_values = {t.value for t in CarBadData.Tag}
+        result, invalid = [], []
+
+        for t in tags:
+            if t in valid_values:
+                result.append(t)
+            else:
+                invalid.append(t)
+
+        if invalid:
+            logger.warning(f"Переданы неизвестные теги CarBadData, проигнорированы: {invalid}")
+
+        return result
+
+    @staticmethod
+    def _parse_date(
+            value: Optional[Union[datetime, str]],
+            field_name: str,
+    ) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            try:
+                from dateutil import parser
+                return parser.parse(value)
+            except (ValueError, TypeError):
+                logger.warning(f"Не удалось распарсить {field_name}: {value!r}")
+                return None
+        logger.warning(f"Неизвестный тип {field_name}: {type(value)}")
+        return None
+
 
     @staticmethod
     @transaction.atomic
     def save_car_reports_batch(leaks_df: pl.DataFrame) -> int:
-        """
-        Сохраняет результаты утечек в CarReport батчами
-        """
         if leaks_df is None or leaks_df.is_empty():
             logger.warning("Нет данных для сохранения в CarReport")
             return 0
 
         try:
-
-            leaks_records = (
-                leaks_df.filter(pl.col("is_leak") == True)
-                .to_dicts()
-            )
-
-            logger.info(
-                f"Найдено {len(leaks_records)} записей с утечками для сохранения в CarReport"
-            )
+            leaks_records = leaks_df.filter(pl.col("is_leak") == True).to_dicts()
 
             if not leaks_records:
                 logger.warning("Нет записей с is_leak=True для сохранения")
@@ -261,49 +227,26 @@ class ReportService:
 
             for record in leaks_records:
                 try:
-                    car_id = record["auto"]
-                    timestamp = record["timestamp"]
-                    timestamp = timestamp.replace(tzinfo=timezone.utc)
-                    speed = record["pos_s"]
-                    leak_volume = record["leak"]
-                    is_leak = record["is_leak"]
-
-                    logger.debug(
-                        f"Обработка записи: car_id={car_id}, timestamp={timestamp}, leak={leak_volume}, is_leak={is_leak}"
-                    )
-
-                    car = Car.objects.get(id=car_id)
-
-                    car_report = CarReport(
+                    car = Car.objects.get(id=record["auto"])
+                    car_reports.append(CarReport(
                         car_id=car,
-                        datetime=timestamp,
-                        volume=int(leak_volume),
-                        speed=float(speed),
-                        status=bool(is_leak),
-                    )
-                    car_reports.append(car_report)
-
+                        datetime=record["timestamp"].replace(tzinfo=timezone.utc),
+                        volume=int(record["leak"]),
+                        speed=float(record["pos_s"]),
+                        status=bool(record["is_leak"]),
+                    ))
                     if len(car_reports) >= 100:
                         CarReport.objects.bulk_create(car_reports)
                         saved_count += len(car_reports)
-                        logger.info(
-                            f"Сохранено {len(car_reports)} записей CarReport (батч)"
-                        )
-                        car_reports = []
-
+                        car_reports  = []
                 except Car.DoesNotExist:
                     logger.warning(f"Машина {record['auto']} не найдена для CarReport")
-                    continue
                 except Exception as e:
                     logger.error(f"Ошибка создания CarReport для {record['auto']}: {e}")
-                    continue
 
             if car_reports:
                 CarReport.objects.bulk_create(car_reports)
                 saved_count += len(car_reports)
-                logger.info(
-                    f"Сохранено {len(car_reports)} записей CarReport (финальный батч)"
-                )
 
             logger.info(f"Всего сохранено {saved_count} записей в CarReport")
             return saved_count
@@ -315,9 +258,6 @@ class ReportService:
     @staticmethod
     @transaction.atomic
     def save_car_consumption_batch(norms_df: pl.DataFrame) -> int:
-        """
-        Сохраняет нормы расхода в CarConsumption
-        """
         if norms_df is None or norms_df.is_empty():
             logger.warning("Нет данных для сохранения в CarConsumption")
             return 0
@@ -329,33 +269,22 @@ class ReportService:
             for row in norms_df.to_dicts():
                 try:
                     car = Car.objects.get(id=row["sl_avto"])
-
-                    consumption = CarConsumption(
+                    consumption_records.append(CarConsumption(
                         car_id=car,
                         winter_volume=row.get("norma_rasx_winter"),
                         summer_volume=row.get("norma_rasx_summer"),
                         speed_etalon=row.get("speed_etalon", 60.0),
                         max_fuel=row.get("max_fuel", 2000.0),
                         valid_period=row.get("period"),
-                    )
-                    consumption_records.append(consumption)
-
+                    ))
                     if len(consumption_records) >= 50:
                         CarConsumption.objects.bulk_create(consumption_records)
-                        saved_count += len(consumption_records)
-                        consumption_records = []
-                        logger.debug(f"Сохранено {saved_count} записей CarConsumption")
-
+                        saved_count         += len(consumption_records)
+                        consumption_records  = []
                 except Car.DoesNotExist:
-                    logger.warning(
-                        f"Машина {row['sl_avto']} не найдена для CarConsumption"
-                    )
-                    continue
+                    logger.warning(f"Машина {row['sl_avto']} не найдена для CarConsumption")
                 except Exception as e:
-                    logger.error(
-                        f"Ошибка создания CarConsumption для {row['sl_avto']}: {e}"
-                    )
-                    continue
+                    logger.error(f"Ошибка создания CarConsumption для {row['sl_avto']}: {e}")
 
             if consumption_records:
                 CarConsumption.objects.bulk_create(consumption_records)

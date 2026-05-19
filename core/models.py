@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytz
 from django.contrib.auth.models import AbstractUser
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django.utils import timezone
 from django.dispatch import receiver
@@ -339,10 +340,9 @@ class ParsingCarStats(models.Model):
         ordering = ["-id"]
 
 
-# Signal to auto-create ParsingCarStats
 @receiver(post_save, sender=Car)
 def create_parsing_car_stats(sender, instance, created, **kwargs):
-    if created:  # Only create if the Car instance is newly created
+    if created:
         ParsingCarStats.objects.create(car=instance, norms_last_processed=None, fuel_last_processed=None,
                                        computed_last_processed=None, leaks_last_processed=None,
                                        primary_last_processed=None, mileage_last_processed=None)
@@ -436,19 +436,74 @@ class CarMileageReport(models.Model):
 
 
 class CarBadData(models.Model):
+    class Severity(models.TextChoices):
+        INFO = "info", "Информация"
+        WARNING = "warning", "Предупреждение"
+        ERROR = "error", "Ошибка"
+        CRITICAL = "critical", "Критическая"
+
+    class Category(models.TextChoices):
+        NO_DATA = "no_data", "Нет данных за период"
+        PROVIDER_ERROR = "provider_error", "Ошибка провайдера"
+        CALCULATION = "calculation", "Ошибка расчёта"
+        SYNC = "sync", "Ошибка синхронизации"
+        DATA_QUALITY = "data_quality", "Некорректные данные"
+        AUTH = "auth", "Ошибка авторизации"
+        UNKNOWN = "unknown", "Неизвестно"
+
+    class Tag(models.TextChoices):
+        MILEAGE = "mileage", "Пробег"
+        LEAKS = "leaks", "Сливы"
+        FUEL = "fuel", "Топливо"
+        MOTOHOURS = "motohours", "Моточасы"
+        SERVER = "server", "Сервер"
+        PROVIDER = "provider", "Провайдер"
+        MALFUNCTION = "malfunction", "Неисправность"
+        ALERT = "alert", "Предупреждение"
+        FAULT = "fault", "Ошибка"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="bad_data")
     reason = models.TextField()
     datetime = models.DateTimeField(default=timezone.now)
 
+    severity = models.CharField(
+        max_length=20,
+        choices=Severity.choices,
+        default=Severity.WARNING,
+        db_index=True,
+    )
+    category = models.CharField(
+        max_length=30,
+        choices=Category.choices,
+        default=Category.UNKNOWN,
+        db_index=True,
+    )
+    tags = ArrayField(
+        base_field=models.CharField(max_length=20, choices=Tag.choices),
+        default=list,
+        blank=True,
+    )
+    report_query = models.ForeignKey(
+        "ReportQuery",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="bad_data_records",
+    )
+
     class Meta:
         verbose_name = "Car Bad Data"
-        verbose_name_plural = "Car Bad Data`s"
-        ordering = ["-id"]
+        verbose_name_plural = "Car Bad Data's"
+        ordering = ["-datetime"]
+        indexes = [
+            models.Index(fields=["severity", "category"]),
+            models.Index(fields=["car_id", "datetime"]),
+            models.Index(fields=["report_query", "severity"]),
+        ]
 
     def __str__(self):
-        return f"{self.car_id.name} - {self.datetime} - {self.reason}"
-
+        return f"[{self.severity}] {self.car_id.name} — {self.datetime:%Y-%m-%d %H:%M}"
 
 class Driver(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -833,7 +888,6 @@ class UnitService(models.Model):
 
 
 ##LOGS MODEL
-
 class APICalculationLog(models.Model):
     view_name = models.CharField("Название View", max_length=255)
     user = models.ForeignKey(

@@ -128,6 +128,33 @@ class ReportQueryInline(TabularInline):
     show_change_link = True
 
 
+class CarBadDataInline(admin.TabularInline):
+    model = CarBadData
+    extra = 0
+    fields = ('datetime', 'severity', 'category', 'tags_list', 'reason_short')
+    readonly_fields = ('datetime', 'severity', 'category', 'tags_list', 'reason_short')
+    can_delete = False
+    show_change_link = True
+    max_num = 5
+
+    def tags_list(self, obj):
+        if obj.tags:
+            return ", ".join(obj.tags)
+        return "—"
+
+    tags_list.short_description = "Теги"
+
+    def reason_short(self, obj):
+        return obj.reason[:100] + '…' if len(obj.reason) > 100 else obj.reason
+
+    reason_short.short_description = "Причина"
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
 class OrgUserInline(TabularInline):
     model = OrgUser
     extra = 0
@@ -1350,32 +1377,180 @@ class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
 # ─────────────────────────────────────────────────────────────
 # CarBadData
 # ─────────────────────────────────────────────────────────────
+
 @admin.register(CarBadData)
 class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('car_display', 'datetime', 'reason_short')
-    list_filter = ('datetime',)
-    search_fields = ('car_id__name', 'reason')
+    list_display = (
+        'car_link', 'datetime', 'severity_badge', 'category_badge',
+        'tags_display', 'reason_short', 'has_report'
+    )
+    list_filter = (
+        'severity', 'category', 'datetime',
+        ('tags', admin.AllValuesFieldListFilter),
+        ('report_query', admin.EmptyFieldListFilter),
+    )
+    search_fields = ('car_id__name', 'car_id__id_in_provider_system', 'reason', 'tags')
     ordering = ('-datetime',)
-    export_form_class = UnfoldExportForm
-    import_form_class = UnfoldImportForm
+    readonly_fields = ('id', 'created_at_display')
     list_per_page = 40
     date_hierarchy = 'datetime'
-    show_full_result_count = False
-    actions = ['export_selected']
+    show_full_result_count = True
+    list_select_related = ('car_id', 'report_query')
+    actions = ['export_selected', 'delete_selected']
 
-    def car_display(self, obj):
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+
+    fieldsets = (
+        ('Информация об ошибке', {
+            'fields': ('car_id', 'datetime', 'severity', 'category', 'tags')
+        }),
+        ('Детали', {
+            'fields': ('reason', 'report_query')
+        }),
+        ('Системная информация', {
+            'fields': ('id', 'created_at_display'),
+            'classes': ('collapse',)
+        }),
+    )
+
+    list_filter_suite = ['severity', 'category', 'datetime']
+    list_filter_suite_theme = 'box'
+
+    def car_link(self, obj):
         if obj.car_id:
             url = reverse("admin:core_car_change", args=[obj.car_id.id])
-            return _link(url, obj.car_id.name)
+            return format_html(
+                '<a href="{}" style="font-weight: 500;">{} <span style="color: #666;">({})</span></a>',
+                url,
+                obj.car_id.name,
+                obj.car_id.id_in_provider_system or '—'
+            )
         return "—"
 
-    car_display.short_description = "Автомобиль"
-    car_display.admin_order_field = 'car_id__name'
+    car_link.short_description = "Автомобиль"
+    car_link.admin_order_field = 'car_id__name'
+
+    def severity_badge(self, obj):
+        colors = {
+            'info': '#6c757d',
+            'warning': '#ffc107',
+            'error': '#dc3545',
+            'critical': '#9b1d2c',
+        }
+        color = colors.get(obj.severity, '#6c757d')
+        icons = {
+            'info': 'ℹ️',
+            'warning': '⚠️',
+            'error': '❌',
+            'critical': '🔥',
+        }
+        icon = icons.get(obj.severity, '📌')
+        return format_html(
+            '<span style="display: inline-block; padding: 3px 8px; background: {}20; '
+            'color: {}; border-radius: 4px; font-size: 12px; font-weight: 500;">'
+            '{} {}</span>',
+            color, color, icon, obj.get_severity_display()
+        )
+
+    severity_badge.short_description = "Важность"
+    severity_badge.admin_order_field = 'severity'
+
+    def category_badge(self, obj):
+        colors = {
+            'no_data': '#17a2b8',
+            'provider_error': '#fd7e14',
+            'calculation': '#e83e8c',
+            'sync': '#6f42c1',
+            'data_quality': '#28a745',
+            'auth': '#495057',
+            'unknown': '#adb5bd',
+        }
+        color = colors.get(obj.category, '#adb5bd')
+        return format_html(
+            '<span style="padding: 3px 8px; background: {}20; color: {}; '
+            'border-radius: 4px; font-size: 12px;">{}</span>',
+            color, color, obj.get_category_display()
+        )
+
+    category_badge.short_description = "Категория"
+    category_badge.admin_order_field = 'category'
+
+    def tags_display(self, obj):
+        if not obj.tags:
+            return "—"
+
+        tags_html = []
+        tag_colors = {
+            'mileage': '#007bff',
+            'leaks': '#17a2b8',
+            'fuel': '#28a745',
+            'motohours': '#ffc107',
+            'server': '#dc3545',
+            'provider': '#fd7e14',
+            'malfunction': '#e83e8c',
+            'alert': '#ffc107',
+            'fault': '#dc3545',
+        }
+
+        for tag in obj.tags[:5]:
+            color = tag_colors.get(tag, '#6c757d')
+            tag_display = dict(CarBadData.Tag.choices).get(tag, tag)
+            tags_html.append(
+                format_html(
+                    '<span style="display: inline-block; margin: 2px; padding: 2px 6px; '
+                    'background: {}20; color: {}; border-radius: 3px; font-size: 11px;">{}</span>',
+                    color, color, tag_display
+                )
+            )
+
+        if len(obj.tags) > 5:
+            tags_html.append(format_html('<span>…+{}</span>', len(obj.tags) - 5))
+
+        return mark_safe(' '.join(str(t) for t in tags_html))
 
     def reason_short(self, obj):
-        return obj.reason[:80] + '…' if len(obj.reason) > 80 else obj.reason
+        if len(obj.reason) > 60:
+            return obj.reason[:60] + '…'
+        return obj.reason
 
     reason_short.short_description = "Причина"
+
+    def has_report(self, obj):
+        if obj.report_query:
+            url = reverse("admin:core_reportquery_change", args=[obj.report_query.id])
+            return format_html('<a href="{}">📄 Report #{}</a>', url, obj.report_query.id)
+        return "—"
+
+    has_report.short_description = "Report Query"
+
+    def created_at_display(self, obj):
+        return obj.datetime.strftime("%Y-%m-%d %H:%M:%S")
+
+    created_at_display.short_description = "Время создания"
+
+    @admin.action(description='🔴 Отметить как CRITICAL')
+    def set_critical(self, request, queryset):
+        updated = queryset.update(severity=CarBadData.Severity.CRITICAL)
+        self.message_user(request, f'Отмечено как CRITICAL: {updated} записей.', messages.SUCCESS)
+
+    @admin.action(description='🟡 Отметить как WARNING')
+    def set_warning(self, request, queryset):
+        updated = queryset.update(severity=CarBadData.Severity.WARNING)
+        self.message_user(request, f'Отмечено как WARNING: {updated} записей.', messages.SUCCESS)
+
+    @admin.action(description='🔵 Отметить как INFO')
+    def set_info(self, request, queryset):
+        updated = queryset.update(severity=CarBadData.Severity.INFO)
+        self.message_user(request, f'Отмечено как INFO: {updated} записей.', messages.SUCCESS)
+
+    actions = ['export_selected', 'set_critical', 'set_warning', 'set_info']
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
+        return actions
 
 
 # ─────────────────────────────────────────────────────────────
