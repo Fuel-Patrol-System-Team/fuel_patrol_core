@@ -23,7 +23,8 @@ def make_empty_mileage_result(mode: MileageModes):
         "travel_fraud": None,
         "first_mileage": None,
         "last_mileage": None,
-        "data": [] if mode is not MileageModes.agg else None
+        "data": [] if mode is not MileageModes.agg else None,
+        "chart_data": None,
     }
 
 
@@ -248,14 +249,14 @@ def mileage_test_fraud_new(
     auto: str,
     df: pl.DataFrame,
     auto_record: Dict[str, Any],
-    AGG_PERIOD_MINUTES: int | None =1,
-    regime:  MileageModes = MileageModes.standart,
+    AGG_PERIOD_MINUTES: int | None = 1,
+    regime: MileageModes = MileageModes.standart,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
 ):
     """
     Функция для расчета пройденного расстояния и детектирования накрутки автомобиля
-    
+
     auto: id машины
     df: датафрейм с колонками ["timestamp", "mileage", "pos_s", "ign"]
     AGG_PERIOD_MINUTES: кастомная агрегация времени для пользователя
@@ -274,8 +275,11 @@ def mileage_test_fraud_new(
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
     if auto_record["mileage_grading"] is not None:
-        input = auto_record["mileage_grading"][0]["input"]
-        output = auto_record["mileage_grading"][0]["output"]
+        grading = auto_record["mileage_grading"]
+        if isinstance(grading, str):
+            grading = ast.literal_eval(grading)
+        input = grading[0]["input"]
+        output = grading[0]["output"]
         df = df.with_columns(
             pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
         )
@@ -283,6 +287,9 @@ def mileage_test_fraud_new(
         df = df.with_columns(pl.lit(1).alias("ign"))
     if df["ign"].is_null().all():
         df = df.with_columns(pl.lit(1).alias("ign"))
+    if df.shape[0] == 0:
+        return make_empty_mileage_result(regime)
+
     df = df.with_columns(
         [
             pl.col("mileage")
@@ -319,11 +326,14 @@ def mileage_test_fraud_new(
     )
 
     df = df.with_columns(pl.col("du").rolling_mean_by(by="timestamp", window_size="3s"))
-
     # плохо так как из-за чистой случайности колебания могут унести расчетные значения в минус
     # df = df.filter(
     #     [~((pl.col("du") > MAX_SPEED_FOR_CHECK) & (pl.col("satellites") == 0))]
     # )
+
+    df = df.with_columns(
+        pl.col("du").rolling_mean_by(by="timestamp", window_size="1m").alias("du_mean")
+    )
 
     df = df.with_columns(
         pl.when(pl.col("dmileage").abs().gt(4) & pl.col("du").gt(200))
@@ -411,7 +421,10 @@ def mileage_test_fraud_new(
         pl.col("dmileage").mul(pl.col("time_factor")).alias("dmileage_factor")
     )
     df = df.with_columns(
-        pl.col("ign").mul(pl.col("dmileage")).alias("dmileage_active")
+        pl.when(pl.col("ign").eq(0))
+        .then(pl.col("dmileage"))
+        .otherwise(0)
+        .alias("dmileage_missed")
     )
     agg = None
     if regime == MileageModes.agg:
@@ -434,14 +447,18 @@ def mileage_test_fraud_new(
                 pl.sum("jumps"),
                 pl.max("sensor_mileage_broken"),
                 pl.sum("dmileage_factor"),
-                pl.sum("dmileage_active")
+                pl.sum("dmileage_missed"),
+                pl.sum("dmileage")
+                .sub(pl.sum("dmileage_missed"))
+                .alias("dmileage_fraud_ign"),
             ]
         )
+        agg = agg.with_columns(pl.col("dmileage_fraud_ign").alias("dmileage_fraud"))
         agg = agg.to_dicts()
     df = df.with_columns(
         pl.col("dmileage").sub(pl.col("dmileage_r")).mean().alias("dmileage_diff")
     )
-    df = df.group_by_dynamic(
+    df_working = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
         [
@@ -461,13 +478,13 @@ def mileage_test_fraud_new(
             pl.max("sensor_mileage_broken"),
             pl.sum("dmileage_factor"),
             pl.first("dmileage_diff"),
-            pl.sum("dmileage_active")
+            pl.sum("dmileage_missed"),
         ]
     )
 
     target_for_diff = "travel" if is_zero_one_sensor else "travel_r"
 
-    df = df.with_columns(
+    df_working = df_working.with_columns(
         pl.col("travel")
         .abs()
         .sub(pl.col("dmileage_factor").abs())
@@ -475,7 +492,7 @@ def mileage_test_fraud_new(
         .truediv(pl.col("travel"))
         .alias("dmileage_factor_diff")
     )
-    df = df.with_columns(
+    df_working = df_working.with_columns(
         [
             pl.col("last_mileage")
             .sub(pl.col("first_mileage"))
@@ -489,15 +506,18 @@ def mileage_test_fraud_new(
         ]
     )
 
-    df = df.with_columns(
+    df_working = df_working.with_columns(
         pl.col("mileage_fraud").clip(upper_bound=0).truediv(127).abs().alias("resets")
     )
 
-    df = df.with_columns(
-        pl.when((pl.lit(is_zero_one_sensor) & pl.col("resets").is_between(0, 2))  ).then(pl.col("last_mileage").add(pl.col("mileage_fraud"))).otherwise(pl.col("last_mileage")).alias("last_mileage")
+    df_working = df_working.with_columns(
+        pl.when((pl.lit(is_zero_one_sensor) & pl.col("resets").is_between(0, 2)))
+        .then(pl.col("last_mileage").add(pl.col("mileage_fraud")))
+        .otherwise(pl.col("last_mileage"))
+        .alias("last_mileage")
     )
 
-    df = df.with_columns(
+    df_working = df_working.with_columns(
         (
             (
                 (pl.col("spikes_big").lt(20) & pl.col("dmileage_factor_diff").gt(0.65))
@@ -507,24 +527,46 @@ def mileage_test_fraud_new(
         .alias("is_actual_fraud")
         .cast(pl.Int8)
     )
-    df = df.with_columns(
+    df_working = df_working.with_columns(
         pl.col("is_actual_fraud")
         .mul(pl.col("mileage_fraud"))
         .alias("true_mileage_fraud")
     )
-    last_mileage = cast(float , df["last_mileage"].last())
-    first_mileage = cast(float, df["first_mileage"].first())
-    travel = cast(float, df["travel"].sum() if is_zero_one_sensor else df["travel"].sum())
+    last_mileage = cast(float, df_working["last_mileage"].last())
+    first_mileage = cast(float, df_working["first_mileage"].first())
+    travel = cast(
+        float,
+        (
+            df_working["travel"].sum()
+            if is_zero_one_sensor
+            else df_working["travel"].sum()
+        ),
+    )
     if last_mileage is not None:
         if last_mileage < first_mileage:
             last_mileage = first_mileage + travel
-    target_for_diff = "travel" if df["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
-    ign_miss = df["travel"].sum() - df["dmileage_active"].sum()
+    target_for_diff = (
+        "travel" if df_working["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
+    )
+    ign_miss = df_working["dmileage_missed"].sum()
+    travel_fraud = df_working["true_mileage_fraud"].sum() if False == True else ign_miss
+    chart_data = None
+    if travel_fraud > 0:
+        chart_data = {
+            "timestamp": df["timestamp"].dt.replace_time_zone("UTC").dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_list(),
+            "mileage": df["mileage"].to_list(),
+            "pos_s": df["pos_s"].to_list(),
+            "pos_s_sensor": df["du_mean"].to_list(),
+            "ign": df["ign"].to_list(),
+        }
 
     return {
-        "travel":travel,
-        "travel_fraud": df["true_mileage_fraud"].sum() if False == True else ign_miss,
+        "travel": travel,
+        "travel_fraud": (
+            df_working["true_mileage_fraud"].sum() if False == True else ign_miss
+        ),
         "first_mileage": first_mileage,
         "last_mileage": last_mileage,
         "data": agg if regime is MileageModes.agg else None,
+        "chart_data": chart_data,
     }

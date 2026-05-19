@@ -69,8 +69,8 @@ class CarSensorsHelper:
         Optional[datetime], Optional[datetime], Optional[str]]:
         """Парсинг и валидация дат."""
         try:
-            start_date = datetime.strptime(start_date_str, CarSensorsHelper.DATE_FORMAT).replace(tzinfo=pytz.UTC)
-            end_date = datetime.strptime(end_date_str, CarSensorsHelper.DATE_FORMAT).replace(tzinfo=pytz.UTC)
+            start_date = datetime.fromisoformat(start_date_str).replace(tzinfo=pytz.UTC)
+            end_date = datetime.fromisoformat(end_date_str).replace(tzinfo=pytz.UTC)
 
             if start_date >= end_date:
                 return None, None, "start_date должен быть раньше end_date"
