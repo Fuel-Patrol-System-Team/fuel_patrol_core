@@ -325,11 +325,18 @@ def mileage_test_fraud_new(
         [(pl.col("dmileage") / pl.col("dtime")).abs().fill_nan(0).alias("du")]
     )
 
+    df = df.with_columns(
+        pl.when(pl.col("dmileage").lt(-100)).then(0).otherwise(pl.col("dmileage")).alias("dmileage")
+    )
+
     df = df.with_columns(pl.col("du").rolling_mean_by(by="timestamp", window_size="3s"))
     # плохо так как из-за чистой случайности колебания могут унести расчетные значения в минус
     # df = df.filter(
     #     [~((pl.col("du") > MAX_SPEED_FOR_CHECK) & (pl.col("satellites") == 0))]
     # )
+    df = df.with_columns(
+        pl.col("msg_number").diff().abs().gt(5).cast(pl.Int32).alias("msg_skip")
+    )
 
     df = df.with_columns(
         pl.col("du").rolling_mean_by(by="timestamp", window_size="1m").alias("du_mean")
@@ -426,6 +433,12 @@ def mileage_test_fraud_new(
         .otherwise(0)
         .alias("dmileage_missed")
     )
+    df = df.with_columns(
+        pl.col("dmileage_missed").mul(pl.col("msg_skip")).alias("dmileage_missed_skip")
+    )
+    df = df.with_columns(
+        pl.col("dmileage_missed").sub(pl.col("dmileage_missed_skip"))
+    )
     agg = None
     if regime == MileageModes.agg:
         agg = df.group_by_dynamic(
@@ -451,9 +464,10 @@ def mileage_test_fraud_new(
                 pl.sum("dmileage")
                 .sub(pl.sum("dmileage_missed"))
                 .alias("dmileage_fraud_ign"),
+                pl.sum("dmileage_missed_skip").alias("travel_skipped")
             ]
         )
-        agg = agg.with_columns(pl.col("dmileage_fraud_ign").alias("dmileage_fraud"))
+        agg = agg.with_columns(pl.col("dmileage_fraud_ign").alias("travel_fraud"))
         agg = agg.to_dicts()
     df = df.with_columns(
         pl.col("dmileage").sub(pl.col("dmileage_r")).mean().alias("dmileage_diff")
@@ -479,6 +493,7 @@ def mileage_test_fraud_new(
             pl.sum("dmileage_factor"),
             pl.first("dmileage_diff"),
             pl.sum("dmileage_missed"),
+            pl.sum("dmileage_missed_skip")
         ]
     )
 
@@ -559,6 +574,7 @@ def mileage_test_fraud_new(
             "pos_s_sensor": df["du_mean"].to_list(),
             "ign": df["ign"].to_list(),
         }
+    travel_skipped = df_working["dmileage_missed_skip"].sum()
 
     return {
         "travel": travel,
@@ -567,6 +583,7 @@ def mileage_test_fraud_new(
         ),
         "first_mileage": first_mileage,
         "last_mileage": last_mileage,
+        "travel_skipped": travel_skipped,
         "data": agg if regime is MileageModes.agg else None,
         "chart_data": chart_data,
     }

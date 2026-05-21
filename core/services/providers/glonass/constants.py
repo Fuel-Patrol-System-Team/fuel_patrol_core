@@ -38,6 +38,8 @@ class GL_PARAM_KEYS(Enum):
     amtr_y= "amtr_y"
     amtr_z= "amtr_z"
     satellites = "satellites"
+    msg_number = "msg_number"
+    fuel_consumpt = "can_fuel_consumpt"
     
 class GL_ACTION_KEYS(Enum):
     tarify_car = "tarify"
@@ -60,7 +62,11 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.amtr_x: GlonassParameter(False, "amtr_x", "amtr_x", None, False, 0, 0),
     GL_PARAM_KEYS.amtr_y: GlonassParameter(False, "amtr_y", "amtr_y", None, False, 0, 0),
     GL_PARAM_KEYS.amtr_z: GlonassParameter(False, "amtr_z", "amtr_z", None, False, 0,0),
-    GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None), }
+    GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None),
+    GL_PARAM_KEYS.msg_number: GlonassParameter(True, "parameters.msg_number", "msg_number", None, False, 999, 999),
+    GL_PARAM_KEYS.fuel_consumpt: GlonassParameter(True, "", "fuel_consumpt", None,  False, 0, 0),
+    }
+    
 
 
 def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):

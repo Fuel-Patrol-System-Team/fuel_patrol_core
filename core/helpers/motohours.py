@@ -19,6 +19,8 @@ def compute_motohours_total(df: pl.DataFrame, AGG_TIME: int | None):
 def _criterion_detection(df: pl.DataFrame):
     units = "hours"
     compute_method = "ign"
+    if df["motohours"].is_null().all():
+        return compute_method, units 
     max_value = df["motohours"].max()
     if max_value is not None:
         compute_method = "motohours"
@@ -80,6 +82,10 @@ def _compute_motohours_by_motohours(
     )
 
     data = None
+    t = df.filter(
+        pl.col("motohours_diff").abs().gt(0)
+    )
+    multiplier = 1000 if (t["motohours_diff"].mean() / t["dtime"].mean()) > 0.08 else 1 
 
     if AGG_PERIOD is not None:
         data = df.group_by_dynamic(
@@ -95,28 +101,24 @@ def _compute_motohours_by_motohours(
                 pl.lit("hours").alias("units"),
             ]
         )
-
-    test_batch = data.filter(pl.col("motohours").gt(0))
-    test_record = test_batch.row(index=0, named=True)
-    if test_record["motohours"] > test_record["dtime"] * 0.75:
-
         if AGG_PERIOD is not None:
             data = data.with_columns(
                 [
-                    pl.col("motohours_first") / 3600,
-                    pl.col("motohours_last") / 3600,
-                    pl.col("motohours_fraud") / 3600,
-                    pl.col("motohours") / 3600,
+                    pl.col("motohours_first") / multiplier,
+                    pl.col("motohours_last") / multiplier,
+                    pl.col("motohours_fraud") / multiplier,
+                    pl.col("motohours") / multiplier,
                     pl.lit("seconds").alias("units"),
                 ]
             )
+    
 
     return {
-        "motohours_start": df["motohours"].first(),
-        "motohours_end": df["motohours"].last(),
+        "motohours_start": df["motohours"].first() / multiplier,
+        "motohours_end": df["motohours"].last() / multiplier,
         "data": data,
-        "motohours_fraud": df["motohours_fraud"].sum(),
-        "motohours": df["motohours_diff"].sum(),
+        "motohours_fraud": df["motohours_fraud"].sum() / multiplier,
+        "motohours": df["motohours_diff"].sum() / multiplier,
     }
 
 
@@ -149,14 +151,12 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
             ]
         )
 
-    hours = (df["timestamp"].last() - df["timestamp"].first()).timestamp() / 3600
+    hours = (df["timestamp"].last() - df["timestamp"].first()).total_seconds() / 3600
 
     motohours = df["engine_working"].sum()
-    if hours > motohours:
-        motohours /= 3600
     return {
-        "motohours_start": None,
-        "motohours_end": None,
+        "motohours_start": 0,
+        "motohours_end": motohours,
         "data": data,
         "motohours_fraud": 0,  # because it can't be other way
         "motohours": motohours,

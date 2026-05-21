@@ -116,6 +116,7 @@ def sync_vehicles_task(self, provider_id: str, organization_id: str):
                 f"ошибок {result['failed']}, "
                 f"деактивировано {result['inactivated']}"
             )
+            notify_organization(str(provider.org_id), f"Синхронизация машин завершена \nмашины с ошибкой {result['failed']}\nобновлено {result['updated']}\nсоздано {result['created']}\nдеактивированно {result['inactivated']}")
         else:
             logger.error(f"Ошибка синхронизации: {result['error']}")
 
@@ -631,6 +632,7 @@ def calculate_leaks_cron(
     if len(cars_for_computing) != 0:
         parser = GlonassGeneralProvider(cars_for_computing, None, provider, now, now)
         total_leaks = 0
+        leaks = {}
         for car in cars_for_computing:
             try:
                 last_date_for_processing =  car.last_processed_date if car.last_processed_date else (now.now() - timedelta(365))
@@ -671,6 +673,17 @@ def calculate_leaks_cron(
                 filtering_result = filtering_service.apply_filters(leaks_result)
                 report = ReportService.save_car_reports_batch(filtering_result)
                 total_leaks += filtering_result.shape[0]
+                for leak in filtering_result.rows(named=True):
+                    car_name = leak["name"]
+                    if leak["name"] in leaks:
+                        leaks[car_name]["leak"] += leak["leak"] 
+                        leaks[car_name]["amount"] += 1
+                    else:
+                        leaks[car_name] = {
+                            "name": leak["name"],
+                            "leak": leak["leak"],
+                            "amount": 1,
+                        }
                     
                 logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
                 Car.objects.filter(id=car.id).update(last_processed_date=now)
@@ -685,7 +698,8 @@ def calculate_leaks_cron(
                 ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                 continue
         if total_leaks > 0:
-            notify_organization(str(provider.org_id.id), f"Найдено сливов {total_leaks}")
+            report_table = "\n".join([f"{leak["name"]}\t{leak["leak"]}\t{leak["amount"]}" for leak in leaks.values()])
+            notify_organization(str(provider.org_id.id), f"Найдерно сливов: {total_leaks}\n{report_table}\nЗа более подробной информацией обратитесь к https://fuel.noosoft.ru/overview/leaks") 
     else:
         logger.info("Нет сливов")
     
@@ -708,6 +722,7 @@ def calculate_leaks_cron_one(
     
                 
     total_leaks = 0
+    total_leaks_data = {}
     if car is not None:
         parser = GlonassGeneralProvider([car], None, provider, now, now)
         try:
@@ -751,7 +766,16 @@ def calculate_leaks_cron_one(
                 filtering_result = filtering_service.apply_filters(leaks_result)
                 report = ReportService.save_car_reports_batch(filtering_result)
                 total_leaks += filtering_result.shape[0]
-                    
+                filtering_data = filtering_result.select(["name", "leak"]).to_dicts()
+                for data_piece in filtering_data: 
+                    name_piece = data_piece["name"]
+                    leak_piece = data_piece["leak"]
+                    if name_piece in total_leaks_data:
+                        total_leaks_data[name_piece] += leak_piece 
+                    else:
+                        total_leaks_data[name_piece] = leak_piece
+                
+
                 logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
             Car.objects.filter(id=car.id).update(last_processed_date=now)
         except Exception as err:
@@ -765,8 +789,10 @@ def calculate_leaks_cron_one(
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
             return
     if total_leaks > 0:
-        notify_organization(str(provider.org_id.id), f"Найдено сливов {total_leaks}")
+        filtering_result_text = "\n".join([f"{k} {v}" for (k, v) in total_leaks_data.items()])
+        notify_organization(str(provider.org_id.id), f"Найдено сливов {total_leaks}\n{filtering_result_text}")
     else:
+        notify_organization(str(provider.org_id.id), f"Сливов не обнаружено")
         logger.info("Нет сливов")
         
 

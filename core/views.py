@@ -645,7 +645,7 @@ class CarListBySensorGroupAPIView(ListAPIView):
         if key_value == "motohours":
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id
-            ).filter(Q(key__key="motohours") | Q(key__key="ignition"))
+            ).filter(Q(key__key="motohours") | Q(key__key="ign"))
         else:
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value
@@ -705,13 +705,18 @@ class AutoDataListAPIView(ListAPIView):
 
     def get(self, request, *args, **kwargs):
         queryset = self.get_queryset()
-        data = list(queryset.values())
-        for row in data:
-            if "grades" in row:
-                row["grades"] = json.dumps(row["grades"])
-        content = pandas.DataFrame(data)
+        cars = list(Car.objects.all())
+        total_autos = None
+        for car in cars:
+            auto_df = CarDataService.prepare_auto_data(car, return_dict=True)
+            if total_autos is None:
+                total_autos= auto_df
+            else:
+                total_autos.extend(auto_df)
+                
 
-        content.to_csv("/data/datasets/fuel/Cars-server.csv", quotechar='"')
+        df = pandas.DataFrame(total_autos,)
+        df.to_csv("/data/datasets/fuel/Cars-new.csv")
 
         return queryset
 

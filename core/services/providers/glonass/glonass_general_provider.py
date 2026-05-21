@@ -267,7 +267,7 @@ class GlonassGeneralProvider:
             return True, pl.DataFrame() if return_df else []
 
         if mode == "mileage":
-            result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
+            result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.mileage, GP.satellites, GP.rpm, GP.ignition, GP.msg_number],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
         elif mode == "fuel":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
@@ -280,7 +280,7 @@ class GlonassGeneralProvider:
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.msg_number, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)

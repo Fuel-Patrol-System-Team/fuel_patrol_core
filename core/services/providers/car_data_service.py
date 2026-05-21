@@ -151,7 +151,7 @@ class CarDataService:
         raise
 
     @staticmethod
-    def prepare_auto_data(car) -> pl.DataFrame:
+    def prepare_auto_data(car, return_dict = False) -> pl.DataFrame:
         """Подготавливает auto DataFrame для расчета норм"""
         try:
             fuel_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).first()
@@ -170,6 +170,8 @@ class CarDataService:
                 "fuel_sensors_amount": fuel_sensors_amount,
                 "mileage_grading": mileage_sensor.grades if mileage_sensor else None,
             }]
+            if return_dict:
+                return auto_data
 
             auto_df = pl.DataFrame(auto_data).with_columns([
                 pl.col("id").cast(pl.Categorical),

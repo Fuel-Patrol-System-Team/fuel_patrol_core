@@ -280,6 +280,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping["ign"] = f"parameters.iobits"
                     else:
                         sensors_mapping["ign"] = f"parameters.{key_part}"
+            elif sensor_type == "Consumption":
+                if "can_fuel_consumpt" in parameter_name:
+                    sensors_mapping["fuel_consumpt"] = f"parameters.{parameter_name}"
             elif (
                     sensor_type == "Motohours"
                     or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
