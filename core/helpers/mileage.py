@@ -1,3 +1,4 @@
+import ast
 from enum import Enum
 from typing import Any, Dict, List, cast
 import polars as pl
@@ -21,6 +22,7 @@ def make_empty_mileage_result(mode: MileageModes):
     return {
         "travel": None,
         "travel_fraud": None,
+        "msg_skip_big": 0,
         "first_mileage": None,
         "last_mileage": None,
         "data": [] if mode is not MileageModes.agg else None,
@@ -267,6 +269,7 @@ def mileage_test_fraud_new(
     COMMON_SENSOR_ISSUE_VALUES = [-127.0, 127.0, 254.0, -254.0]
 
     col_dtime_period = pl.col("timestamp").dt.truncate("48h")
+    col_chart_period = pl.col("timestamp").dt.truncate("48h")
     spikes_dtime_period = pl.col("timestamp").dt.truncate(f"{TIME_PERIOD}h")
     CLIPPING_FACTOR = 5  # 1 - infinity нужен для сравненения последней части пробега с со всем остальным, для правильного вычисления накрутки
     MAX_SPEED_FOR_CHECK = 224
@@ -291,7 +294,7 @@ def mileage_test_fraud_new(
     if df.shape[0] == 0:
         return make_empty_mileage_result(regime)
     if df["ign"].eq(0.0).all():
-        df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).alias("ign"))
+        df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign"))
 
     df = df.with_columns(
         [
@@ -573,12 +576,18 @@ def mileage_test_fraud_new(
     travel_fraud = df_working["true_mileage_fraud"].sum() if False == True else ign_miss
     chart_data = None
     if travel_fraud > 0:
+        cdf = df.group_by_dynamic(index_column="timestamp", every="1m").agg(
+            pl.col("mileage").first(),
+            pl.col("pos_s").mean(),
+            pl.col("du_mean").mean(),
+            pl.col("ign").max(),
+        )
         chart_data = {
-            "timestamp": df["timestamp"].dt.replace_time_zone("UTC").dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_list(),
-            "mileage": df["mileage"].to_list(),
-            "pos_s": df["pos_s"].to_list(),
-            "pos_s_sensor": df["du_mean"].to_list(),
-            "ign": df["ign"].to_list(),
+            "timestamp": cdf["timestamp"].dt.replace_time_zone("UTC").dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_list(),
+            "mileage": cdf["mileage"].to_list(),
+            "pos_s": cdf["pos_s"].to_list(),
+            "pos_s_sensor": cdf["du_mean"].to_list(),
+            "ign": cdf["ign"].to_list(),
         }
     travel_skipped = df_working["dmileage_missed_skip"].sum()
     msg_skip_big = df_working["msg_skip_big"].max()
