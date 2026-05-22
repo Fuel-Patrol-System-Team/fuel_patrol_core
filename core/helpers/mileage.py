@@ -460,10 +460,7 @@ def mileage_test_fraud_new(
                 pl.sum("jumps"),
                 pl.max("sensor_mileage_broken"),
                 pl.sum("dmileage_factor"),
-                pl.sum("dmileage_missed"),
-                pl.sum("dmileage")
-                .sub(pl.sum("dmileage_missed"))
-                .alias("dmileage_fraud_ign"),
+                pl.sum("dmileage_missed").alias("dmileage_fraud_ign"),
                 pl.sum("dmileage_missed_skip").alias("travel_skipped")
             ]
         )

@@ -236,9 +236,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping["rpm"] = f"parameters.can{input_number}"
                     else:
                         sensors_mapping["rpm"] = f"parameters.{key_part}"
-
             elif (
-                    sensor_type == "MileageSensor"
+                    sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
             ):
                 if parameter_name:
