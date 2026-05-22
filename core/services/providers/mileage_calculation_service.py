@@ -8,6 +8,7 @@ from pandas import DataFrame
 import polars
 
 from app.tasks import CarDataService
+from core.admin import CarBadData
 from core.helpers.mileage import MileageModes, make_empty_mileage_result, mileage_test_compute, mileage_test_fraud_new
 from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
@@ -102,6 +103,11 @@ class MileageCalculationService:
                 else:
                     result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode)
 
+                if result["msg_skip_big"] == 1:
+                    try:
+                        ReportService.create_bad_data_record(Car.objects.get(id=car_id), "Обнаружены пропущенные сообщения для пробега", report_query, start_date, end_date, CarBadData.Severity.WARNING, CarBadData.Category.CALCULATION)
+                    except BaseException as err:
+                        logger.error(f"Невозможно создать baddata для mileage отчета для {car_id} (пропуск данных) из-за {err}")
                 report_data = {
                     "result": result,
                     "rows_processed": len(df),
