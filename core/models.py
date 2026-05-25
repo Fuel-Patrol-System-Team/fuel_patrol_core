@@ -7,6 +7,7 @@ from pathlib import Path
 import pytz
 from django.contrib.auth.models import AbstractUser
 from django.contrib.postgres.fields import ArrayField
+from django.contrib.postgres.indexes import GinIndex
 from django.db import models
 from django.utils import timezone
 from django.dispatch import receiver
@@ -82,6 +83,7 @@ class TelegramUser(models.Model):
         indexes = [
             models.Index(fields=['chat_id']),
             models.Index(fields=['organization']),
+            models.Index(fields=['organization', 'is_active'], name='tguser_org_active_idx'),
         ]
 
     def __str__(self):
@@ -132,6 +134,10 @@ class OrgUser(AbstractUser):
         verbose_name = "Org User"
         verbose_name_plural = "Org Users"
         ordering = ["username"]
+        indexes = [
+            models.Index(fields=['org'], name='orguser_org_idx'),
+            models.Index(fields=['org', 'is_active'], name='orguser_org_active_idx'),
+        ]
 
     def __str__(self):
         return self.username
@@ -171,6 +177,7 @@ class CoreNotification(models.Model):
         indexes = [
             models.Index(fields=["target", "read_at"]),
             models.Index(fields=["created_at"]),
+            models.Index(fields=["target", "read_at", "created_at"], name='notif_target_unread_idx'),
         ]
 
     def __str__(self):
@@ -197,6 +204,11 @@ class Car(models.Model):
         verbose_name = "Car"
         verbose_name_plural = "Cars"
         ordering = ["name"]
+        indexes = [
+            models.Index(fields=['is_active'], name='car_active_idx'),
+            models.Index(fields=['list_id', 'is_active'], name='car_list_active_idx'),
+            models.Index(fields=['car_unit', 'is_active'], name='car_unit_active_idx'),
+        ]
 
     def __str__(self):
         return self.name
@@ -219,6 +231,11 @@ class UserCarList(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     user = models.ForeignKey(OrgUser, on_delete=models.SET_NULL, **NULLABLE)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['user'], name='carlist_user_idx'),
+        ]
 
 
 class CarPrimary(models.Model):
@@ -244,6 +261,9 @@ class CarConsumption(models.Model):
         verbose_name = "Car Consumption"
         verbose_name_plural = "Car Consumptions"
         ordering = ["car_id"]
+        indexes = [
+            models.Index(fields=['car_id', 'valid_period'], name='consumption_car_period_idx'),
+        ]
 
     def __str__(self):
         return f"{self.car_id.name} Consumption"
@@ -262,6 +282,9 @@ class DataProvider(models.Model):
         verbose_name = "Data Provider"
         verbose_name_plural = "Data Providers"
         ordering = ["name"]
+        indexes = [
+            models.Index(fields=['org_id'], name='dataprovider_org_idx'),
+        ]
 
     def __str__(self):
         return self.name
@@ -292,6 +315,10 @@ class ReportQuery(models.Model):
         verbose_name = "Report Query"
         verbose_name_plural = "Report Queries"
         ordering = ["-id"]
+        indexes = [
+            models.Index(fields=['provider_id', 'report_type', 'status'], name='rq_prov_type_status_idx'),
+            models.Index(fields=['provider_id', 'created_at'], name='reportquery_prov_time_idx'),
+        ]
 
     def __str__(self):
         return f"Report {self.id}"
@@ -322,9 +349,9 @@ class ReportQueryDetails(models.Model):
 class ParsingCarStats(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car = models.OneToOneField(Car, null=True, on_delete=models.CASCADE,
-                               related_name="parsingcar_stats")  # Changed to OneToOneField
+                               related_name="parsingcar_stats")
     norms_last_processed = models.DateTimeField(**NULLABLE)
-    fuel_last_processed = models.DateTimeField(**NULLABLE)  # начало/конец 
+    fuel_last_processed = models.DateTimeField(**NULLABLE)
     computed_last_processed = models.DateTimeField(blank=True, null=True)
     leaks_last_processed = models.DateTimeField(**NULLABLE)
     primary_last_processed = models.DateTimeField(**NULLABLE)
@@ -338,6 +365,10 @@ class ParsingCarStats(models.Model):
         verbose_name = "Stats for parsing car"
         verbose_name_plural = "Stats for parsing car"
         ordering = ["-id"]
+        indexes = [
+            models.Index(fields=['is_parse_fuel', 'fuel_last_processed'], name='parsingstats_fuel_flag_idx'),
+            models.Index(fields=['is_parse_mileage', 'mileage_last_processed'], name='pstats_mileage_flag_idx'),
+        ]
 
 
 @receiver(post_save, sender=Car)
@@ -361,12 +392,16 @@ class CarFuelReport(models.Model):
         verbose_name = "Car Fuel Report"
         verbose_name_plural = "Car Fuel Reports"
         ordering = ["car_id"]
+        indexes = [
+            models.Index(fields=['car_id', 'start_moment'], name='fuelreport_car_start_idx'),
+            models.Index(fields=['car_id', 'end_moment'], name='fuelreport_car_end_idx'),
+        ]
 
     def __str__(self):
         return f"{self.car_id.name} Fuel Report"
 
 
-##TODO: Переименовать в CarLeakReport
+# TODO: Переименовать в CarLeakReport
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="reports")
@@ -380,6 +415,11 @@ class CarReport(models.Model):
         verbose_name = "Car Report"
         verbose_name_plural = "Car Reports"
         ordering = ["-datetime"]
+        indexes = [
+            models.Index(fields=['car_id', 'datetime'], name='carreport_car_dt_idx'),
+            models.Index(fields=['car_id', 'status', 'datetime'], name='carreport_car_status_dt_idx'),
+            models.Index(fields=['datetime', 'status'], name='carreport_dt_status_idx'),
+        ]
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
@@ -403,6 +443,10 @@ class ComputedData(models.Model):
     class Meta:
         verbose_name = "Computed Data"
         ordering = ["-timestamp"]
+        indexes = [
+            models.Index(fields=['auto', 'timestamp'], name='computeddata_car_ts_idx'),
+            models.Index(fields=['timestamp'], name='computeddata_ts_idx'),
+        ]
 
     @classmethod
     def make_one(example: dict[str, Any]):
@@ -430,6 +474,9 @@ class CarMileageReport(models.Model):
         verbose_name = "Car Mileage Report"
         verbose_name_plural = "Car Mileage Reports"
         ordering = ["-datetime"]
+        indexes = [
+            models.Index(fields=['car_id', 'datetime'], name='mileage_car_dt_idx'),
+        ]
 
     def __str__(self):
         return f"{self.car_id.name} - {self.datetime}"
@@ -497,13 +544,16 @@ class CarBadData(models.Model):
         verbose_name_plural = "Car Bad Data's"
         ordering = ["-datetime"]
         indexes = [
-            models.Index(fields=["severity", "category"]),
-            models.Index(fields=["car_id", "datetime"]),
-            models.Index(fields=["report_query", "severity"]),
+            models.Index(fields=['car_id', 'severity', 'datetime'], name='baddata_car_sev_dt_idx'),
+            models.Index(fields=['car_id', 'category', 'datetime'], name='baddata_car_cat_dt_idx'),
+            models.Index(fields=['report_query', 'severity'], name='baddata_query_sev_idx'),
+            models.Index(fields=['severity', 'category'], name='baddata_sev_cat_idx'),
+            GinIndex(fields=['tags'], name='baddata_tags_gin_idx'),
         ]
 
     def __str__(self):
         return f"[{self.severity}] {self.car_id.name} — {self.datetime:%Y-%m-%d %H:%M}"
+
 
 class Driver(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -528,6 +578,9 @@ class SensorsKey(models.Model):
     class Meta:
         verbose_name = "SensorsKey"
         verbose_name_plural = "SensorsKeys"
+        indexes = [
+            models.Index(fields=['key'], name='sensorskey_key_idx'),
+        ]
 
     def __str__(self):
         return self.key
@@ -538,8 +591,7 @@ class SensorsValues(models.Model):
     key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name="values")
     value = models.CharField(max_length=255)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="values")
-    is_active = models.BooleanField(
-        default=True)  # TODO: для будующей системы нахождения датчиков + мультисенсорного анализа
+    is_active = models.BooleanField(default=True)
     grades = models.JSONField(**NULLABLE)
     created_at = models.DateTimeField(default=timezone.now)
 
@@ -547,6 +599,12 @@ class SensorsValues(models.Model):
         verbose_name = "SensorsValues"
         verbose_name_plural = "SensorsValues"
         ordering = ["key"]
+        indexes = [
+            models.Index(fields=['key', 'is_active'], name='sensorsval_key_active_idx'),
+            models.Index(fields=['car_id', 'is_active'], name='sensorsval_car_active_idx'),
+            models.Index(fields=['car_id', 'key'], name='sensorsval_car_key_idx'),
+            models.Index(fields=['car_id', 'key', 'created_at'], name='sensorsval_car_key_time_idx'),
+        ]
 
     def __str__(self):
         return f"{self.key} - {self.value}"
@@ -566,10 +624,12 @@ class SensorsKeyLocalization(models.Model):
         verbose_name = "SensorsKeyLocalization"
         verbose_name_plural = "SensorsKeyLocalizations"
         ordering = ["key"]
+        indexes = [
+            models.Index(fields=['key', 'language'], name='sensorskeyloc_key_lang_idx'),
+        ]
 
     def __str__(self):
         return f"{self.key} - {self.language} - {self.localization}"
-
 
 ## DEVOPS FEATURES
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
