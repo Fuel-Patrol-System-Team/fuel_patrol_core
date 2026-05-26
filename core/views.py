@@ -476,7 +476,8 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
                 alg=alg,
                 start_date=start_date,
                 end_date=end_date,
-                is_save_bad_data=is_save_bad_data
+                is_save_bad_data=is_save_bad_data,
+                force_chart=force_chart
             )
 
             if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
