@@ -32,7 +32,8 @@ class MileageCalculationService:
             start_date: datetime = datetime.now(),
             end_date: datetime = datetime.now(),
             is_save_bad_data: bool = True,
-            parser: Optional[GlonassGeneralProvider] = None
+            parser: Optional[GlonassGeneralProvider] = None,
+            force_chart = False
     ) -> Tuple[Dict[str, Any], int]:
         """
         Выполняет расчет пробега с созданием отчета
@@ -101,7 +102,7 @@ class MileageCalculationService:
                 if alg == MileageAlgorithms.compute:
                     result = mileage_test_compute(df, auto_record, agg, mode)
                 else:
-                    result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode)
+                    result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode, force_chart=force_chart )
 
                 if result["msg_skip_big"] == 1:
                     try:

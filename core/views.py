@@ -432,6 +432,7 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
     def post(self, request):
         car_id = request.data.get("car_id")
         agg = request.data.get("agg")
+        force_chart = request.data.get("force_chart", False)
         alg = MileageAlgorithms.__members__.get(request.data.get("alg", ""),
                                                 MileageAlgorithms.compute)
         start_date = request.data.get("start_date")

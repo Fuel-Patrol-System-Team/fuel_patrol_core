@@ -1,7 +1,10 @@
 import ast
 from enum import Enum
 from typing import Any, Dict, List, cast
+import charset_normalizer
 import polars as pl
+import numpy as np
+from sklearn.linear_model import LinearRegression
 
 from core.helpers.fuel import tarify_car_by_sensor
 
@@ -71,7 +74,16 @@ def mileage_test_compute(df: pl.DataFrame, auto_record: Dict[str, Any], AGG: int
         "travel_fraud": df['travel_fraud'].sum(),
         "first_mileage": df['first_mileage'].first(),
         "last_mileage": df['last_mileage'].last(),
-        "data": df.to_dicts() if regime is MileageModes.agg else None
+        "data": df.to_dicts() if regime is MileageModes.agg else None,
+        "msg_skip_big": 0,
+        "chart_data": None,
+        "chart_data_rpm": None,
+        "chart_data": None,
+        "chart_data_rpm": None,
+        "slope": 0,
+        "intercept": 0,
+        "std": 0,
+        "mileage_suspicious": 0,
     }
 
 def mileage_test_fraud(
@@ -253,6 +265,7 @@ def mileage_test_fraud_new(
     auto_record: Dict[str, Any],
     AGG_PERIOD_MINUTES: int | None = 1,
     regime: MileageModes = MileageModes.standart,
+    force_chart = False,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
 ):
@@ -271,6 +284,7 @@ def mileage_test_fraud_new(
     col_dtime_period = pl.col("timestamp").dt.truncate("48h")
     col_chart_period = pl.col("timestamp").dt.truncate("48h")
     spikes_dtime_period = pl.col("timestamp").dt.truncate(f"{TIME_PERIOD}h")
+    rpm_dtime_period = pl.col("timestamp").dt.truncate(f"10m")
     CLIPPING_FACTOR = 5  # 1 - infinity нужен для сравненения последней части пробега с со всем остальным, для правильного вычисления накрутки
     MAX_SPEED_FOR_CHECK = 224
     MAX_CAP_MINUTES = 240
@@ -287,6 +301,7 @@ def mileage_test_fraud_new(
             pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
         )
     problems = []
+    is_rpm_present = df["rpm"].is_not_null().any()
     if "ign" not in df.columns:
         df = df.with_columns(pl.lit(1).alias("ign"))
     if df["ign"].is_null().all():
@@ -294,7 +309,9 @@ def mileage_test_fraud_new(
     if df.shape[0] == 0:
         return make_empty_mileage_result(regime)
     if df["ign"].eq(0.0).all():
-        df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign"))
+        df = df.with_columns(
+            pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign")
+        )
 
     df = df.with_columns(
         [
@@ -332,7 +349,10 @@ def mileage_test_fraud_new(
     )
 
     df = df.with_columns(
-        pl.when(pl.col("dmileage").lt(-100)).then(0).otherwise(pl.col("dmileage")).alias("dmileage")
+        pl.when(pl.col("dmileage").lt(-100))
+        .then(0)
+        .otherwise(pl.col("dmileage"))
+        .alias("dmileage")
     )
 
     df = df.with_columns(pl.col("du").rolling_mean_by(by="timestamp", window_size="3s"))
@@ -346,6 +366,18 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.col("msg_number").diff().abs().gt(5).cast(pl.Int32).alias("msg_skip_big")
     )
+    df = df.with_columns(
+        pl.col("msg_number")
+        .diff()
+        .abs()
+        .gt(100)
+        .cast(pl.Int32)
+        .alias("msg_skip_critical")
+    )
+
+    df = df.filter(pl.col("msg_skip_critical").eq(0))
+    if df.shape[0] == 0:
+        return make_empty_mileage_result(regime)
 
     df = df.with_columns(
         pl.col("du").rolling_mean_by(by="timestamp", window_size="1m").alias("du_mean")
@@ -445,9 +477,7 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.col("dmileage_missed").mul(pl.col("msg_skip")).alias("dmileage_missed_skip")
     )
-    df = df.with_columns(
-        pl.col("dmileage_missed").sub(pl.col("dmileage_missed_skip"))
-    )
+    df = df.with_columns(pl.col("dmileage_missed").sub(pl.col("dmileage_missed_skip")))
     agg = None
     if regime == MileageModes.agg:
         agg = df.group_by_dynamic(
@@ -480,6 +510,73 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.col("dmileage").sub(pl.col("dmileage_r")).mean().alias("dmileage_diff")
     )
+    chart_data_rpm = None
+    slope = None
+    std = None
+    intercept = None
+    mileage_suspicious = 0
+    if is_rpm_present:
+        # new rpm system
+        df = df.with_columns(
+            pl.col("dmileage")
+            .clip(lower_bound=0)
+            .sum()
+            .over(["auto", rpm_dtime_period])
+            .alias("mileage_period"),
+            pl.col("rpm").sum().over(["auto", rpm_dtime_period]).alias("rpm_period"),
+        )
+
+        x = (
+            df["rpm_period"].to_numpy().astype(np.float64)
+        )  # Convert timestamps to integers for regression
+        y = df["mileage_period"].to_numpy().astype(np.float64)
+
+        x = x.reshape(-1, 1)
+        y = y.reshape(-1, 1)
+        model = LinearRegression()
+        model.fit(x, y)
+
+        slope = model.coef_[0][0]
+        intercept = model.intercept_[0]
+
+        df = df.with_columns(
+            pl.lit(slope)
+            .mul(pl.col("rpm_period"))
+            .add(pl.lit(intercept))
+            .alias("trend")
+        )
+
+        df = df.with_columns(
+            pl.col("mileage_period").sub(pl.col("trend")).std().alias("trend_std")
+        )
+
+        df = df.with_columns(
+            pl.col("mileage_period")
+            .sub(pl.col("trend").add(pl.col("trend_std").mul(5)))
+            .clip(lower_bound=0)
+            .alias("dmileage_suspicious")
+        )
+
+        cdrf = df.group_by_dynamic(
+            index_column="timestamp", every=f"10m", group_by="auto"
+        ).agg(
+            pl.col("rpm_period").mean(),
+            pl.col("mileage_period").mean(),
+        )
+        cdrf = cdrf.with_columns(
+            pl.col("timestamp").dt.to_string("iso:strict").alias("timestamp")
+        )
+        std = df["trend_std"].first()
+        mileage_suspicious = df["dmileage_suspicious"].sum()
+        chart_data_rpm = {
+            "data": cdrf.to_dicts(),
+            "params": {
+                "slope": slope,
+                "intercept": intercept,
+                "std": mileage_suspicious,
+            },
+        }
+
     df_working = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
@@ -502,6 +599,7 @@ def mileage_test_fraud_new(
             pl.first("dmileage_diff"),
             pl.sum("dmileage_missed"),
             pl.sum("dmileage_missed_skip"),
+            pl.sum("dmileage_suspicious"),
             pl.max("msg_skip_big"),
         ]
     )
@@ -575,7 +673,7 @@ def mileage_test_fraud_new(
     ign_miss = df_working["dmileage_missed"].sum()
     travel_fraud = df_working["true_mileage_fraud"].sum() if False == True else ign_miss
     chart_data = None
-    if travel_fraud > 0:
+    if travel_fraud > 0 or mileage_suspicious > 0 or force_chart:
         cdf = df.group_by_dynamic(index_column="timestamp", every="1m").agg(
             pl.col("mileage").first(),
             pl.col("pos_s").mean(),
@@ -583,7 +681,10 @@ def mileage_test_fraud_new(
             pl.col("ign").max(),
         )
         chart_data = {
-            "timestamp": cdf["timestamp"].dt.replace_time_zone("UTC").dt.strftime("%Y-%m-%dT%H:%M:%SZ").to_list(),
+            "timestamp": cdf["timestamp"]
+            .dt.replace_time_zone("UTC")
+            .dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+            .to_list(),
             "mileage": cdf["mileage"].to_list(),
             "pos_s": cdf["pos_s"].to_list(),
             "pos_s_sensor": cdf["du_mean"].to_list(),
@@ -595,7 +696,7 @@ def mileage_test_fraud_new(
     return {
         "travel": travel,
         "travel_fraud": (
-            df_working["true_mileage_fraud"].sum() if False == True else ign_miss
+            ign_miss
         ),
         "first_mileage": first_mileage,
         "last_mileage": last_mileage,
@@ -603,4 +704,9 @@ def mileage_test_fraud_new(
         "data": agg if regime is MileageModes.agg else None,
         "msg_skip_big": msg_skip_big,
         "chart_data": chart_data,
+        "chart_data_rpm": chart_data_rpm,
+        "slope": slope,
+        "intercept": intercept,
+        "std": std,
+        "mileage_suspicious": mileage_suspicious,
     }

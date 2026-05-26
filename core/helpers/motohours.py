@@ -52,15 +52,25 @@ def _compute_motohours_by_motohours(
 ):
     col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
 
+    sensor_check = "motohours"
     # if units == "seconds":
     # df = df.with_columns(pl.col("motohours") / 3600)
+    if "rpm" in df.columns:
+        sensor_check = "rpm"
+        df = df.with_columns(pl.col("rpm").gt(0).cast(pl.Int8).alias("compare_active"))
+    elif "ign" in df.columns:
+        sensor_check = "ign"
+        df = df.with_columns(pl.col("ign").gt(0).cast(pl.Int8).alias("compare_active"))
+    else:
+        df = df.with_columns(pl.col("motohours").diff().abs().gt(0).cast(pl.Int8).alias("compare_active"))
+
 
     df = df.filter(pl.col("motohours").is_not_null())
     df = df.with_columns(
         pl.col("motohours")
         .diff()
         .over(["auto", col_dtime_2hour])
-        .alias("motohours_diff"),
+        .alias("motohours_diff_raw"),
         pl.col("timestamp")
         .diff()
         .dt.total_seconds()
@@ -69,11 +79,25 @@ def _compute_motohours_by_motohours(
         .fill_null(0)
         .alias("dtime"),
     )
+    t = df.filter(
+        pl.col("motohours_diff_raw").abs().gt(0)
+    )
+    multiplier = 3600 if (t["motohours_diff_raw"].mean() / t["dtime"].mean()) > 0.08 else 1 
+
+    df = df.with_columns(
+        pl.col("motohours_diff_raw").truediv(multiplier).alias("motohours_diff"),
+        pl.col("motohours").truediv(multiplier).alias("motohours"),
+    )
+
+    
 
     df = df.with_columns(
         pl.when(pl.col("motohours_diff").ne(0)).then(pl.col("dtime")).otherwise(0)
     )
 
+    df = df.with_columns(
+        pl.col("dtime").mul(pl.col("compare_active")).truediv(3600).alias("motohours_by_sensor")
+    )
     df = df.with_columns(
         pl.when(pl.col("motohours_diff") < 0)
         .then(pl.col("motohours_diff"))
@@ -81,11 +105,18 @@ def _compute_motohours_by_motohours(
         .alias("motohours_fraud")
     )
 
-    data = None
-    t = df.filter(
-        pl.col("motohours_diff").abs().gt(0)
+    df = df.with_columns(
+        pl.col("motohours_by_sensor").sub(pl.col("motohours")).clip(lower_bound=0).alias("motohours_fraud_by_sensor")
     )
-    multiplier = 1000 if (t["motohours_diff"].mean() / t["dtime"].mean()) > 0.08 else 1 
+
+    
+    
+
+
+    data = None
+    
+    
+
 
     if AGG_PERIOD is not None:
         data = df.group_by_dynamic(
@@ -104,21 +135,23 @@ def _compute_motohours_by_motohours(
         if AGG_PERIOD is not None:
             data = data.with_columns(
                 [
-                    pl.col("motohours_first") / multiplier,
-                    pl.col("motohours_last") / multiplier,
-                    pl.col("motohours_fraud") / multiplier,
-                    pl.col("motohours") / multiplier,
+                    pl.col("motohours_first"),
+                    pl.col("motohours_last"),
+                    pl.col("motohours_fraud"),
+                    pl.col("motohours"),
                     pl.lit("seconds").alias("units"),
                 ]
             )
     
-
+    motohours_fraud =  df["motohours_fraud"].sum() + df["motohours_fraud_by_sensor"].sum()
     return {
-        "motohours_start": df["motohours"].first() / multiplier,
-        "motohours_end": df["motohours"].last() / multiplier,
+        "motohours_start": df["motohours"].first(),
+        "motohours_end": df["motohours"].last(),
         "data": data,
-        "motohours_fraud": df["motohours_fraud"].sum() / multiplier,
-        "motohours": df["motohours_diff"].sum() / multiplier,
+        "motohours_fraud": motohours_fraud,
+        "motohours": df["motohours_diff"].sum(),
+        "sensor_check": sensor_check,
+        "sensor": "motohours"
     }
 
 
@@ -137,6 +170,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
     )
 
     data = None
+    sensor_check = "ign"
 
     if AGG_PERIOD is not None:
         data = df.group_by_dynamic(
@@ -160,4 +194,6 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
         "data": data,
         "motohours_fraud": 0,  # because it can't be other way
         "motohours": motohours,
+        "sensor_check": sensor_check,
+        "sensor": "ign"
     }

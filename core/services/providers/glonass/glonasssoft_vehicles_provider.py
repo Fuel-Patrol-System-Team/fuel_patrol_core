@@ -289,7 +289,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part == "can_engine_hours":
-                        sensors_mapping["motohours"] = f"parameters.can_engine_hours"
+                        sensors_mapping["motohours"] = f"parameters.engine_hours"
                     elif key_part.startswith("can_") and input_number:
                         sensors_mapping["motohours"] = f"parameters.can{input_number}"
                     else:
