@@ -15,6 +15,7 @@ from app.celery import app as celery_app
 from core.admin import CarPrimary, SensorsValues
 from core.helpers.fuel import fuel_spent_calculate
 from core.models import (
+    CarBadData,
     CarMileageReport,
     ComputedData,
     ParsingCarStats,
@@ -218,7 +219,7 @@ def process_single_car_data_task(
         if primary_df is None or primary_df.is_empty():
             error_msg = f"Не удалось вычислить первичные показатели для машины {car_id}"
             logger.error(error_msg)
-            ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date)
+            ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date, CarBadData.Severity.INFO, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
             return {"success": False, "car_id": car_id, "error": error_msg}
 
@@ -238,7 +239,7 @@ def process_single_car_data_task(
             end_number = norms_df.shape[0]
             if end_number < init_number:
                 error_msg = f"Машина {car_id} была отброшена - недостаточно данных для расчета норм"
-                ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date)
+                ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date, CarBadData.Severity.WARNING, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS, CarBadData.Tag.PROVIDER])
                 logger.error(error_msg)
                 return {"success": False, "car_id": car_id, "error": error_msg}
 
@@ -246,7 +247,7 @@ def process_single_car_data_task(
             error_msg = f"Не удалось рассчитать нормы для машины {car_id}"
             logger.error(error_msg)
 
-            ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date)
+            ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             norms_df = None
             return {"success": False, "car_id": car_id, "error": error_msg}
 
@@ -266,7 +267,7 @@ def process_single_car_data_task(
         if leaks_result is None or leaks_result.is_empty():
             error_msg = f"Не удалось рассчитать утечки для машины {car_id}"
             logger.error(error_msg)
-            ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date)
+            ReportService.create_bad_data_record(car, error_msg, report_query, start_date, end_date, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             leaks_result = None
 
         logger.info("ЭТАП 5: Фильтрация результатов утечек...")
@@ -387,7 +388,7 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                             is_save_bad_data=is_save_bad_data
                         )
                         # TODO: один отчет на все машины
-                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_primary, datetime_now)
+                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_primary, datetime_now, CarBadData.Severity.INFO, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
                         ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                         continue
                     logger.info("ЭТАП 2.1: Сохранение первичных показателей в БД...")
@@ -400,10 +401,11 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 report_query, report_details = ReportService.create_report(
                             provider_id=str(provider.id),
                             report_type=ReportQuery.ReportType.PRIMARY,
-                            is_save_bad_data=is_save_bad_data
+                            is_save_bad_data=is_save_bad_data,
+                            
                         )
                 error_msg = f"Внутренняя ошибка {err} для {car.id}"
-                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_primary, datetime_now)
+                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_primary, datetime_now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
                 ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                 continue
 
@@ -452,7 +454,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save
                 logger.info("ЭТАП 3.0: Вычисление норм в БД...")
                 norms = NormsService.calculate_norms_single(df, primary, auto_data)
                 if norms is None or norms.is_empty():
-                    error_msg = f"Не удалось вычислить нормы показатели для машины {car.id}"
+                    error_msg = f"Не удалось вычислить нормы показатели для машины (нет записей) {car.id}"
                     logger.error(error_msg)
                     report_query, report_details = ReportService.create_report(
                         provider_id=str(provider.id),
@@ -460,7 +462,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save
                         is_save_bad_data=is_save_bad_data
                     )
                     # TODO: один отчет на все машины
-                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                    ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now, CarBadData.Severity.WARNING, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
                     ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                     return
                 logger.info("ЭТАП 3.1: Сохранение норм в БД...")
@@ -477,7 +479,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save
                         is_save_bad_data=is_save_bad_data
                     )
             error_msg = f"Внутренняя ошибка {err} для {car.id}"
-            ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+            ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
 
 @shared_task(bind=True)
@@ -546,7 +548,7 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                             is_save_bad_data=is_save_bad_data
                         )
                 error_msg = f"Внутренняя ошибка {err} для {car.id}"
-                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now)
+                ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
                 ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                 continue
 
@@ -603,7 +605,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
                             is_save_bad_data=is_save_bad_data
                         )
                 error_msg = f"Внутренняя ошибка {car.id}"
-                ReportService.create_bad_data_record(car, error_msg, report_query, date_time_norms, datetime_now)
+                ReportService.create_bad_data_record(car, error_msg, report_query, date_time_norms, datetime_now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
                 ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                 continue
 @shared_task(bind=True)
@@ -693,8 +695,8 @@ def calculate_leaks_cron(
                             report_type=ReportQuery.ReportType.LEAKS,
                             is_save_bad_data=is_save_bad_data
                         )
-                error_msg = f"Внутренняя ошибка {car.id}"
-                ReportService.create_bad_data_record(car, error_msg, report_query, now, now) # нужно придумать как прокинуть реальную дату для каждой машины
+                error_msg = f"Внутренняя ошибка при расчете сливов для машины {car.id}: {err}"
+                ReportService.create_bad_data_record(car, error_msg, report_query, now, now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS]) # нужно придумать как прокинуть реальную дату для каждой машины
                 ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
                 continue
         if total_leaks > 0:
@@ -785,7 +787,7 @@ def calculate_leaks_cron_one(
                         is_save_bad_data=is_save_bad_data
                     )
             error_msg = f"Внутренняя ошибка {car.id}"
-            ReportService.create_bad_data_record(car, error_msg, report_query, now, now) # нужно придумать как прокинуть реальную дату для каждой машины
+            ReportService.create_bad_data_record(car, error_msg, report_query, now, now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS]) # нужно придумать как прокинуть реальную дату для каждой машины
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
             return
     if total_leaks > 0:
@@ -954,6 +956,7 @@ def parse_cars_milleage_task(
                 ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"mileage_last_processed": start_date})
             except Exception as err:
                     logger.error(f"Ошибка при обработке пробега для машины {car.id}: {err}")
+                    ReportService.create_bad_data_record(car, f"Ошибка при обработке пробега: {err}", None, start_date, end_date, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MILEAGE])
                     continue
                     
         notify_organization(str(provider.org_id.id), f"Отчет по пробегу за {start_date.date().isoformat()} завершен кол-во накруток {anomalies}")

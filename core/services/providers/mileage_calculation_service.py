@@ -106,7 +106,8 @@ class MileageCalculationService:
 
                 if result["msg_skip_big"] == 1:
                     try:
-                        ReportService.create_bad_data_record(Car.objects.get(id=car_id), "Обнаружены пропущенные сообщения для пробега", report_query, start_date, end_date, CarBadData.Severity.WARNING, CarBadData.Category.CALCULATION)
+                        ReportService.create_bad_data_record(Car.objects.get(id=car_id), "Обнаружены пропущенные сообщения для пробега", report_query, start_date, end_date, CarBadData.Severity.INFO, CarBadData.Category.PROVIDER_ERROR, [CarBadData.Tag.MOTOHOURS, CarBadData.Tag.PROVIDER])
+                    
                     except BaseException as err:
                         logger.error(f"Невозможно создать baddata для mileage отчета для {car_id} (пропуск данных) из-за {err}")
                 report_data = {

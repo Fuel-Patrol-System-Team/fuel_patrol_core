@@ -446,6 +446,7 @@ class CarBadData(models.Model):
         NO_DATA = "no_data", "Нет данных за период"
         PROVIDER_ERROR = "provider_error", "Ошибка провайдера"
         CALCULATION = "calculation", "Ошибка расчёта"
+        MAINTENANCE = "maintenance", "Обслуживание"
         SYNC = "sync", "Ошибка синхронизации"
         DATA_QUALITY = "data_quality", "Некорректные данные"
         AUTH = "auth", "Ошибка авторизации"
@@ -459,6 +460,8 @@ class CarBadData(models.Model):
         SERVER = "server", "Сервер"
         PROVIDER = "provider", "Провайдер"
         MALFUNCTION = "malfunction", "Неисправность"
+        SENSOR = "sensor", "Датчик"
+        SENSOR_IGNITION = "sensor_ign", "Датчик зажигания"
         ALERT = "alert", "Предупреждение"
         FAULT = "fault", "Ошибка"
 

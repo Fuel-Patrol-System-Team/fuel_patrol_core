@@ -5,7 +5,7 @@ from datetime import datetime
 import polars
 
 from core.helpers.motohours import compute_motohours
-from core.models import Car, DataProvider, ReportQuery
+from core.models import Car, CarBadData, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
 from core.services.providers.report_service import ReportService
@@ -84,7 +84,11 @@ class MotohoursCalculationService:
                     car,
                     "Нет данных моточасов за указанный период",
                     report_query,
-                    start_date, end_date
+                    start_date, end_date,
+                    CarBadData.Severity.INFO,
+                    CarBadData.Category.PROVIDER_ERROR,
+                    [CarBadData.Tag.MOTOHOURS, CarBadData.Tag.PROVIDER]
+                    
                 )
 
                 report_data = {

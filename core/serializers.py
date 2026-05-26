@@ -464,6 +464,9 @@ class CarBadDataSerializer(serializers.ModelSerializer):
             "car_id_display",
             "car_name",
             "reason",
+            "tags",
+            "category",
+            "severity",
             "datetime",
         ]
         read_only_fields = fields
@@ -567,8 +570,6 @@ class APICalculationLogOutputSerializer(serializers.ModelSerializer):
             'view_name',
             'car',
             'car_name',
-            'request_data',
-            'response_data',
             'status_code',
             'created_at'
         ]
