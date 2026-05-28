@@ -69,6 +69,11 @@ def preprocess_basic_one(
     )
     # fuel_level_nan per 30 minutes
 
+    if "msg_number" in df.columns:
+        df = df.filter(
+            pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5)
+        )
+
     # STAGE: ОЧИСТКА
     col_dtime_half = pl.col("timestamp").dt.truncate("30m")
     col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")

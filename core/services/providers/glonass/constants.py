@@ -120,6 +120,9 @@ def _reconcile_multisensor(df: pl.DataFrame, sensors: list[str]):
 def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
     sensors = list(filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns))
 
+    if "msg_number" in df.columns:
+        df = df.filter(pl.col("msg_number").diff().abs().fill_null(0).fill_nan(0).lt(5))
+
     for sensor in sensors:
         df = df.filter(pl.col(sensor).gt(0))
         if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:

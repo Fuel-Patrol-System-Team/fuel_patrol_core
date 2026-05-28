@@ -174,15 +174,6 @@ def _compute_motohours_by_motohours(
         idle_motohours=idle_motohours,
         active_motohours=df["motohours_diff"].sum() - idle_motohours
     )
-    return {
-        "motohours_start": df["motohours"].first(),
-        "motohours_end": df["motohours"].last(),
-        "data": data,
-        "motohours_fraud": motohours_fraud,
-        "motohours": df["motohours_diff"].sum(),
-        "sensor_check": sensor_check,
-        "sensor": "motohours"
-    }
 
 
 def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
@@ -229,12 +220,3 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
         idle_motohours=0,
         active_motohours=motohours
     )
-    return {
-        "motohours_start": 0,
-        "motohours_end": motohours,
-        "data": data,
-        "motohours_fraud": 0,  # because it can't be other way
-        "motohours": motohours,
-        "sensor_check": sensor_check,
-        "sensor": "ign"
-    }
