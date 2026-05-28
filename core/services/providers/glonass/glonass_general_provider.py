@@ -432,7 +432,7 @@ class GlonassGeneralProvider:
 
             if isinstance(params, dict):
                 msg["parameters"] = {
-                    k: params[k]
+                    k: params.get(k, None)
                     for k in params.keys() & allowed
                 }
             else:
@@ -442,7 +442,7 @@ class GlonassGeneralProvider:
     def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]], parameters: list[str] | None = None) -> pl.DataFrame:
         if parameters is not None:
             messages = self.filter_parameters(messages, parameters)
-        result = pl.DataFrame(messages, infer_schema_length=10_000)
+        result = pl.DataFrame(messages, infer_schema_length=30_000)
         fields = list(map(lambda x: f"parameters.{x}" , result["parameters"].struct.fields))
         result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
         result = result.with_columns(pl.lit(str(car.id)).alias("auto"))
