@@ -330,6 +330,8 @@ class ParsingCarStats(models.Model):
     primary_last_processed = models.DateTimeField(**NULLABLE)
     mileage_last_processed = models.DateTimeField(blank=True, null=True)
     preffered_period_days = models.IntegerField(default=90)
+    rpm_idle = models.IntegerField(null=True)
+    rpm_active= models.IntegerField(null=True)
     is_parse_mileage = models.BooleanField(default=True)
     is_parse_motohours = models.BooleanField(default=False)
     is_parse_fuel = models.BooleanField(default=True)

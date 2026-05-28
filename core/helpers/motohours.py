@@ -1,6 +1,20 @@
 from datetime import timedelta
+from typing import Any
 import polars as pl
 
+def make_motohours_result(motohours_start: int, motohours_end: int, motohours: int, data: dict[str, Any], motohours_fraud: int, sensor: str, sensor_check: str, idle_motohours, active_motohours):
+
+    return {
+        "motohours_start": motohours_start,
+        "motohours_end": motohours_end,
+        "data": data,
+        "motohours_fraud": motohours_fraud,  # because it can't be other way
+        "motohours": motohours,
+        "sensor_check": sensor_check,
+        "sensor": sensor,
+        "motohours_idle": idle_motohours,
+        "motohours_active": active_motohours
+    }
 
 def compute_motohours_total(df: pl.DataFrame, AGG_TIME: int | None):
     result_total = None
@@ -29,41 +43,53 @@ def _criterion_detection(df: pl.DataFrame):
     return compute_method, units
 
 
-def compute_motohours(df: pl.DataFrame, AGG_TIME: int | None):
+def compute_motohours(df: pl.DataFrame, AGG_TIME: int | None, stats: dict[str, Any]):
     method, units = _criterion_detection(df)
-    result = _compute_motohours(df, method, units, AGG_TIME)
+    result = _compute_motohours(df, method, units, stats,  AGG_TIME)
     return result
 
 
-def _compute_motohours(df: pl.DataFrame, method: str, units: str, AGG_TIME: int | None):
+def _compute_motohours(df: pl.DataFrame, method: str, units: str, stats: dict[str, Any], AGG_TIME: int | None):
     if df.shape[0] == 0:
         return df
     result = None
     if method == "ign":
         result = _compute_motohours_by_ign(df, AGG_TIME)
     else:
-        result = _compute_motohours_by_motohours(df, units, AGG_TIME)
+        result = _compute_motohours_by_motohours(df, units, stats, AGG_TIME)
 
     return result
 
+RPM_TEST_IDLE = 820
 
 def _compute_motohours_by_motohours(
-    df: pl.DataFrame, units: str, AGG_PERIOD: int | None
+    df: pl.DataFrame, units: str, stats: dict[str, Any], AGG_PERIOD: int | None
 ):
     col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
-
+    col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("1m")
+    is_rpm_present = "rpm" in df.columns
+    rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
     sensor_check = "motohours"
     # if units == "seconds":
     # df = df.with_columns(pl.col("motohours") / 3600)
     if "rpm" in df.columns:
         sensor_check = "rpm"
         df = df.with_columns(pl.col("rpm").gt(0).cast(pl.Int8).alias("compare_active"))
+        
+        
+
     elif "ign" in df.columns:
         sensor_check = "ign"
         df = df.with_columns(pl.col("ign").gt(0).cast(pl.Int8).alias("compare_active"))
     else:
         df = df.with_columns(pl.col("motohours").diff().abs().gt(0).cast(pl.Int8).alias("compare_active"))
+    if is_rpm_present:
+        df = df.with_columns(pl.col("rpm").mean().over(["auto", col_dtime_idle_checking_period]).alias("rpm_direct"))
+        df = df.with_columns(pl.col("rpm_direct").lt(rpm_idle).cast(pl.Int8).alias("is_idle"))
+    else:
+        df = df.with_columns(pl.lit(0).alias("is_idle"))
 
+    
 
     df = df.filter(pl.col("motohours").is_not_null())
     df = df.with_columns(
@@ -89,6 +115,8 @@ def _compute_motohours_by_motohours(
         pl.col("motohours").truediv(multiplier).alias("motohours"),
     )
 
+
+    df = df.with_columns(pl.col("is_idle").mul(pl.col("dtime")).truediv(3600).alias("dtime_idle"))
     
 
     df = df.with_columns(
@@ -129,21 +157,23 @@ def _compute_motohours_by_motohours(
                 pl.col("motohours").first().alias("motohours_first"),
                 pl.col("motohours").last().alias("motohours_last"),
                 pl.sum("dtime"),
+                pl.sum("dtime_idle"),
                 pl.lit("hours").alias("units"),
             ]
         )
-        if AGG_PERIOD is not None:
-            data = data.with_columns(
-                [
-                    pl.col("motohours_first"),
-                    pl.col("motohours_last"),
-                    pl.col("motohours_fraud"),
-                    pl.col("motohours"),
-                    pl.lit("seconds").alias("units"),
-                ]
-            )
-    
+    idle_motohours = df["dtime_idle"].sum()
     motohours_fraud =  df["motohours_fraud"].sum() + df["motohours_fraud_by_sensor"].sum()
+    return make_motohours_result(
+        motohours_start=df["motohours"].first(),
+        motohours_end =df["motohours"].last(),
+        data=data,
+        motohours_fraud=motohours_fraud,
+        sensor_check=sensor_check,
+        motohours= df["motohours_diff"].sum(),
+        sensor="motohours",
+        idle_motohours=idle_motohours,
+        active_motohours=df["motohours_diff"].sum() - idle_motohours
+    )
     return {
         "motohours_start": df["motohours"].first(),
         "motohours_end": df["motohours"].last(),
@@ -188,6 +218,17 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
     hours = (df["timestamp"].last() - df["timestamp"].first()).total_seconds() / 3600
 
     motohours = df["engine_working"].sum()
+    return make_motohours_result(
+        motohours_start=0,
+        motohours_end=motohours,
+        motohours_fraud=0,
+        motohours=motohours,
+        data=data,
+        sensor="ign",
+        sensor_check=sensor_check,
+        idle_motohours=0,
+        active_motohours=motohours
+    )
     return {
         "motohours_start": 0,
         "motohours_end": motohours,

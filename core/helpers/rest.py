@@ -359,6 +359,53 @@ PARSING_STATS_SWITCH_SCHEMA = {
     },
 }
 
+PARSING_STATS_RPM_SCHEMA = {
+    "tags": ["cars"],
+    "operation_description": "Обновляет параметры RPM (rpm_idle, rpm_active) для выбранного автомобиля.",
+    "request_body": openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=["car_id", "rpm_idle", "rpm_active"],
+        properties={
+            "car_id": openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                description="ID автомобиля (UUID)",
+                example="550e8400-e29b-41d4-a716-446655440000",
+            ),
+            "rpm_idle": openapi.Schema(
+                type=openapi.TYPE_INTEGER,
+                description="Обороты холостого хода (холостой ход)",
+                minimum=0,
+                example=800,
+            ),
+            "rpm_active": openapi.Schema(
+                type=openapi.TYPE_INTEGER,
+                description="Обороты в активном режиме (рабочие обороты)",
+                minimum=0,
+                example=2500,
+            ),
+        },
+    ),
+    "responses": {
+        200: openapi.Response(
+            description="Успешный ответ",
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    "message": openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description="Сообщение об успешном обновлении",
+                        example="Параметры RPM успешно обновлены",
+                    )
+                },
+            ),
+        ),
+        400: openapi.Response(description="Неверные параметры запроса (например, отрицательные значения RPM)"),
+        404: openapi.Response(description="Автомобиль не найден"),
+    },
+}
+
+
 
 CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA = openapi.Parameter(
     name="key",

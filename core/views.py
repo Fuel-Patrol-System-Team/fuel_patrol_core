@@ -54,14 +54,14 @@ from core.helpers.rest import (
     CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA,
+    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_RPM_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA
 )
 from app.tasks import sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
-    AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer,
-    ParsingStatsSwitchSerializer, UserRegistrationSerializer,
+    APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer,
+    ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -766,6 +766,27 @@ class ParsingStatsParsingSwitch(APIView):
             return error_response(f"Объект с id {car_id} не существует", status.HTTP_400_BAD_REQUEST)
         result = target.update(**{true_parameter: ~F(true_parameter)})
         return success_response({"updated": result}, 200)
+
+class ParsingStatsUpdateRpm(APIView):
+    permission_classes = [IsOrgMember]
+    @swagger_auto_schema(**PARSING_STATS_RPM_SCHEMA)
+    def post(self, request):
+        serializer = ParsingStatsUpdateRpmSerializer(data=request.data)
+        if not serializer.is_valid():
+            logger.error(f"Ошибка валидации параметров {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+        data = serializer.validated_data
+        rpm_idle = data.get("rpm_idle")
+        rpm_active = data.get("rpm_active")
+        car_id = data.get("car_id")
+        try:
+            target = ParsingCarStats.objects.filter(car_id=car_id)
+        except BaseException:
+            return error_response(f"Объект с id {car_id} не существует", status.HTTP_400_BAD_REQUEST)
+        result = target.update(rpm_idle=rpm_idle, rpm_active=rpm_active)
+        return success_response({"updated": result}, 200)
+
+
 
 
 class CarDetailAPIView(RetrieveAPIView):
@@ -1588,6 +1609,16 @@ class APICalculationLogListAPIView(ListAPIView):
             user=self.request.user
         ).select_related('car').order_by('-created_at')
 
+class APICalculationLogRetrieveAPIView(RetrieveAPIView):
+    serializer_class = APICalculationRetrieveLogOutputSerializer
+    permission_classes = [IsAuthenticated]
+    lookup_field = "pk"
+
+    def get_queryset(self):
+        # We still restrict it to the current user and optimize with select_related
+        return APICalculationLog.objects.filter(
+            user=self.request.user
+        ).select_related('car').order_by('-created_at')
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {

@@ -4,6 +4,7 @@ from datetime import datetime
 
 import polars
 
+from app.tasks import ParsingCarStats
 from core.helpers.motohours import compute_motohours
 from core.models import Car, CarBadData, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
@@ -109,7 +110,10 @@ class MotohoursCalculationService:
             try:
                 agg_period = 0 if agg is None else agg
                 if isinstance(df, polars.DataFrame):
-                    result = compute_motohours(df, agg)
+                    stats = ParsingCarStats.objects.filter(car_id=car.id).first()
+                    if stats is None:
+                        raise BaseException("No parsing stats for this car")
+                    result = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle, "rpm_active": stats.rpm_active})
             except Exception as calc_error:
                 error_msg = f"Ошибка при расчете моточасов: {str(calc_error)}"
                 logger.error(f"Ошибка расчета моточасов для car_id={car_id}: {calc_error}", exc_info=True)

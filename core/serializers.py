@@ -112,7 +112,9 @@ class CarOutputSerializer(serializers.ModelSerializer):
         return {
             "is_parse_mileage": parsing_stats.is_parse_mileage,
             "is_parse_fuel": parsing_stats.is_parse_fuel,
-            "is_parse_motohours": parsing_stats.is_parse_motohours
+            "is_parse_motohours": parsing_stats.is_parse_motohours,
+            "rpm_idle": parsing_stats.rpm_idle,
+            "rpm_active": parsing_stats.rpm_active,
         }
         
 
@@ -559,6 +561,10 @@ class ParsingStatsSwitchSerializer(serializers.Serializer):
     car_id = serializers.UUIDField()
     parameter = serializers.ChoiceField(["mileage", "fuel", "motohours"])
 
+class ParsingStatsUpdateRpmSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField()
+    rpm_idle = serializers.IntegerField()
+    rpm_active = serializers.IntegerField()
 # LOGS
 class APICalculationLogOutputSerializer(serializers.ModelSerializer):
     car_name = serializers.CharField(source='car.name', read_only=True, default=None)
@@ -570,6 +576,21 @@ class APICalculationLogOutputSerializer(serializers.ModelSerializer):
             'view_name',
             'car',
             'car_name',
+            'status_code',
+            'created_at'
+        ]
+class APICalculationRetrieveLogOutputSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car.name', read_only=True, default=None)
+
+    class Meta:
+        model = APICalculationLog
+        fields = [
+            'id',
+            'view_name',
+            'car',
+            'car_name',
+            'request_data',
+            'response_data',
             'status_code',
             'created_at'
         ]

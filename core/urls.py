@@ -1,9 +1,9 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from core.views import AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
+from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
-    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ReportQueryListAPIView, \
+    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ParsingStatsUpdateRpm, ReportQueryListAPIView, \
     ReportQueryDetailAPIView, \
     CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, \
@@ -76,6 +76,7 @@ urlpatterns = [
 
     # path('sensors', SensorsMappingListByCardAPIView.as_view(), name='sensors'), ##TODO: Переписать
     path('parsing-stats/switch', ParsingStatsParsingSwitch.as_view(), name='parsing-stats-switch'),
+    path("parsing-stats/rpm", ParsingStatsUpdateRpm.as_view(), name='parsing-stats-rpm'), 
 
     path('sensors/keys', SensorsKeyListAPIView.as_view(), name='sensors-keys-list'),
 
@@ -84,6 +85,8 @@ urlpatterns = [
     path('parsing/motohours', MotohoursCalculationAPIView.as_view(), name='motohours-test'),
 
     path('parsing/logs', APICalculationLogListAPIView.as_view(), name='calculations-logs'),
+
+    path('parsing/logs/<pk>', APICalculationLogRetrieveAPIView.as_view(), name='calculations-logs-retrieve'), 
 
     path('parsing/cars', VehicleSyncAPIView.as_view(), name='parsing-cars'),
 
