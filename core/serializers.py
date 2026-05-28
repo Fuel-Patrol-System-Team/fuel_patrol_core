@@ -24,13 +24,13 @@ class OrganizationOutputSerializer(serializers.ModelSerializer):
         model = Organization
         fields = ["id", "name", "bot_token", "chat_id"]
 
+
 class CarByGroupSensorsValuesOutputSerializer(serializers.ModelSerializer):
     id = serializers.UUIDField(source="car_id.id", read_only=True)
     name = serializers.CharField(source="car_id.name", read_only=True)
     description = serializers.CharField(source="car_id.description", read_only=True)
     is_active = serializers.BooleanField(source="car_id.is_active", read_only=True)
     is_tarrified = serializers.BooleanField(source="car_id.is_tarrified", read_only=True)
-
     key = serializers.CharField(source="key.key", read_only=True)
 
     class Meta:
@@ -45,6 +45,7 @@ class CarByGroupSensorsValuesOutputSerializer(serializers.ModelSerializer):
             "is_active",
             "is_tarrified",
         ]
+
 
 class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
@@ -73,7 +74,6 @@ class CarOutputSerializer(serializers.ModelSerializer):
     def get_car_unit(self, obj):
         if hasattr(self.context, 'car_unit_info'):
             return self.context['car_unit_info']
-
         if obj.car_unit:
             return {
                 'id': str(obj.car_unit.id),
@@ -84,31 +84,32 @@ class CarOutputSerializer(serializers.ModelSerializer):
     def get_sensors(self, obj):
         language_code = self.context.get("language_code", "ru")
 
-        sensors_values = SensorsValues.objects.filter(car_id=obj)
-
         sensors_data = []
-        for sensor_value in sensors_values:
-            try:
-                localization = SensorsKeyLocalization.objects.get(
-                    key=sensor_value.key, language__code=language_code
-                )
-                display_name = localization.localization
-            except SensorsKeyLocalization.DoesNotExist:
-                display_name = sensor_value.key.key
+        for sensor_value in obj.values.select_related('key').all():
+            prefetched = getattr(sensor_value.key, '_prefetched_localized', None)
+            if prefetched is not None:
+                display_name = prefetched[0].localization if prefetched else sensor_value.key.key
+            else:
+                try:
+                    localization = SensorsKeyLocalization.objects.get(
+                        key=sensor_value.key, language__code=language_code
+                    )
+                    display_name = localization.localization
+                except SensorsKeyLocalization.DoesNotExist:
+                    display_name = sensor_value.key.key
 
-            sensors_data.append(
-                {
-                    "display_name": display_name,
-                    "value": sensor_value.value,
-                    "key": sensor_value.key.key,
-                }
-            )
-
+            sensors_data.append({
+                "display_name": display_name,
+                "value": sensor_value.value,
+                "key": sensor_value.key.key,
+            })
         return sensors_data
+
     def get_parsing_stats(self, obj):
-        parsing_stats, status = ParsingCarStats.objects.get_or_create(car=obj, defaults={
-            "car_id": obj.id
-        })
+        try:
+            stats = obj.parsingcar_stats
+        except ParsingCarStats.DoesNotExist:
+            stats, _ = ParsingCarStats.objects.get_or_create(car=obj, defaults={"car_id": obj.id})
         return {
             "is_parse_mileage": parsing_stats.is_parse_mileage,
             "is_parse_fuel": parsing_stats.is_parse_fuel,
@@ -116,7 +117,7 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "rpm_idle": parsing_stats.rpm_idle,
             "rpm_active": parsing_stats.rpm_active,
         }
-        
+
 
 class AutoDataOutputSerializer(serializers.ModelSerializer):
     car_unit = serializers.SerializerMethodField()
@@ -144,13 +145,10 @@ class AutoDataOutputSerializer(serializers.ModelSerializer):
     def get_car_unit(self, obj):
         if hasattr(self.context, 'car_unit_info'):
             return self.context['car_unit_info']
-
         if obj.car_unit:
             return obj.car_unit.name
-            
         return None
-    
-    
+
 
 class DriverOutputSerializer(serializers.ModelSerializer):
     car_id = CarOutputSerializer(many=True, read_only=True)
@@ -167,6 +165,7 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
         model = CarReport
         fields = ["id", "car_id", "speed", "datetime", "volume", "status"]
 
+
 class CarFuelReportSerializer(serializers.ModelSerializer):
     car_name = serializers.CharField(source='car_id.name', read_only=True)
 
@@ -177,10 +176,12 @@ class CarFuelReportSerializer(serializers.ModelSerializer):
             'end_moment', 'fuel_start', 'fuel_end', 'fuel_filled'
         ]
 
+
 class CarUnitSerializer(serializers.ModelSerializer):
     class Meta:
         model = CarUnit
         fields = "__all__"
+
 
 class CarConsumptionOutputSerializer(serializers.ModelSerializer):
     car_id = CarOutputSerializer(read_only=True)
@@ -214,10 +215,12 @@ class DataProviderUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Metadata must be a valid JSON object.")
         return value
 
+
 class ReportQueryDetailsSerializer(serializers.ModelSerializer):
     class Meta:
         model = ReportQueryDetails
         fields = "__all__"
+
 
 class ReportQueryOutputSerializer(serializers.ModelSerializer):
     provider_name = serializers.SerializerMethodField()
@@ -225,7 +228,7 @@ class ReportQueryOutputSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = ReportQuery
-        fields = ["id", "status", "provider_name", "report_type", "created_at", "report_query_details",]
+        fields = ["id", "status", "provider_name", "report_type", "created_at", "report_query_details"]
 
     def get_provider_name(self, obj):
         return obj.provider_id.name
@@ -259,7 +262,6 @@ class OrgUserOutputSerializer(serializers.ModelSerializer):
         ]
 
 
-
 class SensorsKeyOutputSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(read_only=True)
 
@@ -281,19 +283,16 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         org_name = validated_data.pop("org_name")
         language_code = validated_data.pop("language_code", "ru")
-
         try:
             organization = Organization.objects.get(name=org_name)
         except Organization.DoesNotExist:
             raise serializers.ValidationError(
                 f"Organization with name '{org_name}' not found."
             )
-
         try:
             language = Language.objects.get(code=language_code)
         except Language.DoesNotExist:
             language = Language.objects.get(code="ru")
-
         user = OrgUser.objects.create_user(
             username=validated_data["username"],
             password=validated_data["password"],
@@ -301,6 +300,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             active_language=language,
         )
         return user
+
 
 class TelegramUserRegistrationSerializer(serializers.Serializer):
     chat_id = serializers.CharField(max_length=100)
@@ -316,6 +316,7 @@ class TelegramUserRegistrationSerializer(serializers.Serializer):
             raise serializers.ValidationError("Organization not found")
         return value
 
+
 class TelegramUserOutputSerializer(serializers.ModelSerializer):
     organization = OrganizationOutputSerializer(read_only=True)
 
@@ -323,11 +324,11 @@ class TelegramUserOutputSerializer(serializers.ModelSerializer):
         model = TelegramUser
         fields = ('id', 'chat_id', 'username', 'first_name', 'last_name', 'organization', 'created_at', 'is_active')
 
+
 class LanguageSerializer(serializers.ModelSerializer):
     class Meta:
         model = Language
         fields = ["id", "code", "name", "description"]
-
 
 
 class DailyLeaksSerializer(serializers.Serializer):
@@ -357,50 +358,27 @@ class CarMileageReportOutputSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['id']
 
+
 class CarLeaksFilterSerializer(serializers.Serializer):
     car_id = serializers.UUIDField(required=True, help_text="ID автомобиля")
-    periodFrom = serializers.DateTimeField(
-        required=False, allow_null=True, help_text="Начальная дата и время фильтрации"
-    )
-    periodDue = serializers.DateTimeField(
-        required=False, allow_null=True, help_text="Конечная дата и время фильтрации"
-    )
-    volume_from = serializers.IntegerField(
-        required=False,
-        allow_null=True,
-        min_value=0,
-        help_text="Минимальный объём слива",
-    )
-    volume_to = serializers.IntegerField(
-        required=False,
-        allow_null=True,
-        min_value=0,
-        help_text="Максимальный объём слива",
-    )
+    periodFrom = serializers.DateTimeField(required=False, allow_null=True)
+    periodDue = serializers.DateTimeField(required=False, allow_null=True)
+    volume_from = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    volume_to = serializers.IntegerField(required=False, allow_null=True, min_value=0)
 
     def validate(self, data):
-        """
-        Проверка корректности диапазона дат и объёмов.
-        """
         period_from = data.get("periodFrom")
         period_due = data.get("periodDue")
         volume_from = data.get("volume_from")
         volume_to = data.get("volume_to")
-
         if period_from and period_due and period_from > period_due:
             raise serializers.ValidationError(
                 {"periodFrom": "Начальная дата не может быть позже конечной даты."}
             )
-
-        if (
-            volume_from is not None
-            and volume_to is not None
-            and volume_from > volume_to
-        ):
+        if volume_from is not None and volume_to is not None and volume_from > volume_to:
             raise serializers.ValidationError(
                 {"volume_from": "Минимальный объём не может быть больше максимального."}
             )
-
         return data
 
 
@@ -409,7 +387,6 @@ class DataProviderSerializer(serializers.ModelSerializer):
         queryset=Car.objects.all(),
         many=True,
         required=False,
-        help_text="Список ID автомобилей, связанных с провайдером",
     )
 
     class Meta:
@@ -418,40 +395,28 @@ class DataProviderSerializer(serializers.ModelSerializer):
 
 
 class CarActiveStatusSerializer(serializers.Serializer):
-    is_active = serializers.BooleanField(
-        required=True, help_text="Статус активности автомобиля"
-    )
+    is_active = serializers.BooleanField(required=True)
 
     def validate(self, data):
-        """
-        Проверка существования автомобиля и его принадлежности организации.
-        """
         car_id = self.context.get("car_id")
         user = self.context["request"].user
-
         if not car_id:
             raise serializers.ValidationError({"car_id": "Параметр car_id обязателен"})
-
         try:
             car = Car.objects.get(id=car_id, data_providers__org_id=user.org)
         except Car.DoesNotExist:
             raise serializers.ValidationError(
                 {"car_id": "Автомобиль не найден или не принадлежит вашей организации"}
             )
-
         data["car"] = car
         return data
 
     def save(self):
-        """
-        Обновление статуса is_active автомобиля.
-        """
         car = self.validated_data["car"]
         is_active = self.validated_data["is_active"]
         car.is_active = is_active
         car.save()
         return car
-
 
 
 class CarBadDataSerializer(serializers.ModelSerializer):
@@ -473,9 +438,51 @@ class CarBadDataSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-class UserCarListSerializer(serializers.ModelSerializer):
-    """Сериализатор для списков машин пользователя (без вложенных машин)"""
 
+class CarBadDataFilterSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField(required=False, allow_null=True)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    end_date = serializers.DateField(required=False, allow_null=True)
+    search = serializers.CharField(required=False, allow_blank=True)
+    severity = serializers.MultipleChoiceField(
+        choices=CarBadData.Severity.choices,
+        required=False,
+    )
+    tags = serializers.MultipleChoiceField(
+        choices=CarBadData.Tag.choices,
+        required=False,
+    )
+    category = serializers.MultipleChoiceField(
+        choices=CarBadData.Category.choices,
+        required=False,
+    )
+
+class BadDataQuerySerializer(serializers.Serializer):
+    TYPE_CALENDAR = "calendar"
+    TYPE_CAR = "car"
+    TYPE_TAG = "tag"
+
+    TYPE_CHOICES = [
+        (TYPE_CALENDAR, "Календарь"),
+        (TYPE_CAR, "По автомобилям"),
+        (TYPE_TAG, "По тегам"),
+    ]
+
+    type = serializers.ChoiceField(choices=TYPE_CHOICES)
+    periodFrom = serializers.DateField(required=False, allow_null=True)
+    periodDue = serializers.DateField(required=False, allow_null=True)
+    category = serializers.ChoiceField(
+        choices=CarBadData.Category.choices,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    tags = serializers.MultipleChoiceField(
+        choices=CarBadData.Tag.choices,
+        required=False,
+    )
+
+class UserCarListSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserCarList
         fields = ['id', 'name', 'user']
@@ -483,7 +490,6 @@ class UserCarListSerializer(serializers.ModelSerializer):
 
 
 class UserCarListDetailSerializer(serializers.ModelSerializer):
-    """Сериализатор для детального просмотра списка машин (с вложенными машинами)"""
     cars = CarOutputSerializer(many=True, read_only=True, source='car_set')
 
     class Meta:
@@ -493,12 +499,10 @@ class UserCarListDetailSerializer(serializers.ModelSerializer):
 
 
 class UserCarListCreateUpdateSerializer(serializers.ModelSerializer):
-    """Сериализатор для создания и обновления списков машин"""
     car_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
         required=False,
-        help_text="Список ID машин для добавления в список"
     )
 
     class Meta:
@@ -509,54 +513,35 @@ class UserCarListCreateUpdateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         car_ids = validated_data.pop('car_ids', [])
         user = self.context['request'].user
-
-        car_list = UserCarList.objects.create(
-            name=validated_data['name'],
-            user=user
-        )
-
+        car_list = UserCarList.objects.create(name=validated_data['name'], user=user)
         if car_ids:
-            cars = Car.objects.filter(
+            Car.objects.filter(
                 id__in=car_ids,
                 data_providers__org_id=user.org.id
-            )
-            cars.update(list_id=car_list)
-
+            ).update(list_id=car_list)
         return car_list
 
     def update(self, instance, validated_data):
         car_ids = validated_data.pop('car_ids', None)
-
         if 'name' in validated_data:
             instance.name = validated_data['name']
-
         if car_ids is not None:
             Car.objects.filter(list_id=instance).update(list_id=None)
-
             if car_ids:
-                cars = Car.objects.filter(
+                Car.objects.filter(
                     id__in=car_ids,
                     data_providers__org_id=instance.user.org.id
-                )
-                cars.update(list_id=instance)
-
+                ).update(list_id=instance)
         instance.save()
         return instance
 
-class CarLeaksChartsRequestSerializer(serializers.Serializer):
-    car_id = serializers.UUIDField(
-    )
-    days = serializers.IntegerField(
-        required=False,
-        default=365,
-        min_value=1,
-        max_value=365
-    )
-    leak_id = serializers.UUIDField(
-        required=True,
-    )
 
-# API
+class CarLeaksChartsRequestSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField()
+    days = serializers.IntegerField(required=False, default=365, min_value=1, max_value=365)
+    leak_id = serializers.UUIDField(required=True)
+
+
 class ParsingStatsSwitchSerializer(serializers.Serializer):
     car_id = serializers.UUIDField()
     parameter = serializers.ChoiceField(["mileage", "fuel", "motohours"])

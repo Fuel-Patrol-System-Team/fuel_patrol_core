@@ -15,7 +15,8 @@ from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, Ca
     CustomTokenRefreshView, MotohoursCalculationAPIView, VehicleSyncAPIView, CarDataRequestAPIView, CarBadDataAPIView, \
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
-    CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView
+    CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView, \
+    CarBadDataDashboardAPIView, CarBadDataDetailAPIView
 
 urlpatterns = [
 
@@ -48,6 +49,8 @@ urlpatterns = [
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
+    path('сars/bad-data/<uuid:pk>', CarBadDataDetailAPIView.as_view(), name="car-bad-data-detail"),
+    path("dashboard/bad-data", CarBadDataDashboardAPIView.as_view(), name="bad-data-dashboard"),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
     path('parsing/car-sensors-raw-data-charts', CarSensorsRawDataAPIView.as_view(), name='car-sensors-raw-data'),
