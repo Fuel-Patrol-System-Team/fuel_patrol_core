@@ -556,7 +556,7 @@ class CarListBySensorGroupAPIView(ListAPIView):
         return result.order_by("id")
 
 
-class AutoDataListAPIView(ListAPIView):
+class AutoDataListAPIView(SwaggerSafeQuerysetMixin,ListAPIView):
     permission_classes = [IsOrgMember]
 
     def get_queryset(self):
