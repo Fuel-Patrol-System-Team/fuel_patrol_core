@@ -576,6 +576,8 @@ def mileage_test_fraud_new(
                 "std": mileage_suspicious,
             },
         }
+    else:
+        df = df.with_columns(pl.lit(0).alias("dmileage_suspicious"))
 
     df_working = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
