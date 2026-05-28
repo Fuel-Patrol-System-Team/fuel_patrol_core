@@ -1,5 +1,6 @@
 from drf_yasg import openapi
 
+from core.models import CarBadData
 from core.serializers import CarReportOutputSerializer, DataProviderSerializer, \
     CarActiveStatusSerializer, TelegramUserOutputSerializer
 
@@ -51,6 +52,87 @@ CAR_DATA_REQUEST_SCHEMA = openapi.Schema(
     },
     required=["provider_name", "start_date", "end_date"]
 )
+
+BAD_DATA_DASHBOARD_SCHEMA = {
+    "operation_summary": "Дашборд ошибок (CarBadData)",
+    "operation_description": (
+        "Возвращает статистику ошибок по уровням severity (warning/error/critical).\n\n"
+        "**type=calendar** — по дням для тепловой карты\n"
+        "**type=car** — по автомобилям\n"
+        "**type=tag** — по тегам\n\n"
+        "Фильтрация по category: `calculation`, `no_data`, `provider_error`, `sync`, "
+        "`data_quality`, `auth`, `unknown`. Без category — все категории."
+    ),
+    "manual_parameters": [
+        openapi.Parameter("type", openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                          enum=["calendar", "car", "tag"], required=True),
+        openapi.Parameter("periodFrom", openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                          format=openapi.FORMAT_DATE, required=False),
+        openapi.Parameter("periodDue", openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                          format=openapi.FORMAT_DATE, required=False),
+        openapi.Parameter("category", openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                          enum=["calculation", "no_data", "provider_error",
+                                "sync", "data_quality", "auth", "unknown"],
+                          required=False),
+        openapi.Parameter(
+            "tags",
+            openapi.IN_QUERY,
+            type=openapi.TYPE_ARRAY,
+            items=openapi.Items(
+                type=openapi.TYPE_STRING,
+                enum=[t[0] for t in CarBadData.Tag.choices],
+            ),
+            collection_format="multi",
+            required=False,
+            description="Фильтр по тегам (можно передать несколько)",
+        ),
+    ],
+    "responses": {
+        200: openapi.Response("OK"),
+        400: openapi.Response("Ошибка валидации"),
+    },
+}
+
+BAD_DATA_SCHEMA = {
+    "operation_summary": "Список ошибок CarBadData",
+    "manual_parameters": [
+        openapi.Parameter("car_id", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+        openapi.Parameter("start_date", openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                          format=openapi.FORMAT_DATE, required=False),
+        openapi.Parameter("end_date", openapi.IN_QUERY, type=openapi.TYPE_STRING,
+                          format=openapi.FORMAT_DATE, required=False),
+        openapi.Parameter("search", openapi.IN_QUERY, type=openapi.TYPE_STRING, required=False),
+        openapi.Parameter(
+            "severity", openapi.IN_QUERY,
+            type=openapi.TYPE_ARRAY,
+            items=openapi.Items(type=openapi.TYPE_STRING,
+                                enum=[s[0] for s in CarBadData.Severity.choices]),
+            collection_format="multi",
+            required=False,
+        ),
+        openapi.Parameter(
+            "tags", openapi.IN_QUERY,
+            type=openapi.TYPE_ARRAY,
+            items=openapi.Items(type=openapi.TYPE_STRING,
+                                enum=[t[0] for t in CarBadData.Tag.choices]),
+            collection_format="multi",
+            required=False,
+        ),
+        openapi.Parameter(
+            "category", openapi.IN_QUERY,
+            type=openapi.TYPE_ARRAY,
+            items=openapi.Items(type=openapi.TYPE_STRING,
+                                enum=[c[0] for c in CarBadData.Category.choices]),
+            collection_format="multi",
+            required=False,
+        ),
+    ],
+    "responses": {
+        200: openapi.Response("OK"),
+        400: openapi.Response("Ошибка валидации"),
+        404: openapi.Response("Не найдено"),
+    },
+}
 
 VEHICLE_SYNC_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -359,13 +441,12 @@ PARSING_STATS_SWITCH_SCHEMA = {
     },
 }
 
-
 CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA = openapi.Parameter(
     name="key",
     in_=openapi.IN_QUERY,
     description="Sensor key used to filter cars",
     type=openapi.TYPE_STRING,
-    required=True,  # or False if optional
+    required=True,
 )
 
 BAD_DATA_SCHEMA = {

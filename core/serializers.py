@@ -434,6 +434,49 @@ class CarBadDataSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class CarBadDataFilterSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField(required=False, allow_null=True)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    end_date = serializers.DateField(required=False, allow_null=True)
+    search = serializers.CharField(required=False, allow_blank=True)
+    severity = serializers.MultipleChoiceField(
+        choices=CarBadData.Severity.choices,
+        required=False,
+    )
+    tags = serializers.MultipleChoiceField(
+        choices=CarBadData.Tag.choices,
+        required=False,
+    )
+    category = serializers.MultipleChoiceField(
+        choices=CarBadData.Category.choices,
+        required=False,
+    )
+
+class BadDataQuerySerializer(serializers.Serializer):
+    TYPE_CALENDAR = "calendar"
+    TYPE_CAR = "car"
+    TYPE_TAG = "tag"
+
+    TYPE_CHOICES = [
+        (TYPE_CALENDAR, "Календарь"),
+        (TYPE_CAR, "По автомобилям"),
+        (TYPE_TAG, "По тегам"),
+    ]
+
+    type = serializers.ChoiceField(choices=TYPE_CHOICES)
+    periodFrom = serializers.DateField(required=False, allow_null=True)
+    periodDue = serializers.DateField(required=False, allow_null=True)
+    category = serializers.ChoiceField(
+        choices=CarBadData.Category.choices,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    tags = serializers.MultipleChoiceField(
+        choices=CarBadData.Tag.choices,
+        required=False,
+    )
+
 class UserCarListSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserCarList

@@ -35,6 +35,7 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
+from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
 
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
@@ -44,6 +45,7 @@ from .helpers.data_provider import validate_provider_cars, \
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .mixins.calculation_logs_mixin import APICalculationLoggingMixin
 from .mixins.convert_utc_mixin import TimestampTimezoneConverterMixin
+from .mixins.swagger_mixin import SwaggerSafeQuerysetMixin
 from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, OrgUser, Car, CarConsumption, CarReport, \
     Driver, DataProvider, \
     CarBadData, Language, CarUnit, SensorsValues, SensorsKeyLocalization, UserCarList, CarMileageReport, TelegramUser, \
@@ -56,7 +58,7 @@ from core.helpers.rest import (
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
-    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA
+    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA
 )
 from app.tasks import sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
@@ -72,7 +74,7 @@ from .serializers import (
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
     TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
-    APICalculationLogOutputSerializer
+    APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
@@ -592,7 +594,7 @@ class CarMileageReportListAPIView(ListAPIView):
         ).select_related('car_id').order_by('-datetime')
 
 
-class CarMileageReportDetailAPIView(RetrieveAPIView):
+class CarMileageReportDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     serializer_class = CarMileageReportOutputSerializer
     lookup_field = 'pk'
 
@@ -622,7 +624,7 @@ class ParsingStatsParsingSwitch(APIView):
         return success_response({"updated": result}, 200)
 
 
-class CarDetailAPIView(RetrieveAPIView):
+class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
     lookup_field = 'pk'
@@ -708,7 +710,7 @@ class ReportQueryListAPIView(ListAPIView):
         ).select_related('provider_id')
 
 
-class ReportQueryDetailAPIView(RetrieveAPIView):
+class ReportQueryDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
     lookup_field = 'pk'
@@ -742,7 +744,7 @@ class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
         return response
 
 
-class CarReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
+class CarReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverterMixin, RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     lookup_field = 'pk'
@@ -778,7 +780,7 @@ class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
         return response
 
 
-class CarFuelReportDetailAPIView(TimestampTimezoneConverterMixin, RetrieveAPIView):
+class CarFuelReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverterMixin, RetrieveAPIView):
     serializer_class = CarFuelReportSerializer
     lookup_field = 'pk'
 
@@ -813,7 +815,7 @@ class UserCarListListView(ListCreateAPIView):
         serializer.save(user=self.request.user)
 
 
-class UserCarListDetailView(RetrieveUpdateDestroyAPIView):
+class UserCarListDetailView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyAPIView):
     permission_classes = [IsAuthenticated]
     lookup_field = 'pk'
 
@@ -865,7 +867,7 @@ class DriverListAPIView(ListAPIView):
         ).prefetch_related('driver_cars__car_id').order_by('id')
 
 
-class DriverDetailAPIView(RetrieveAPIView):
+class DriverDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DriverOutputSerializer
     lookup_field = 'pk'
@@ -888,7 +890,7 @@ class DataProviderListAPIView(ListAPIView):
         return DataProvider.objects.filter(org_id=self.request.user.org).order_by('id')
 
 
-class DataProviderDetailAPIView(RetrieveUpdateDestroyAPIView):
+class DataProviderDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = DataProviderUpdateSerializer
     lookup_field = 'pk'
@@ -973,7 +975,6 @@ class CarSensorsValuesAPIView(ListAPIView):
             search_query=search_query
         )
 
-
 class CarBadDataAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
@@ -984,12 +985,22 @@ class CarBadDataAPIView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CarBadData.objects.none()
+
+        filter_serializer = CarBadDataFilterSerializer(data=self.request.query_params)
+        if not filter_serializer.is_valid():
+            logger.error(f"Ошибка фильтрации CarBadData: {filter_serializer.errors}")
+            return CarBadData.objects.none()
+
+        data = filter_serializer.validated_data
         org = self.request.user.org
+
         queryset = CarBadData.objects.filter(
             car_id__data_providers__org_id=org.id
         ).select_related('car_id').distinct().order_by('-datetime')
 
-        car_id = self.request.query_params.get('car_id')
+        car_id = data.get('car_id')
         if car_id:
             try:
                 car = Car.objects.get(id=car_id, data_providers__org_id=org.id)
@@ -997,23 +1008,26 @@ class CarBadDataAPIView(ListAPIView):
             except (Car.DoesNotExist, ValueError):
                 return CarBadData.objects.none()
 
-        start_date = self.request.query_params.get('start_date')
-        end_date = self.request.query_params.get('end_date')
-        if start_date:
-            queryset = queryset.filter(datetime__date__gte=start_date)
-        if end_date:
-            queryset = queryset.filter(datetime__date__lte=end_date)
-
-        search_query = self.request.query_params.get('search')
-        if search_query:
-            queryset = queryset.filter(reason__icontains=search_query)
+        if data.get('start_date'):
+            queryset = queryset.filter(datetime__date__gte=data['start_date'])
+        if data.get('end_date'):
+            queryset = queryset.filter(datetime__date__lte=data['end_date'])
+        if data.get('search'):
+            queryset = queryset.filter(reason__icontains=data['search'])
+        if data.get('severity'):
+            queryset = queryset.filter(severity__in=data['severity'])
+        if data.get('tags'):
+            queryset = queryset.filter(tags__overlap=list(data['tags']))
+        if data.get('category'):
+            queryset = queryset.filter(category__in=data['category'])
 
         return queryset
 
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.filter_queryset(self.get_queryset())
-            car_id = self.request.query_params.get('car_id')
+
+            car_id = request.query_params.get('car_id')
             if car_id and not queryset.exists():
                 try:
                     Car.objects.get(id=car_id)
@@ -1034,8 +1048,47 @@ class CarBadDataAPIView(ListAPIView):
             serializer = self.get_serializer(queryset, many=True)
             return Response(serializer.data)
         except Exception as e:
+            logger.error(f"Ошибка получения CarBadData: {e}")
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+
+class CarBadDataDetailAPIView(RetrieveAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = CarBadDataSerializer
+    lookup_field = 'pk'
+
+    def get_queryset(self):
+        return CarBadData.objects.filter(
+            car_id__data_providers__org_id=self.request.user.org.id
+        ).select_related('car_id').distinct()
+
+class CarBadDataDashboardAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**BAD_DATA_DASHBOARD_SCHEMA)
+    def get(self, request):
+        serializer = BadDataQuerySerializer(data=request.query_params)
+        if not serializer.is_valid():
+            logger.error(f"Ошибка валидации параметров: {serializer.errors}")
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        org_id = request.user.org.id
+        period_from = data.get("periodFrom")
+        period_due = data.get("periodDue")
+        category = data.get("category") or None
+        tags = data.get("tags") or None
+
+        dispatch = {
+            BadDataQuerySerializer.TYPE_CALENDAR: get_bad_data_calendar,
+            BadDataQuerySerializer.TYPE_CAR: get_bad_data_by_car,
+            BadDataQuerySerializer.TYPE_TAG: get_bad_data_by_tag,
+        }
+
+        handler = dispatch[data["type"]]
+        result = handler(org_id, period_from, period_due, category, tags)
+
+        return success_response(result, status.HTTP_200_OK)
 
 class StartTerminalMessagesParsingView(APIView):
     permission_classes = [IsOrgMember]
