@@ -111,11 +111,11 @@ class CarOutputSerializer(serializers.ModelSerializer):
         except ParsingCarStats.DoesNotExist:
             stats, _ = ParsingCarStats.objects.get_or_create(car=obj, defaults={"car_id": obj.id})
         return {
-            "is_parse_mileage": parsing_stats.is_parse_mileage,
-            "is_parse_fuel": parsing_stats.is_parse_fuel,
-            "is_parse_motohours": parsing_stats.is_parse_motohours,
-            "rpm_idle": parsing_stats.rpm_idle,
-            "rpm_active": parsing_stats.rpm_active,
+            "is_parse_mileage": stats.is_parse_mileage,
+            "is_parse_fuel": stats.is_parse_fuel,
+            "is_parse_motohours": stats.is_parse_motohours,
+            "rpm_idle": stats.rpm_idle,
+            "rpm_active": stats.rpm_active,
         }
 
 
