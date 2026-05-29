@@ -283,6 +283,7 @@ def mileage_test_fraud_new(
 
     col_dtime_period = pl.col("timestamp").dt.truncate("48h")
     col_chart_period = pl.col("timestamp").dt.truncate("48h")
+    col_consumpt_period = pl.col("timestamp").dt.truncate("10m")
     spikes_dtime_period = pl.col("timestamp").dt.truncate(f"{TIME_PERIOD}h")
     rpm_dtime_period = pl.col("timestamp").dt.truncate(f"10m")
     CLIPPING_FACTOR = 5  # 1 - infinity нужен для сравненения последней части пробега с со всем остальным, для правильного вычисления накрутки
@@ -301,6 +302,8 @@ def mileage_test_fraud_new(
             pl.col("mileage").truediv(pl.lit(input)).mul(pl.lit(output))
         )
     problems = []
+        
+    is_fuel_consumpt = df["fuel_consumpt"].is_not_null().any()
     is_rpm_present = df["rpm"].is_not_null().any()
     if "ign" not in df.columns:
         df = df.with_columns(pl.lit(1).alias("ign"))
@@ -312,6 +315,13 @@ def mileage_test_fraud_new(
         df = df.with_columns(
             pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign")
         )
+    
+    if is_fuel_consumpt:
+        df = df.with_columns(
+            pl.col("fuel_consumpt").diff().abs().sum().over(["auto", col_consumpt_period]).alias("spent_10")
+        )
+    else:
+        df = df.with_columns(pl.lit(None).alias("spent_10"))
 
     df = df.with_columns(
         [
@@ -676,12 +686,16 @@ def mileage_test_fraud_new(
     travel_fraud = df_working["true_mileage_fraud"].sum() if False == True else ign_miss
     chart_data = None
     if travel_fraud > 0 or mileage_suspicious > 0 or force_chart:
-        cdf = df.group_by_dynamic(index_column="timestamp", every="1m").agg(
+        cdf = df.filter(pl.col("msg_skip").eq(0)).group_by_dynamic(index_column="timestamp", every="1m").agg(
             pl.col("mileage").first(),
             pl.col("pos_s").mean(),
-            pl.col("du_mean").mean(),
+            pl.col("du").mean().alias("du_mean"),
             pl.col("ign").max(),
+            pl.col("dmileage").sum(),
+            pl.col("dtime").sum(),
         )
+        # cdf = cdf.with_columns(
+            # pl.col("dmileage").truediv(pl.col("dtime")).alias("du_mean"))
         chart_data = {
             "timestamp": cdf["timestamp"]
             .dt.replace_time_zone("UTC")
