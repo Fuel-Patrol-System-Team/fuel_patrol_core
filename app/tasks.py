@@ -255,7 +255,7 @@ def process_single_car_data_task(
         leak_service = leaks_service.LeaksService()
         leaks_result, intermediate_df = None, None
         if norms_df is not None and not norms_df.is_empty():
-            leaks_result, intermediate_df = leak_service.compute_leaks(
+            leaks_result, intermediate_df, reports = leak_service.compute_leaks(
                 auto_df=auto_df,
                 data_df=raw_df,
                 primary_df=primary_df,
@@ -263,6 +263,8 @@ def process_single_car_data_task(
                 is_save_bad_data=is_save_bad_data,
                 is_filter_bad_data=True,
             )
+            if is_save_bad_data:
+                ReportService.create_bad_data_record_from_list(car, reports, report_query)
 
         if leaks_result is None or leaks_result.is_empty():
             error_msg = f"Не удалось рассчитать утечки для машины {car_id}"
@@ -665,7 +667,9 @@ def calculate_leaks_cron(
                     norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
                     auto_data = CarDataService.prepare_auto_data(car)
                     leak_service = leaks_service.LeaksService()
-                    leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                    leaks_result, _, reports  =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                    if is_save_bad_data:
+                        ReportService.create_bad_data_record_from_list(car, reports, report_query)
                 if leaks_result is None or leaks_result.is_empty():
                     error_msg = f"Не однаружены сливы для машины {car.id}"
                     logger.error(error_msg)
@@ -745,7 +749,9 @@ def calculate_leaks_cron_one(
                 norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
                 auto_data = CarDataService.prepare_auto_data(car)
                 leak_service = leaks_service.LeaksService()
-                leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                leaks_result, _, reports  =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                if is_save_bad_data:
+                    ReportService.create_bad_data_record_from_list(car, reports, report_query)
                 if isinstance(leaks_result, pl.DataFrame):
                     leaks_result = leaks_result.with_columns(pl.col("grades").cast(pl.String))
                     spent_report = fuel_spent_calculate(leaks_result)
@@ -1002,7 +1008,10 @@ def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_sa
                 norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
                 auto_data = CarDataService.prepare_auto_data(car)
                 leak_service = leaks_service.LeaksService()
-                leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                leaks_result, _,  reports =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                if is_save_bad_data:
+                    ReportService.create_bad_data_record_from_list(car, reports, report_query)
+                
                 if isinstance(leaks_result, pl.DataFrame):
                     leaks_result = leaks_result.with_columns(pl.col("grades").cast(pl.String))
                     spent_report = fuel_spent_calculate(leaks_result)
@@ -1080,7 +1089,9 @@ def parse_cars_computed_data_task(
                     norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
                     auto_data = CarDataService.prepare_auto_data(car)
                     leak_service = leaks_service.LeaksService()
-                    leaks_result, _ =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                    leaks_result, _, reports =  leak_service.compute_leaks(auto_data , data_df , primary_df, norms_df)
+                    if is_save_bad_data:
+                        ReportService.create_bad_data_record_from_list(car, reports, report_query)
                     if leaks_result is None or leaks_result.is_empty():
                         error_msg = f"Не обнаружены данные для машины {car.id}"
                         logger.error(error_msg)

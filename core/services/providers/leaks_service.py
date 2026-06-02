@@ -1,8 +1,9 @@
 import json
 import logging
 import polars as pl
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from core.helpers.fuel import preprocess_basic_one
+from core.helpers.maintenance import maintenance_fuel_level_check
 from core.services.providers.leaks_base import BaseLeaksCalculator
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ class LeaksService(BaseLeaksCalculator):
         initial_df: Optional[pl.DataFrame] = None,
         is_save_bad_data: bool = False,
         is_filter_bad_data: bool = True,
-    ) -> Tuple[Optional[pl.DataFrame], Optional[pl.DataFrame]]:
+    ) -> Tuple[Optional[pl.DataFrame], Optional[pl.DataFrame], List[Any]]:
         """
         Вычисляет утечки топлива для всех машин
         """
@@ -35,6 +36,7 @@ class LeaksService(BaseLeaksCalculator):
         processed_cars = 0
         skipped_cars = 0
 
+        reports = []
         logger.debug(f"Структура auto_df: {auto_df.columns}")
         logger.debug(f"Структура data_df: {data_df.columns}")
         logger.debug(f"Структура primary_df: {primary_df.columns}")
@@ -113,6 +115,8 @@ class LeaksService(BaseLeaksCalculator):
                     is_filter_bad_data=is_filter_bad_data,
                 )
 
+                reports = maintenance_fuel_level_check(result_df,)
+
                 logger.info(
                     f"✅ Машина {auto_id}: расчет утечек завершен, "
                     f"результат={len(result_df)}, ошибок={len(errors) if errors is not None else 0}"
@@ -165,7 +169,7 @@ class LeaksService(BaseLeaksCalculator):
         else:
             logger.warning("❌ Нет результатов для объединения")
 
-        return total_result, intermediate_df
+        return total_result, intermediate_df, reports
 
     def _merge_with_additional_data(
         self,
@@ -338,12 +342,13 @@ class LeaksService(BaseLeaksCalculator):
         logger.info(
             f"✅ Основная предобработка завершена: результат={len(result)}, промежуточные={len(anti_bug)}"
         )
+        
 
         if is_debug:
             logger.debug("Режим отладки: возвращаются все данные")
             return result, anti_bug, df
         else:
-            return result, anti_bug, None
+            return result, anti_bug, None, 
 
     def _fuel_leak_calculate(
         self,

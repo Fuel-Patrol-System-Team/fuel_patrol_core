@@ -1,6 +1,6 @@
 import logging
 import traceback
-from typing import Dict, Any, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional, Tuple, Union
 from django.db import transaction
 from datetime import timedelta, datetime, timezone
 import polars as pl
@@ -115,6 +115,47 @@ class ReportService:
         except Exception as e:
             logger.error(f"Ошибка при завершении отчета с ошибкой {report_query.id}: {e}")
             raise
+        
+    @staticmethod
+    @transaction.atomic
+    def create_bad_data_record_from_list(
+            car: Car,
+            reports: List[Any],
+            report_query: Optional[ReportQuery] = None,
+            
+    ) -> int | None:
+        if not report_query or not report_query.is_save_bad_data:
+            return None
+
+        period_info   = ""
+        bad_reports = []
+        for report in reports:
+
+            tags = report["tags"]
+            if tags is None:
+                tags = [CarBadData.Tag.SERVER]
+
+            valid_tags = ReportService._validate_tags(tags)
+
+            bad_data = CarBadData.objects.create(
+                car_id=car,
+                reason=f"{report["message"]}",
+                datetime=datetime.now().astimezone(),
+                severity=report["severity"],
+                category=report["category"],
+                tags=valid_tags,
+                report_query=report_query,
+            )
+
+            logger.error(
+                f"[{report["severity"].upper()}][{report["category"]}] tags={valid_tags} "
+                f"CarBadData для {car.name}: {report["message"]}{period_info}"
+            )
+        if len(bad_reports) > 0:
+            CarBadData.objects.bulk_create(
+                bad_reports
+            )
+        return len(bad_reports)
 
     @staticmethod
     @transaction.atomic
@@ -207,6 +248,7 @@ class ReportService:
         logger.warning(f"Неизвестный тип {field_name}: {type(value)}")
         return None
 
+        
 
     @staticmethod
     @transaction.atomic

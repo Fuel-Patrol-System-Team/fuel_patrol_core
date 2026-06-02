@@ -318,10 +318,11 @@ def mileage_test_fraud_new(
     
     if is_fuel_consumpt:
         df = df.with_columns(
-            pl.col("fuel_consumpt").diff().abs().sum().over(["auto", col_consumpt_period]).alias("spent_10")
+            pl.col("fuel_consumpt").diff().abs().sum().over(["auto", col_consumpt_period]).alias("spent_30")
         )
     else:
-        df = df.with_columns(pl.lit(None).alias("spent_10"))
+        df = df.with_columns(pl.lit(0).alias("spent_30"))
+    fuel_consumpt_normal = df["spent_30"].mean()
 
     df = df.with_columns(
         [
@@ -488,6 +489,11 @@ def mileage_test_fraud_new(
         pl.col("dmileage_missed").mul(pl.col("msg_skip")).alias("dmileage_missed_skip")
     )
     df = df.with_columns(pl.col("dmileage_missed").sub(pl.col("dmileage_missed_skip")))
+    if is_fuel_consumpt:
+        df = df.with_columns(pl.when(pl.col("dmileage_missed").gt(0)).then(pl.col("fuel_consumpt").diff().abs()).otherwise(0).alias("ign_fraud_spent"))
+    else:
+        df = df.with_columns(pl.lit(0).alias("ign_spent"))
+
     agg = None
     if regime == MileageModes.agg:
         agg = df.group_by_dynamic(
@@ -613,6 +619,7 @@ def mileage_test_fraud_new(
             pl.sum("dmileage_missed_skip"),
             pl.sum("dmileage_suspicious"),
             pl.max("msg_skip_big"),
+            pl.sum("ign_fraud_spent")
         ]
     )
 
@@ -708,7 +715,9 @@ def mileage_test_fraud_new(
         }
     travel_skipped = df_working["dmileage_missed_skip"].sum()
     msg_skip_big = df_working["msg_skip_big"].max()
-
+    ign_fraud_spent = df_working["ign_fraud_spent"].sum()
+    ign_fraud_spent_false = ign_fraud_spent > fuel_consumpt_normal * 1.5 if is_fuel_consumpt else False
+    
     return {
         "travel": travel,
         "travel_fraud": (
@@ -725,4 +734,5 @@ def mileage_test_fraud_new(
         "intercept": intercept,
         "std": std,
         "mileage_suspicious": mileage_suspicious,
+        "ign_fraud_spent_false": ign_fraud_spent_false,
     }

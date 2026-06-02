@@ -518,6 +518,7 @@ class CarBadData(models.Model):
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="bad_data")
     reason = models.TextField()
     datetime = models.DateTimeField(default=timezone.now)
+    # TODO: event time для защиты от двойного срабатывания
 
     severity = models.CharField(
         max_length=20,

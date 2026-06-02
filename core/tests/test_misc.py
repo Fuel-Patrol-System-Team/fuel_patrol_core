@@ -3,6 +3,7 @@ import pytest
 import polars
 
 from app.tasks import ReportService
+from core.models import Car, CarBadData, DataProvider, ReportQuery
 
 
 @pytest.mark.django_db
@@ -93,3 +94,24 @@ def test_leaks_saving():
     result = ReportService.save_car_reports_batch(df)
 
     pass
+
+@pytest.mark.django_db
+def test_adding_bad_data_from_list():
+    car = Car.objects.first()
+    bad_data_list = [
+        {
+            "event_date": datetime.datetime.now(),
+            "message": f"Одинаковый уровень топлива, несмотря на пройденное расстояние {car.name}",
+            "tags": [CarBadData.Tag.SENSOR,],
+            "category": CarBadData.Category.MAINTENANCE,
+            "severity": CarBadData.Severity.WARNING,
+        }
+    ]
+    provider =DataProvider.objects.first()
+    report_query, _ = ReportService.create_report(str(provider.id), "leaks")
+    
+    report = ReportService.create_bad_data_record_from_list(car, bad_data_list, report_query )
+
+
+
+    

@@ -36,7 +36,7 @@ def test_parser_compute_single():
     leaks_service = LeaksService()
     leaks_result, intermediate_df = None, None
     if norms_df is not None and not norms_df.is_empty():
-        leaks_result, intermediate_df = leaks_service.compute_leaks(
+        leaks_result, intermediate_df, reports = leaks_service.compute_leaks(
             auto_df=auto_df,
             data_df=raw_df,
             primary_df=primary_df,

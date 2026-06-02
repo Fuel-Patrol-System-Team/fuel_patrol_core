@@ -35,6 +35,7 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
+from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
 
 from .helpers.car_request_helpers import CarRequestHelper
@@ -443,6 +444,8 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 
         try:
+            rpm = RpmAutoCalculationService.try_calculate_rpms(car_id=car_id, start_date=end_date - timedelta(30), end_date=end_date, is_save_bad_data=True)
+            logger.info(f"Rpm computed, result is here {rpm}")
             result, status_code = MotohoursCalculationService.calculate_motohours(
                 car_id=car_id, agg=agg,
                 start_date=start_date, end_date=end_date, is_save_bad_data=is_save_bad_data

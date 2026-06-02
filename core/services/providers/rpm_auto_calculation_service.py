@@ -5,22 +5,49 @@ from datetime import datetime
 import polars
 
 from app.tasks import ParsingCarStats
-from core.helpers.motohours import compute_motohours
-from core.models import Car, CarBadData, DataProvider, ReportQuery
+from core.helpers.motohours import compute_theoretical_rpm
+from core.models import Car, CarBadData, DataProvider, ReportQuery, SensorsValues
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
-from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
 from core.services.providers.report_service import ReportService
 
 logger = logging.getLogger(__name__)
 
 
-class MotohoursCalculationService:
+class RpmAutoCalculationService:
     """Сервис для расчета моточасов с полной бизнес-логикой"""
 
     @staticmethod
-    def calculate_motohours(
+    def try_calculate_rpms(
             car_id: str,
-            agg: Optional[int] = None,
+            start_date: datetime = datetime.now(),
+            end_date: datetime = datetime.now(),
+            is_save_bad_data: bool = True
+    ) -> Tuple[bool, Dict[str, Any] | None]:
+        """
+        Выполняет расчет моточасов с созданием отчета
+        Возвращает (результат, статус_код)
+        """
+        try:
+
+            car, provider = RpmAutoCalculationService._get_car_and_provider(car_id)
+            if car is not None:
+                contains_rpm = SensorsValues.objects.filter(car_id__id=car.id,key__key="rpm" ).count() > 0
+                if not contains_rpm:
+                    logger.warning(f"Для машины {car.name} нет rpm для расчетов")
+                    return False, None
+
+                if car.parsingcar_stats.rpm_idle is None:
+                    return True, RpmAutoCalculationService.calculate_rpm_automatic(car_id, start_date, end_date, is_save_bad_data)
+                else:
+                    logger.warning(f"Для машины {car.name} rpm присутствует, пропускаем")
+                    return False, None
+        except Exception as e:
+            error_msg = "Ошибка при расчете автоматического rpm"
+            logger.error(f"Ошибка при расчете автоматического rpm для car_id={car_id}: {e}", exc_info=True)
+            return {"error": error_msg}, 400
+    @staticmethod
+    def calculate_rpm_automatic(
+            car_id: str,
             start_date: datetime = datetime.now(),
             end_date: datetime = datetime.now(),
             is_save_bad_data: bool = True
@@ -32,7 +59,7 @@ class MotohoursCalculationService:
         report_query = None
 
         try:
-            car, provider_obj = MotohoursCalculationService._get_car_and_provider(car_id)
+            car, provider_obj = RpmAutoCalculationService._get_car_and_provider(car_id)
             if not car or not provider_obj:
                 return {"error": "Автомобиль или провайдер не найдены"}, 400
 
@@ -42,7 +69,7 @@ class MotohoursCalculationService:
                 is_save_bad_data=is_save_bad_data
             )
 
-            validation_error = MotohoursCalculationService._validate_dates(start_date, end_date)
+            validation_error = RpmAutoCalculationService._validate_dates(start_date, end_date)
             if validation_error:
                 ReportService.complete_report_error(report_query, validation_error)
                 return {"error": validation_error}, 400
@@ -74,16 +101,12 @@ class MotohoursCalculationService:
 
             if df.is_empty():
                 result = {
-                    "motohours_start": None,
-                    "motohours_end": None,
-                    "data": [],
-                    "motohours_fraud": 0,
-                    "motohours": 0
+                    "rpm_idle": 0
                 }
 
                 ReportService.create_bad_data_record(
                     car,
-                    "Нет данных моточасов за указанный период",
+                    "Нет возможности посчитать автоматический rpm за указанный период",
                     report_query,
                     start_date, end_date,
                     CarBadData.Severity.INFO,
@@ -108,26 +131,29 @@ class MotohoursCalculationService:
                 return {"result": result}, 200
 
             try:
-                agg_period = 0 if agg is None else agg
                 if isinstance(df, polars.DataFrame):
-                    stats = ParsingCarStats.objects.filter(car_id=car.id).first()
+                    statsManager = ParsingCarStats.objects.filter(car_id=car.id)
+                    stats = statsManager.first()
                     if stats is None:
                         raise BaseException("No parsing stats for this car")
-                    result, reports = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle, "rpm_active": stats.rpm_active})
-                    ReportService.create_bad_data_record_from_list(car, reports, report_query)
+                    wall_value, wall_std, trigger, rpm_present = compute_theoretical_rpm(df)
+                    if not rpm_present:
+                        pass
+                    if not trigger: # значит с расчетами все ок
+                        statsManager.update(
+                            rpm_idle=wall_value,
+                            rpm_active=wall_value + wall_std,
+                        )
             except Exception as calc_error:
-                error_msg = f"Ошибка при расчете моточасов: {str(calc_error)}"
-                logger.error(f"Ошибка расчета моточасов для car_id={car_id}: {calc_error}", exc_info=True)
+                error_msg = f"Ошибка при расчете rpm: {str(calc_error)}"
+                logger.error(f"Ошибка расчета rpm для car_id={car_id}: {calc_error}", exc_info=True)
                 ReportService.complete_report_error(report_query, error_msg)
                 return {"error": error_msg}, 400
 
-            if isinstance(result, dict) and 'data' in result and hasattr(result['data'], 'to_dicts'):
-                result['data'] = result['data'].to_dicts()
 
             report_data = {
-                "result": result,
+                "result": {"rpm_idle": wall_value},
                 "rows_processed": len(df),
-                "aggregation_period_minutes": agg_period
             }
 
             ReportService.complete_report_success(
@@ -137,7 +163,7 @@ class MotohoursCalculationService:
                 cars_skipped=0
             )
 
-            return {"result": result}, 200
+            return {"result": {"rpm_idle": wall_value}}, 200
 
         except Car.DoesNotExist:
             error_msg = "Автомобиль не найден"
@@ -164,7 +190,7 @@ class MotohoursCalculationService:
     def _get_car_and_provider(car_id: str) -> Tuple[Optional[Car], Optional[DataProvider]]:
         """Получает автомобиль и провайдер"""
         try:
-            car = Car.objects.prefetch_related('data_providers').get(id=car_id)
+            car = Car.objects.prefetch_related('data_providers').select_related('parsingcar_stats').get(id=car_id)
             provider_obj = car.data_providers.first()
             return car, provider_obj
         except Car.DoesNotExist:
