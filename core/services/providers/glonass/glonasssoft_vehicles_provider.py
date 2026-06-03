@@ -240,7 +240,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
             ):
-                if parameter_name:
+                if "mileage" in sensors_mapping:
+                    pass
+                elif parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part == "can_mileage":
                         if provider and provider.metadata.get("mileage_source") == "can":

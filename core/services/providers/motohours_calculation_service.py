@@ -113,7 +113,7 @@ class MotohoursCalculationService:
                     stats = ParsingCarStats.objects.filter(car_id=car.id).first()
                     if stats is None:
                         raise BaseException("No parsing stats for this car")
-                    result, reports = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle, "rpm_active": stats.rpm_active})
+                    result, reports = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle,})
                     ReportService.create_bad_data_record_from_list(car, reports, report_query)
             except Exception as calc_error:
                 error_msg = f"Ошибка при расчете моточасов: {str(calc_error)}"

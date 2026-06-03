@@ -25,6 +25,29 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports = []):
         )
     return reports
 
+def maintenance_critical_raw_fuel_values(df: pl.DataFrame, reports = []):
+    # 7000 - crash
+    # 65530, 65532, 65535
+    critical_values = [65530, 65532, 65535]
+    critical_fuel = df.filter(pl.col("calc_sensors_fuel_level").is_in(critical_values))
+    critical_fuel = critical_fuel.group_by_dynamic(index_column="timestamp", group_by="auto", every="1d").agg([
+        pl.col("calc_sensors_fuel_level").first().alias("critical"),
+    ])
+    for cricial in critical_fuel.iter_rows(named=True):
+        reports.append(
+            {
+                "event_date": cricial["timestamp"],
+                "message": f"Обнаружено критическое значение уровня топлива {cricial["critical"]} для {cricial["auto"]}",
+                "tags": [CarBadData.Tag.SENSOR,],
+                "category": CarBadData.Category.MAINTENANCE,
+                "severity": CarBadData.Severity.ERROR,
+                
+            }
+            
+        )
+    
+    
+
 def maintenance_rpm_slow_change_on_speed(df: pl.DataFrame, reports = []):
     period = pl.col("timestamp").dt.truncate("10m") 
     is_rpm_present = df["rpm"].is_not_null().any()

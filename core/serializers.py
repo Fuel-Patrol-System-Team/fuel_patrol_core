@@ -115,7 +115,6 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "is_parse_fuel": stats.is_parse_fuel,
             "is_parse_motohours": stats.is_parse_motohours,
             "rpm_idle": stats.rpm_idle,
-            "rpm_active": stats.rpm_active,
         }
 
 
@@ -549,7 +548,6 @@ class ParsingStatsSwitchSerializer(serializers.Serializer):
 class ParsingStatsUpdateRpmSerializer(serializers.Serializer):
     car_id = serializers.UUIDField()
     rpm_idle = serializers.IntegerField()
-    rpm_active = serializers.IntegerField()
 # LOGS
 class APICalculationLogOutputSerializer(serializers.ModelSerializer):
     car_name = serializers.CharField(source='car.name', read_only=True, default=None)

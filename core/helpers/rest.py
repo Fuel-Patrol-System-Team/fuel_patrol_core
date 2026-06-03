@@ -443,10 +443,10 @@ PARSING_STATS_SWITCH_SCHEMA = {
 
 PARSING_STATS_RPM_SCHEMA = {
     "tags": ["cars"],
-    "operation_description": "Обновляет параметры RPM (rpm_idle, rpm_active) для выбранного автомобиля.",
+    "operation_description": "Обновляет параметры RPM (rpm_idle) для выбранного автомобиля.",
     "request_body": openapi.Schema(
         type=openapi.TYPE_OBJECT,
-        required=["car_id", "rpm_idle", "rpm_active"],
+        required=["car_id", "rpm_idle"],
         properties={
             "car_id": openapi.Schema(
                 type=openapi.TYPE_STRING,
@@ -460,12 +460,7 @@ PARSING_STATS_RPM_SCHEMA = {
                 minimum=0,
                 example=800,
             ),
-            "rpm_active": openapi.Schema(
-                type=openapi.TYPE_INTEGER,
-                description="Обороты в активном режиме (рабочие обороты)",
-                minimum=0,
-                example=2500,
-            ),
+            
         },
     ),
     "responses": {

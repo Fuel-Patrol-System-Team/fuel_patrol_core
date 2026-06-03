@@ -650,13 +650,12 @@ class ParsingStatsUpdateRpm(APIView):
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
         data = serializer.validated_data
         rpm_idle = data.get("rpm_idle")
-        rpm_active = data.get("rpm_active")
         car_id = data.get("car_id")
         try:
             target = ParsingCarStats.objects.filter(car_id=car_id)
         except BaseException:
             return error_response(f"Объект с id {car_id} не существует", status.HTTP_400_BAD_REQUEST)
-        result = target.update(rpm_idle=rpm_idle, rpm_active=rpm_active)
+        result = target.update(rpm_idle=rpm_idle)
         return success_response({"updated": result}, 200)
 
 

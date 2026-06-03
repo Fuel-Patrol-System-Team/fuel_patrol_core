@@ -142,7 +142,6 @@ class RpmAutoCalculationService:
                     if not trigger: # значит с расчетами все ок
                         statsManager.update(
                             rpm_idle=wall_value,
-                            rpm_active=wall_value + wall_std,
                         )
             except Exception as calc_error:
                 error_msg = f"Ошибка при расчете rpm: {str(calc_error)}"
