@@ -493,6 +493,63 @@ CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA = openapi.Parameter(
 )
 
 
+ALERT_SUBSCRIPTION_PATCH_SCHEMA = {
+    'operation_summary': "Настройка подписки на уведомления",
+    'operation_description': (
+        "PATCH — частичное обновление настроек уведомлений текущего пользователя.\n\n"
+        "**Требования:**\n"
+        "- Пользователь должен иметь привязанный Telegram-аккаунт\n"
+        "- При выборе типа `leaks` — обязательно поле `min_leak_liters`\n"
+        "- При выборе типа `frauds` — обязательно поле `min_fraud_km`\n"
+        "- При выборе типа `bad_data` — обязательно поле `bad_data_min_severity`\n\n"
+        "**`notify_hour`** — час по UTC (МСК = UTC+3, т.е. 05:00 МСК = 2)"
+    ),
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'alert_types': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    enum=['leaks', 'frauds', 'bad_data']
+                ),
+                description="Типы алертов. Можно выбрать несколько."
+            ),
+            'bad_data_tags': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(type=openapi.TYPE_STRING),
+                description="Фильтр по тегам ошибок. Пустой список = все теги."
+            ),
+            'bad_data_min_severity': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                enum=['info', 'warning', 'error', 'critical'],
+                description="Обязательно если выбран bad_data."
+            ),
+            'min_fraud_km': openapi.Schema(
+                type=openapi.TYPE_NUMBER,
+                description="Мин. накрутка (км). Обязательно если выбран frauds. 0 = все."
+            ),
+            'min_leak_liters': openapi.Schema(
+                type=openapi.TYPE_NUMBER,
+                description="Мин. слив (л). Обязательно если выбран leaks. 0 = все."
+            ),
+            'notify_hour': openapi.Schema(
+                type=openapi.TYPE_INTEGER,
+                description="Час отправки по UTC, от 0 до 23."
+            ),
+            'is_active': openapi.Schema(
+                type=openapi.TYPE_BOOLEAN,
+                description="Включить/выключить подписку."
+            ),
+        }
+    ),
+    'responses': {
+        200: openapi.Response('Подписка обновлена'),
+        400: openapi.Response('Ошибка валидации'),
+        403: openapi.Response('Telegram-аккаунт не привязан'),
+    }
+}
+
 PARSE_RAW_DATA_SCHEMA = {
     'request_body': openapi.Schema(
         type=openapi.TYPE_OBJECT,

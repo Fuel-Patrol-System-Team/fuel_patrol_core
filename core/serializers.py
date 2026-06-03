@@ -15,7 +15,7 @@ from .models import (
     SensorsKeyLocalization,
     SensorsValues,
     Language,
-    CarUnit, UserCarList, CarMileageReport, TelegramUser, CarFuelReport, APICalculationLog,
+    CarUnit, UserCarList, CarMileageReport, TelegramUser, CarFuelReport, APICalculationLog, AlertSubscription,
 )
 
 
@@ -303,26 +303,28 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 class TelegramUserRegistrationSerializer(serializers.Serializer):
     chat_id = serializers.CharField(max_length=100)
+    user_id = serializers.UUIDField()
     username = serializers.CharField(max_length=255, required=False, allow_blank=True)
     first_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
-    organization_id = serializers.UUIDField()
 
-    def validate_organization_id(self, value):
-        try:
-            Organization.objects.get(id=value)
-        except Organization.DoesNotExist:
-            raise serializers.ValidationError("Organization not found")
-        return value
 
 
 class TelegramUserOutputSerializer(serializers.ModelSerializer):
-    organization = OrganizationOutputSerializer(read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
         model = TelegramUser
-        fields = ('id', 'chat_id', 'username', 'first_name', 'last_name', 'organization', 'created_at', 'is_active')
-
+        fields = (
+            'id',
+            'chat_id',
+            'username',
+            'first_name',
+            'last_name',
+            'user_username',
+            'created_at',
+            'is_active',
+        )
 
 class LanguageSerializer(serializers.ModelSerializer):
     class Meta:
@@ -577,3 +579,124 @@ class APICalculationRetrieveLogOutputSerializer(serializers.ModelSerializer):
             'status_code',
             'created_at'
         ]
+
+class AlertSubscriptionPatchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AlertSubscription
+        fields = [
+            'alert_types',
+            'bad_data_tags',
+            'bad_data_min_severity',
+            'min_fraud_km',
+            'min_leak_liters',
+            'notify_hour',
+            'is_active',
+        ]
+        extra_kwargs = {
+            'alert_types':         {'required': False},
+            'bad_data_tags':       {'required': False},
+            'bad_data_min_severity': {'required': False},
+            'min_fraud_km':        {'required': False},
+            'min_leak_liters':     {'required': False},
+            'notify_hour':         {'required': False},
+            'is_active':           {'required': False},
+        }
+
+    def validate_alert_types(self, value):
+        valid = {c[0] for c in AlertSubscription.AlertType.choices}
+        invalid = set(value) - valid
+        if invalid:
+            raise serializers.ValidationError(
+                f"Недопустимые типы алертов: {', '.join(invalid)}. "
+                f"Допустимые значения: {', '.join(valid)}"
+            )
+        return value
+
+    def validate_bad_data_tags(self, value):
+        valid = {c[0] for c in CarBadData.Tag.choices}
+        invalid = set(value) - valid
+        if invalid:
+            raise serializers.ValidationError(
+                f"Недопустимые теги: {', '.join(invalid)}. "
+                f"Допустимые значения: {', '.join(valid)}"
+            )
+        return value
+
+    def validate_bad_data_min_severity(self, value):
+        valid = {c[0] for c in CarBadData.Severity.choices}
+        if value not in valid:
+            raise serializers.ValidationError(
+                f"Недопустимый уровень серьёзности: {value}. "
+                f"Допустимые значения: {', '.join(valid)}"
+            )
+        return value
+
+    def validate_notify_hour(self, value):
+        if not (0 <= value <= 23):
+            raise serializers.ValidationError(
+                f"Час отправки должен быть от 0 до 23, получено: {value}"
+            )
+        return value
+
+    def validate_min_fraud_km(self, value):
+        if value < 0:
+            raise serializers.ValidationError(
+                "Минимальная накрутка не может быть отрицательной."
+            )
+        return value
+
+    def validate_min_leak_liters(self, value):
+        if value < 0:
+            raise serializers.ValidationError(
+                "Минимальный объём слива не может быть отрицательным."
+            )
+        return value
+
+    def validate(self, attrs):
+        instance = self.instance
+        alert_types = attrs.get(
+            'alert_types',
+            instance.alert_types if instance else []
+        )
+
+        errors = {}
+
+        if AlertSubscription.AlertType.BAD_DATA in alert_types:
+            severity = attrs.get(
+                'bad_data_min_severity',
+                instance.bad_data_min_severity if instance else None
+            )
+            if not severity:
+                errors['bad_data_min_severity'] = (
+                    "Обязательно при выборе типа bad_data: "
+                    "укажите минимальный уровень серьёзности."
+                )
+
+        if AlertSubscription.AlertType.LEAKS in alert_types:
+            min_leak = attrs.get(
+                'min_leak_liters',
+                instance.min_leak_liters if instance else None
+            )
+            if min_leak is None:
+                errors['min_leak_liters'] = (
+                    "Обязательно при выборе типа leaks: "
+                    "укажите минимальный объём слива (л). "
+                    "Для отключения фильтра передайте 0."
+                )
+
+        if AlertSubscription.AlertType.FRAUDS in alert_types:
+            min_fraud = attrs.get(
+                'min_fraud_km',
+                instance.min_fraud_km if instance else None
+            )
+            if min_fraud is None:
+                errors['min_fraud_km'] = (
+                    "Обязательно при выборе типа frauds: "
+                    "укажите минимальную накрутку пробега (км). "
+                    "Для отключения фильтра передайте 0."
+                )
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return attrs

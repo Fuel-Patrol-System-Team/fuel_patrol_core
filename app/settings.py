@@ -432,6 +432,22 @@ UNFOLD = {
                         "title": "Логи расчетов API",
                         "icon": "terminal",
                         "link": reverse_lazy("admin:core_apicalculationlog_changelist"),
+                    }
+                ],
+            },
+            {
+                "title": "Уведомления",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Подписки на алерты",
+                        "icon": "notifications_active",
+                        "link": reverse_lazy("admin:core_alertsubscription_changelist"),
+                    },
+                    {
+                        "title": "Алерты",
+                        "icon": "campaign",
+                        "link": reverse_lazy("admin:core_alert_changelist"),
                     },
                 ],
             },

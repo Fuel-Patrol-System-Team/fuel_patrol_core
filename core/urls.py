@@ -16,7 +16,7 @@ from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, Ca
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
     CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView, \
-    CarBadDataDashboardAPIView, CarBadDataDetailAPIView
+    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView
 
 urlpatterns = [
 
@@ -33,6 +33,8 @@ urlpatterns = [
     path('register', UserRegistrationAPIView.as_view(), name='register'),
     path('register/telegram', TelegramRegisterAPIView.as_view(), name='telegram-register'),
 
+    path('alerts/subscription', AlertSubscriptionAPIView.as_view(), name='alert-subscription'),
+
     path('leaks/count', CarLeaksCountAPIView.as_view(), name='leaks-count'),
     path('leaks/volume', CarLeaksVolumeAPIView.as_view(), name='leaks-volume'),
     path('leaks/daily-sum', DailyLeaksSumAPIView.as_view(), name='daily-leaks-sum'),
@@ -45,6 +47,7 @@ urlpatterns = [
     path('org-users/<uuid:pk>', OrgUserDetailAPIView.as_view(), name='orguser-detail'),
     path("cars/bySensorGroup", CarListBySensorGroupAPIView.as_view(), name="car-sensor-list"),
     path('cars', CarListAPIView.as_view(), name='car-list'),
+
 
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),

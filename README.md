@@ -3,7 +3,7 @@
 ## Требования
 - Docker 20.10+
 - Docker Compose 1.29+
-- Python 3.11 (для локальной разработки)
+- Python 3.12 (для локальной разработки)
 
 ## Конфигурация
 
@@ -12,7 +12,7 @@
 Скопируйте и отредактируйте файл окружения:
 ```bash
 cp .env.example .env
-nano .env  # или ваш любимый редактор
+nano .env 
 ```
 # 2. Команды для запуска и администрирования
 ### Сборка и запуск
@@ -49,17 +49,12 @@ docker-compose restart
 
 ### Просмотр логов
 ```bash
-docker-compose logs -f [service_name]  # api|db|redis|celery|beat|flower|influxdb
+docker-compose logs -f [service_name]  # api|db|redis|celery|beat
 ```
 # 4. Доступ к сервисам
 После запуска сервисы будут доступны по следующим адресам:
 
 Django API: http://сервер:8001
-
-Flower (мониторинг Celery): http://сервер:5556
-
-InfluxDB UI: http://сервер:8087
-
 
 # Настройка UV
 ### Установка uv

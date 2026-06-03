@@ -8,6 +8,7 @@ import pytz
 from django.contrib.auth.models import AbstractUser
 from django.contrib.postgres.fields import ArrayField
 from django.contrib.postgres.indexes import GinIndex
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 from django.dispatch import receiver
@@ -35,11 +36,12 @@ class Organization(models.Model):
 
 class TelegramUser(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    organization = models.ForeignKey(
-        Organization,
+    user = models.OneToOneField(
+        "OrgUser",
         on_delete=models.CASCADE,
-        related_name='telegram_users',
-        verbose_name="Организация"
+        related_name='telegram_user',
+        verbose_name="Пользователь",
+        **NULLABLE
     )
     chat_id = models.CharField(
         max_length=100,
@@ -82,12 +84,12 @@ class TelegramUser(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['chat_id']),
-            models.Index(fields=['organization']),
-            models.Index(fields=['organization', 'is_active'], name='tguser_org_active_idx'),
+            models.Index(fields=['user']),
+            models.Index(fields=['user', 'is_active'], name='tguser_org_active_idx'),
         ]
 
     def __str__(self):
-        return f"{self.username or self.chat_id} ({self.organization.name})"
+        return f"{self.username or self.chat_id}"
 
 
 class Language(models.Model):
@@ -951,6 +953,139 @@ class UnitService(models.Model):
         except Exception as e:
             return False, str(e)
 
+## ALERTS MODELS
+class AlertSubscription(models.Model):
+    class AlertType(models.TextChoices):
+        LEAKS    = "leaks",    "Сливы топлива"
+        FRAUDS   = "frauds",   "Накрутки пробега"
+        BAD_DATA = "bad_data", "Ошибки оборудования"
+        SYSTEM   = "system",   "Системное уведомление"
+
+    id   = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        OrgUser, on_delete=models.CASCADE, related_name="alert_subscription"
+    )
+
+    alert_types = ArrayField(
+        base_field=models.CharField(max_length=20, choices=AlertType.choices),
+        default=list,
+        blank=True,
+        verbose_name="Типы уведомлений"
+    )
+
+    bad_data_tags = ArrayField(
+        base_field=models.CharField(max_length=20, choices=CarBadData.Tag.choices),
+        default=list,
+        blank=True,
+        verbose_name="Теги ошибок (пусто = все теги)",
+        help_text="Фильтр по тегам CarBadData. Пустой список = без фильтрации по тегам."
+    )
+    bad_data_min_severity = models.CharField(
+        max_length=20,
+        choices=CarBadData.Severity.choices,
+        default=CarBadData.Severity.WARNING,
+        verbose_name="Минимальный уровень серьёзности ошибки"
+    )
+
+    min_fraud_km = models.FloatField(
+        default=0.0,
+        verbose_name="Мин. накрутка пробега (км)",
+        help_text="Накрутки меньше этого значения не попадут в отчёт. 0 = все."
+    )
+
+    min_leak_liters = models.FloatField(
+        default=0.0,
+        verbose_name="Мин. объём слива (л)",
+        help_text="Сливы меньше этого значения не попадут в отчёт. 0 = все."
+    )
+
+    notify_hour = models.IntegerField(
+        default=5,
+        verbose_name="Час отправки дайджеста (UTC)",
+        help_text="Целое число от 0 до 23. Celery Beat отправляет в этот час по UTC.",
+        validators=[
+            MinValueValidator(0),
+            MaxValueValidator(23),
+        ]
+    )
+
+    is_active  = models.BooleanField(default=True, verbose_name="Подписка активна")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Настройки уведомлений"
+        verbose_name_plural = "Настройки уведомлений"
+        indexes = [
+            models.Index(fields=['user', 'is_active'], name='alertsub_user_active_idx'),
+            models.Index(fields=['notify_hour', 'is_active'], name='alertsub_hour_active_idx'),
+        ]
+
+    def __str__(self):
+        return f"Подписка {self.user.username} — {self.alert_types}"
+
+
+class Alert(models.Model):
+    class AlertType(models.TextChoices):
+        LEAK = "leak", "Слив топлива"
+        FRAUD = "fraud", "Накрутка пробега"
+        BAD_DATA = "bad_data", "Ошибка оборудования"
+        SYSTEM = "system", "Системное уведомление"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="alerts"
+    )
+    car = models.ForeignKey(
+        Car, on_delete=models.CASCADE, related_name="alerts",**NULLABLE
+    )
+    alert_type = models.CharField(
+        max_length=20, choices=AlertType.choices, db_index=True
+    )
+
+    source_car_report = models.ForeignKey(
+        CarReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+    source_mileage_report = models.ForeignKey(
+        CarMileageReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+    source_bad_data = models.ForeignKey(
+        CarBadData, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+
+    payload = models.JSONField(default=dict, verbose_name="Данные события")
+
+    event_datetime = models.DateTimeField(verbose_name="Время события", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    is_sent = models.BooleanField(default=False, db_index=True)
+    sent_at = models.DateTimeField(**NULLABLE)
+
+
+    class Meta:
+        verbose_name = "Алерт"
+        verbose_name_plural = "Алерты"
+        ordering = ["-event_datetime"]
+        indexes = [
+            models.Index(
+                fields=['organization', 'alert_type', 'is_sent'],
+                name='alert_org_type_sent_idx'
+            ),
+            models.Index(
+                fields=['organization', 'is_sent', 'event_datetime'],
+                name='alert_org_sent_dt_idx'
+            ),
+            models.Index(
+                fields=['car', 'alert_type', 'event_datetime'],
+                name='alert_car_type_dt_idx'
+            ),
+            models.Index(
+                fields=['organization', 'is_sent', 'created_at'],
+                name='alert_org_sent_created_idx'
+            ),
+        ]
+
+    def __str__(self):
+        return f"[{self.alert_type}] — {self.event_datetime:%Y-%m-%d %H:%M}"
 
 ##LOGS MODEL
 class APICalculationLog(models.Model):

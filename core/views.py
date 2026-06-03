@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 import polars as pl
-from django.core.exceptions import ObjectDoesNotExist, ValidationError
+from django.core.exceptions import ObjectDoesNotExist, ValidationError, PermissionDenied
 from django.db.models import F, Q, Count, Prefetch, Subquery, OuterRef
 
 import pandas
@@ -36,6 +36,7 @@ from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
+from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
 
 from .helpers.car_request_helpers import CarRequestHelper
@@ -57,13 +58,15 @@ from core.helpers.rest import (
     CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
-    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_RPM_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA, CAR_DATA_REQUEST_SCHEMA,
+    MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_RPM_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA,
+    CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
-    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA
+    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA
 )
 from app.tasks import sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
-    APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer, CarLeaksChartsRequestSerializer,
+    APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer,
+    CarLeaksChartsRequestSerializer,
     ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
@@ -75,12 +78,14 @@ from .serializers import (
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
     TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
-    APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer
+    APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer,
+    AlertSubscriptionPatchSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
     success_response
 from core.helpers.permissions import IsOrgMember
+from .services.providers.car_data_service import CarDataService
 from .services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
 
@@ -195,7 +200,7 @@ class UserInfoAPIView(APIView):
             'id': user.id,
             'username': user.username,
             'organization': user.org.name,
-            'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.org.id}",
+            'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.id}",
             'timezone': user.timezone,
         })
         return user_response(serializer.data, status.HTTP_200_OK)
@@ -223,7 +228,11 @@ class UserInfoAPIView(APIView):
             'id': user.id,
             'username': user.username,
             'organization': user.org.name,
-            'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.org.id}",
+            'organization_tg_link': (
+                f"https://t.me/{user.org.bot_username}?start={user.id}"
+                if user.org and user.org.bot_username
+                else None
+            ),
             'timezone': user.timezone,
         })
         return user_response(serializer.data, status.HTTP_200_OK)
@@ -444,7 +453,8 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 
         try:
-            rpm = RpmAutoCalculationService.try_calculate_rpms(car_id=car_id, start_date=end_date - timedelta(30), end_date=end_date, is_save_bad_data=True)
+            rpm = RpmAutoCalculationService.try_calculate_rpms(car_id=car_id, start_date=end_date - timedelta(30),
+                                                               end_date=end_date, is_save_bad_data=True)
             logger.info(f"Rpm computed, result is here {rpm}")
             result, status_code = MotohoursCalculationService.calculate_motohours(
                 car_id=car_id, agg=agg,
@@ -566,7 +576,7 @@ class CarListBySensorGroupAPIView(ListAPIView):
         return result.order_by("id")
 
 
-class AutoDataListAPIView(SwaggerSafeQuerysetMixin,ListAPIView):
+class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
     permission_classes = [IsOrgMember]
 
     def get_queryset(self):
@@ -587,12 +597,11 @@ class AutoDataListAPIView(SwaggerSafeQuerysetMixin,ListAPIView):
         for car in cars:
             auto_df = CarDataService.prepare_auto_data(car, return_dict=True)
             if total_autos is None:
-                total_autos= auto_df
+                total_autos = auto_df
             else:
                 total_autos.extend(auto_df)
-                
 
-        df = pandas.DataFrame(total_autos,)
+        df = pandas.DataFrame(total_autos, )
         df.to_csv("/data/datasets/fuel/Cars-new.csv")
 
         return queryset
@@ -640,8 +649,10 @@ class ParsingStatsParsingSwitch(APIView):
         result = target.update(**{true_parameter: ~F(true_parameter)})
         return success_response({"updated": result}, 200)
 
+
 class ParsingStatsUpdateRpm(APIView):
     permission_classes = [IsOrgMember]
+
     @swagger_auto_schema(**PARSING_STATS_RPM_SCHEMA)
     def post(self, request):
         serializer = ParsingStatsUpdateRpmSerializer(data=request.data)
@@ -659,9 +670,7 @@ class ParsingStatsUpdateRpm(APIView):
         return success_response({"updated": result}, 200)
 
 
-
-
-class CarDetailAPIView(RetrieveAPIView):
+class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
     lookup_field = 'pk'
@@ -1012,6 +1021,7 @@ class CarSensorsValuesAPIView(ListAPIView):
             search_query=search_query
         )
 
+
 class CarBadDataAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
@@ -1099,6 +1109,7 @@ class CarBadDataDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
 
+
 class CarBadDataDashboardAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -1126,6 +1137,7 @@ class CarBadDataDashboardAPIView(APIView):
         result = handler(org_id, period_from, period_due, category, tags)
 
         return success_response(result, status.HTTP_200_OK)
+
 
 class StartTerminalMessagesParsingView(APIView):
     permission_classes = [IsOrgMember]
@@ -1375,25 +1387,29 @@ class TelegramRegisterAPIView(APIView):
     def post(self, request):
         serializer = TelegramUserRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
-            return error_response(serializer.errors, status=400)
+            return error_response(serializer.errors, 400)
+
         data = serializer.validated_data
         chat_id = data['chat_id']
-        organization_id = data['organization_id']
+        user_id = data['user_id']
+
         try:
-            organization = Organization.objects.get(id=organization_id)
-        except Organization.DoesNotExist:
-            return error_response('Organization not found', status=404)
-        user, created = TelegramUser.objects.update_or_create(
+            org_user = OrgUser.objects.get(id=user_id)
+        except OrgUser.DoesNotExist:
+            return error_response('User not found', 404)
+
+        tg_user, created = TelegramUser.objects.update_or_create(
             chat_id=chat_id,
             defaults={
-                'organization': organization,
+                'user': org_user,
                 'username': data.get('username', '')[:255],
                 'first_name': data.get('first_name', '')[:255],
                 'last_name': data.get('last_name', '')[:255],
                 'is_active': True,
             }
         )
-        output_serializer = TelegramUserOutputSerializer(user)
+
+        output_serializer = TelegramUserOutputSerializer(tg_user)
         return success_response(output_serializer.data, 201 if created else 200)
 
 
@@ -1410,16 +1426,66 @@ class APICalculationLogListAPIView(ListAPIView):
             user=self.request.user
         ).select_related('car').order_by('-created_at')
 
+
 class APICalculationLogRetrieveAPIView(RetrieveAPIView):
     serializer_class = APICalculationRetrieveLogOutputSerializer
     permission_classes = [IsAuthenticated]
     lookup_field = "pk"
 
     def get_queryset(self):
-        # We still restrict it to the current user and optimize with select_related
         return APICalculationLog.objects.filter(
             user=self.request.user
         ).select_related('car').order_by('-created_at')
+
+
+class AlertSubscriptionAPIView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_summary="Получить текущие настройки подписки",
+        responses={200: AlertSubscriptionPatchSerializer()}
+    )
+    def get(self, request, *args, **kwargs):
+        subscription = get_or_create_subscription(request.user)
+        serializer = AlertSubscriptionPatchSerializer(subscription)
+        return success_response(serializer.data, status.HTTP_200_OK)
+
+    @swagger_auto_schema(**ALERT_SUBSCRIPTION_PATCH_SCHEMA)
+    def patch(self, request, *args, **kwargs):
+        try:
+            check_telegram_user(request.user)
+        except PermissionDenied as e:
+            return error_response(str(e), status.HTTP_403_FORBIDDEN)
+
+        subscription = get_or_create_subscription(request.user)
+
+        serializer = AlertSubscriptionPatchSerializer(
+            instance=subscription,
+            data=request.data,
+            partial=True,
+        )
+
+        if not serializer.is_valid():
+            logger.warning(
+                f"Невалидные данные подписки: user={request.user.username}, "
+                f"errors={serializer.errors}"
+            )
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+
+        try:
+            subscription = patch_subscription(
+                user=request.user,
+                validated_data=serializer.validated_data,
+            )
+        except Exception as e:
+            logger.error(
+                f"Ошибка сохранения подписки: user={request.user.username}, error={e}"
+            )
+            return error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        serializer = AlertSubscriptionPatchSerializer(subscription)
+        return success_response(serializer.data, status.HTTP_200_OK)
+
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {'api_description_url': '/api/v1/swagger.json'})
