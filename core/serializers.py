@@ -304,26 +304,28 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
 class TelegramUserRegistrationSerializer(serializers.Serializer):
     chat_id = serializers.CharField(max_length=100)
+    user_id = serializers.UUIDField()
     username = serializers.CharField(max_length=255, required=False, allow_blank=True)
     first_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
     last_name = serializers.CharField(max_length=255, required=False, allow_blank=True)
-    organization_id = serializers.UUIDField()
 
-    def validate_organization_id(self, value):
-        try:
-            Organization.objects.get(id=value)
-        except Organization.DoesNotExist:
-            raise serializers.ValidationError("Organization not found")
-        return value
 
 
 class TelegramUserOutputSerializer(serializers.ModelSerializer):
-    organization = OrganizationOutputSerializer(read_only=True)
+    user_username = serializers.CharField(source='user.username', read_only=True)
 
     class Meta:
         model = TelegramUser
-        fields = ('id', 'chat_id', 'username', 'first_name', 'last_name', 'organization', 'created_at', 'is_active')
-
+        fields = (
+            'id',
+            'chat_id',
+            'username',
+            'first_name',
+            'last_name',
+            'user_username',
+            'created_at',
+            'is_active',
+        )
 
 class LanguageSerializer(serializers.ModelSerializer):
     class Meta:

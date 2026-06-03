@@ -21,7 +21,8 @@ from core.models import (
     ReportQuery, DataProvider, CarBadData, Language,
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails,
     UnitService, CarUnit, UserCarList, CarPrimary, CarMileageReport,
-    TelegramUser, CarFuelReport, CoreNotification, ParsingCarStats, ComputedData, APICalculationLog,
+    TelegramUser, CarFuelReport, CoreNotification, ParsingCarStats, ComputedData, AlertSubscription, Alert,
+    APICalculationLog,
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 
@@ -60,6 +61,15 @@ class CarReportInline(TabularInline):
     classes = ('collapse',)
     show_change_link = True
 
+class TelegramUserInline(TabularInline):
+    model = TelegramUser
+    extra = 0
+    readonly_fields = ('chat_id', 'username', 'first_name', 'last_name', 'created_at', 'is_active')
+    fields = ('chat_id', 'username', 'first_name', 'last_name', 'is_active', 'created_at')
+    verbose_name = "Telegram-аккаунт"
+    verbose_name_plural = "Telegram-аккаунт"
+    can_delete = True
+    max_num = 1
 
 class CarFuelReportInline(TabularInline):
     model = CarFuelReport
@@ -154,6 +164,7 @@ class CarBadDataInline(admin.TabularInline):
 
     def has_change_permission(self, request, obj=None):
         return False
+
 
 class OrgUserInline(TabularInline):
     model = OrgUser
@@ -322,22 +333,42 @@ class OrganizationAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(TelegramUser)
 class TelegramUserAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('chat_id', 'username', 'organization', 'created_at', 'is_active')
-    list_filter = ('organization', 'is_active', 'created_at')
-    search_fields = ('chat_id', 'username', 'first_name', 'last_name')
+    list_display = (
+        'chat_id',
+        'username',
+        'user_display',
+        'created_at',
+        'is_active',
+    )
+    list_filter = ('is_active', 'created_at', 'user__org')
+    search_fields = ('chat_id', 'username', 'first_name', 'last_name', 'user__username')
     ordering = ('-created_at',)
     list_per_page = 25
     date_hierarchy = 'created_at'
     actions = ['export_selected', 'activate_users', 'deactivate_users']
+
     fieldsets = (
-        ('Основное', {
-            'fields': ('organization', 'chat_id', 'username', 'first_name', 'last_name')
+        ('Привязка', {
+            'fields': ('user', 'chat_id')
+        }),
+        ('Данные Telegram', {
+            'fields': ('username', 'first_name', 'last_name')
         }),
         ('Статус', {
             'fields': ('is_active', 'created_at')
         }),
     )
     readonly_fields = ('created_at',)
+
+    def user_display(self, obj):
+        if obj.user:
+            url = reverse("admin:core_orguser_change", args=[obj.user.id])
+            return _link(url, obj.user.username)
+        return "—"
+
+    user_display.short_description = "Пользователь"
+    user_display.admin_order_field = 'user__username'
+
 
     @admin.action(description='✅ Активировать выбранных пользователей')
     def activate_users(self, request, queryset):
@@ -348,7 +379,6 @@ class TelegramUserAdmin(ImportExportMixin, ModelAdmin):
     def deactivate_users(self, request, queryset):
         updated = queryset.update(is_active=False)
         self.message_user(request, f'Деактивировано {updated} пользователей.')
-
 
 # ─────────────────────────────────────────────────────────────
 # Language
@@ -393,7 +423,7 @@ class OrgUserAdmin(ImportExportMixin, ModelAdmin):
     date_hierarchy = 'date_joined'
     save_on_top = True
     actions = ['export_selected', 'activate_users', 'deactivate_users']
-    inlines = [CoreNotificationInline]
+    inlines = [CoreNotificationInline, TelegramUserInline]
     fieldsets = (
         ('Учётная запись', {'fields': ('username', 'password', 'email')}),
         ('Персональные данные', {'fields': ('first_name', 'last_name'), 'classes': ('collapse',)}),
@@ -2116,6 +2146,106 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
                  name='core_unitservice_disable'),
         ]
         return custom_urls + urls
+
+# ─────────────────────────────────────────────────────────────
+# ALERTS
+# ─────────────────────────────────────────────────────────────
+@admin.register(AlertSubscription)
+class AlertSubscriptionAdmin(ModelAdmin):
+    list_display = [
+        'user',
+        'alert_types',
+        'bad_data_min_severity',
+        'min_leak_liters',
+        'min_fraud_km',
+        'notify_hour',
+        'is_active',
+        'updated_at',
+    ]
+    list_filter = ['is_active', 'bad_data_min_severity', 'notify_hour']
+    search_fields = ['user__username', 'user__email']
+    readonly_fields = ['updated_at']
+
+    fieldsets = (
+        ("Пользователь", {
+            "fields": ("user", "is_active"),
+        }),
+        ("Типы уведомлений", {
+            "fields": ("alert_types",),
+        }),
+        ("Настройки Bad Data", {
+            "fields": ("bad_data_tags", "bad_data_min_severity"),
+            "classes": ("collapse",),
+        }),
+        ("Настройки сливов", {
+            "fields": ("min_leak_liters",),
+            "classes": ("collapse",),
+        }),
+        ("Настройки накруток", {
+            "fields": ("min_fraud_km",),
+            "classes": ("collapse",),
+        }),
+        ("Расписание", {
+            "fields": ("notify_hour",),
+        }),
+        ("Служебное", {
+            "fields": ("updated_at",),
+            "classes": ("collapse",),
+        }),
+    )
+
+
+@admin.register(Alert)
+class AlertAdmin(ModelAdmin):
+    list_display = [
+        'car',
+        'organization',
+        'alert_type',
+        'event_datetime',
+        'is_sent',
+        'sent_at',
+        'created_at',
+    ]
+    list_filter = [
+        'alert_type',
+        'is_sent',
+        'organization',
+        'event_datetime',
+    ]
+    search_fields = ['car__name', 'organization__name']
+    readonly_fields = [
+        'created_at',
+        'sent_at',
+        'source_car_report',
+        'source_mileage_report',
+        'source_bad_data',
+    ]
+    date_hierarchy = 'event_datetime'
+
+    fieldsets = (
+        ("Основное", {
+            "fields": ("organization", "car", "alert_type", "event_datetime"),
+        }),
+        ("Источник", {
+            "fields": (
+                "source_car_report",
+                "source_mileage_report",
+                "source_bad_data",
+            ),
+            "classes": ("collapse",),
+        }),
+        ("Payload", {
+            "fields": ("payload",),
+            "classes": ("collapse",),
+        }),
+        ("Telegram", {
+            "fields": ("is_sent", "sent_at"),
+        }),
+        ("Служебное", {
+            "fields": ("created_at",),
+            "classes": ("collapse",),
+        }),
+    )
 
 
 # ─────────────────────────────────────────────────────────────

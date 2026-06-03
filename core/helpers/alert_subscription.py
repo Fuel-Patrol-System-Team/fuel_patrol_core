@@ -15,8 +15,8 @@ def get_or_create_subscription(user: OrgUser) -> AlertSubscription:
             'bad_data_tags': [],
             'min_fraud_km': 0.0,
             'min_leak_liters': 0.0,
-            'notify_hour': 2,
-            'is_active': True,
+            'notify_hour': 5,
+            'is_active': False,
         }
     )
     return subscription
@@ -24,15 +24,14 @@ def get_or_create_subscription(user: OrgUser) -> AlertSubscription:
 
 def check_telegram_user(user: OrgUser) -> None:
     has_tg = TelegramUser.objects.filter(
-        organization=user.org,
-        username=user.username,
+        user=user,
         is_active=True,
     ).exists()
 
     if not has_tg:
         raise PermissionDenied(
             "Для настройки уведомлений необходимо привязать Telegram-аккаунт. "
-            "Обратитесь к администратору или запустите бота."
+            "Обратитесь к администратору или запустите бота по ссылке в ЛК."
         )
 
 

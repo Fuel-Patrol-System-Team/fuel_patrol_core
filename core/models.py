@@ -36,11 +36,12 @@ class Organization(models.Model):
 
 class TelegramUser(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    organization = models.ForeignKey(
-        Organization,
+    user = models.OneToOneField(
+        "OrgUser",
         on_delete=models.CASCADE,
-        related_name='telegram_users',
-        verbose_name="Организация"
+        related_name='telegram_user',
+        verbose_name="Пользователь",
+        **NULLABLE
     )
     chat_id = models.CharField(
         max_length=100,
@@ -83,12 +84,12 @@ class TelegramUser(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['chat_id']),
-            models.Index(fields=['organization']),
-            models.Index(fields=['organization', 'is_active'], name='tguser_org_active_idx'),
+            models.Index(fields=['user']),
+            models.Index(fields=['user', 'is_active'], name='tguser_org_active_idx'),
         ]
 
     def __str__(self):
-        return f"{self.username or self.chat_id} ({self.organization.name})"
+        return f"{self.username or self.chat_id}"
 
 
 class Language(models.Model):
@@ -959,6 +960,7 @@ class AlertSubscription(models.Model):
         LEAKS    = "leaks",    "Сливы топлива"
         FRAUDS   = "frauds",   "Накрутки пробега"
         BAD_DATA = "bad_data", "Ошибки оборудования"
+        SYSTEM   = "system",   "Системное уведомление"
 
     id   = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
@@ -1028,13 +1030,14 @@ class Alert(models.Model):
         LEAK = "leak", "Слив топлива"
         FRAUD = "fraud", "Накрутка пробега"
         BAD_DATA = "bad_data", "Ошибка оборудования"
+        SYSTEM = "system", "Системное уведомление"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
         Organization, on_delete=models.CASCADE, related_name="alerts"
     )
     car = models.ForeignKey(
-        Car, on_delete=models.CASCADE, related_name="alerts"
+        Car, on_delete=models.CASCADE, related_name="alerts",**NULLABLE
     )
     alert_type = models.CharField(
         max_length=20, choices=AlertType.choices, db_index=True
@@ -1083,7 +1086,7 @@ class Alert(models.Model):
         ]
 
     def __str__(self):
-        return f"[{self.alert_type}] {self.car.name} — {self.event_datetime:%Y-%m-%d %H:%M}"
+        return f"[{self.alert_type}] — {self.event_datetime:%Y-%m-%d %H:%M}"
 
 ##LOGS MODEL
 class APICalculationLog(models.Model):
