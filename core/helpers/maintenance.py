@@ -16,7 +16,7 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports = []):
         reports.append(
             {
                 "event_date": maintenance["timestamp"],
-                "message": f"Одинаковый уровень топлива, несмотря на пройденное расстояние {maintenance["name"]}",
+                "message": f"Одинаковый уровень топлива, несмотря на пройденное расстояние {str(maintenance["timestamp"])}",
                 "tags": [CarBadData.Tag.SENSOR,],
                 "category": CarBadData.Category.MAINTENANCE,
                 "severity": CarBadData.Severity.WARNING,

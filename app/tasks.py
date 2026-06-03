@@ -412,7 +412,7 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 continue
 
 @shared_task(bind=True)
-def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save_bad_data=False):
+def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=False, is_save_bad_data=False):
     
     datetime_now = datetime.now()
     provider = DataProvider.objects.get(name=provider_name)
@@ -425,7 +425,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, is_save
     if car is not None:
         datetime_for_stats = datetime_now - timedelta(days=180)
         # primary computing
-        parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now, default_period_days=10)
+        parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now, default_period_days=30)
         try:
             is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id).select_related("key").filter(key__key="calc_sensors_fuel_level"))
             if is_sensor == 0:

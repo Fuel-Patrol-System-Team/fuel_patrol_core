@@ -374,7 +374,7 @@ class NormsService:
             col_dtime_half = pl.col("timestamp").dt.truncate("30m")
             col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
             grades = car_params["grades"]
-            unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+            unique = list({tuple(sorted(d.items())): d for d in grades}.values())
             fp_pos = len(unique) // 3
             mp = unique[0]
             fp = unique[fp_pos]

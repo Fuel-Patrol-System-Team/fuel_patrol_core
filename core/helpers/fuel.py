@@ -14,7 +14,7 @@ def fuel_spent_calculate(result: pl.DataFrame):
 
 def tarify_car_by_sensor(df: pl.DataFrame, cars: dict[str, Any], column = "calc_sensors_fuel_level", grading = "grades"):
     grades = cars["grades"]
-    unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+    unique = list({tuple(sorted(d.items())): d for d in grades}.values())
     pairs = list(zip(unique, unique[1:]))
     mp = unique[0]
     lp = unique[-1]
