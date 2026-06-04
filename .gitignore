@@ -1,17 +1,40 @@
-/**/__pycache__
-venv
-.venv
-.idea
-/app/datasets
-/media
-/static
-*.env*
-/*.csv
-/core/raw_media/*.csv
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Environment
+.env
+*.env
+!.env.example
+
+# Django runtime
+/media/
+/static/
 debug.log
-.vscode
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Data files (not source)
+/app/datasets/
+/core/raw_media/*.csv
 *.gz
-*.json
-*.pyc
 *.zip
-0*.py
+
+# OS
+.DS_Store
+Thumbs.db

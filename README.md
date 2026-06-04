@@ -1,88 +1,45 @@
-# Fuel Patrol System - Документация по развертыванию
+# fuel_patrol_core
 
-## Требования
-- Docker 20.10+
-- Docker Compose 1.29+
-- Python 3.12 (для локальной разработки)
+Django REST API для Fuel Patrol. В production запускается как часть общего `docker-compose` из корня проекта `fuel_patrol`.
 
-## Конфигурация
+## Состав
 
-# 1. Настройка переменных окружения
+- Django 5 + DRF
+- PostgreSQL 15 (сервис `db`)
+- KeyDB / Redis (сервис `keydb`)
+- Celery worker + beat
 
-Скопируйте и отредактируйте файл окружения:
+## Ключевые переменные окружения
+
+| Переменная | Описание |
+|------------|----------|
+| `SECRET_KEY` | Django secret key |
+| `DEBUG` | `True` / `False` |
+| `ALLOWED_HOSTS` | Список хостов через пробел |
+| `POSTGRES_DB` | Имя БД |
+| `POSTGRES_USER` | Пользователь БД |
+| `POSTGRES_PASS` | Пароль БД (**именно `POSTGRES_PASS`**, не `PASSWORD`) |
+| `POSTGRES_HOST` | Хост БД (в compose: `db`) |
+| `KEYDB_HOST` | Хост KeyDB (в compose: `keydb`) |
+| `KEYDB_PASSWORD` | Пароль KeyDB |
+| `STATIC_ROOT` | Путь к статике внутри контейнера (`/app/static`) |
+| `MEDIA_ROOT` | Путь к media внутри контейнера (`/app/media`) |
+| `BASE_URL` | Публичный URL API |
+| `TIME_ZONE` | Часовой пояс (`Europe/Moscow`) |
+
+## Локальная разработка (без Docker)
+
 ```bash
-cp .env.example .env
-nano .env 
-```
-# 2. Команды для запуска и администрирования
-### Сборка и запуск
-```bash
-docker-compose up -d --build
-```
-
-### Применение миграций
-```bash
-docker-compose exec fuel-patrol-api python manage.py migrate
-
-```
-#### Создание суперпользователя
-```bash
-docker-compose exec fuel-patrol-api python manage.py createsuperuser
-```
-
-### Сбор статики
-```bash
-docker-compose exec fuel-patrol-api python manage.py collectstatic --noinput
-```
-
-# 3. Управления сервисами
-### Остановка
-```bash
-docker-compose down
-```
-
-
-### Перезапуск
-```bash
-docker-compose restart
-```
-
-### Просмотр логов
-```bash
-docker-compose logs -f [service_name]  # api|db|redis|celery|beat
-```
-# 4. Доступ к сервисам
-После запуска сервисы будут доступны по следующим адресам:
-
-Django API: http://сервер:8001
-
-# Настройка UV
-### Установка uv
-```bash
+# Установка зависимостей через uv
 pip install uv
-```
-### Синхронизация uv, установка зависимостей из pyproject.toml
-```bash
 uv sync
-```
-### Установка проекта в редактируемом режиме (опционально)
-```bash
 uv pip install -e .
-```
-### В проекте есть ряд предзаготовленных скриптов взаимодействия, для их изучения введи 
-```bash
-uv run help
-```
-### Добавить зависимость в проект
-```bash
-uv add <package>
-```
-### Удалить зависимости
-```bash
-uv remove <package>
-```
-### Зафиксировать зависимости
-```bash
-uv lock
-```
 
+# Справка по скриптам
+uv run help
+
+# Запуск
+cp .env.example .env   # заполни .env (нужны локальные postgres и keydb)
+uv run python manage.py migrate
+uv run python manage.py runserver
+```
