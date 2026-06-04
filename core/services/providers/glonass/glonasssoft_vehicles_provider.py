@@ -47,7 +47,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             logger.info("Авторизация успешна.")
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка аутентификации: {e}")
+            logger.error(f"Ошибка аутентификации с {payload}: {e}")
             return False
 
 
