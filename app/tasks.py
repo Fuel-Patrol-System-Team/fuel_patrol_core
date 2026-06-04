@@ -1072,9 +1072,9 @@ def parse_cars_computed_data_task(
                         error_msg = f"Не обнаружены данные для машины {car.id}"
                         logger.error(error_msg)
                         ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
-                computed_service = ComputedDataService()
-                saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
-                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
+                    computed_service = ComputedDataService()
+                    saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
+                    logger.info(f"Сохранено {saved_records_amount} записей для графиков")
 
             except Exception as err:
                 report_query, report_details = ReportService.create_report(
