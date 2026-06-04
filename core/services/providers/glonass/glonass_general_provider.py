@@ -10,6 +10,7 @@ import zipfile
 from attr import dataclass
 from django.conf import settings
 import orjson
+from poetry import console
 import polars as pl
 import pytz
 from pathlib import Path
@@ -115,7 +116,7 @@ class GlonassGeneralProvider:
                 return True
 
             except requests.exceptions.RequestException as e:
-                logger.error(f"Ошибка аутентификации: {e}")
+                logger.error(f"Ошибка аутентификации с {payload}: {e}")
                 return False
         return True
         
