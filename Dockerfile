@@ -1,42 +1,37 @@
-FROM python:3.11-slim AS builder
+FROM python:3.13-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc g++ python3-dev libpq-dev cmake rustc cargo libssl-dev libffi-dev zlib1g-dev libjpeg-dev git \
-    && pip install --upgrade pip \
-    && pip install numpy \
-    && pip install pyarrow \
+    gcc g++ python3-dev libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /install
-ENV PYTHONPATH=/install
-COPY requirements.txt .
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-ENV PYTHONDONTWRITEBYTECODE=1
-RUN pip install --prefix=/install --no-warn-script-location --no-cache-dir -r requirements.txt
+WORKDIR /app
 
-FROM python:3.11-slim
+COPY pyproject.toml uv.lock ./
+
+RUN uv sync --frozen --no-dev --no-install-project
+
+FROM python:3.13-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 libstdc++6 libssl3 libffi8 zlib1g libjpeg62-turbo \
+    libpq5 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /install /usr/local
+COPY --from=builder /app/.venv /app/.venv
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONPATH=/app \
-    ARROW_LIB_HOME=/usr/local/lib
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
 COPY . .
 
 RUN useradd -m -r myuser && \
-    chown -R myuser:myuser /app && \
-    chmod -R u+rwx /app
-
-RUN find /usr/local -type d -name '__pycache__' -exec rm -rf {} + \
-    && find /usr/local -type f -name '*.pyc' -delete
+    chown -R myuser:myuser /app
 
 USER myuser
+
 EXPOSE 8000
