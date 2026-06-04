@@ -47,7 +47,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             logger.info("Авторизация успешна.")
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка аутентификации с {payload}: {e}")
+            logger.error(f"Ошибка аутентификации: {e}")
             return False
 
 
@@ -194,6 +194,10 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     if key_part.startswith("can_fuel_volume"):
                         sensors_mapping["calc_sensors_fuel_level"] = (
                             f"parameters.can_fuel_volume"
+                        )
+                    elif key_part.startswith("can_fuel_level"):
+                        sensors_mapping["calc_sensors_fuel_level"] = (
+                            f"parameters.can_fuel_level"
                         )
 
                     elif key_part.startswith("can_") and input_number:

@@ -131,7 +131,7 @@ class CarSensorsRawParser:
             return True
 
         except requests.exceptions.RequestException as e:
-            logger.error(f"Ошибка аутентификации с {payload}: {e}")
+            logger.error(f"Ошибка аутентификации: {e}")
             return False
 
     def parse_raw_data(self) -> List[Dict[str, Any]]:
