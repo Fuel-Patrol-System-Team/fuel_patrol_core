@@ -1,4 +1,5 @@
 import logging
+from poetry import console
 import requests
 import orjson
 import pytz
@@ -29,6 +30,7 @@ class GlonassSoftMileageProvider(RateLimitedProvider):
             "login": self.metadata.get("login"),
             "password": self.metadata.get("password"),
         }
+        logger.info(payload);
 
         try:
             response = requests.post(url, json=payload)
