@@ -6,6 +6,7 @@ import polars as pl
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
+from core.helpers.alg_pieces import rpm_unefficient_cases
 from core.helpers.fuel import tarify_car_by_sensor
 
 class MileageModes(str, Enum):
@@ -594,7 +595,6 @@ def mileage_test_fraud_new(
         }
     else:
         df = df.with_columns(pl.lit(0).alias("dmileage_suspicious"))
-
     df_working = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
@@ -717,6 +717,14 @@ def mileage_test_fraud_new(
     msg_skip_big = df_working["msg_skip_big"].max()
     ign_fraud_spent = df_working["ign_fraud_spent"].sum()
     ign_fraud_spent_false = ign_fraud_spent > fuel_consumpt_normal * 1.5 if is_fuel_consumpt else False
+    if ign_miss < 3:
+        ign_miss = 0
+    if mileage_suspicious < 3:
+        mileage_suspicious = 0
+    if ign_fraud_spent_false < 3:
+        ign_fraud_spent_false = 0
+        
+
     
     return {
         "travel": travel,
