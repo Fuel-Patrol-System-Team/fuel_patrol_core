@@ -347,7 +347,7 @@ class GlonassGeneralProvider:
         headers = {"X-Auth": self.auth_token}
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=(10, 180), stream=True)
+            response = requests.post(url, json=payload, headers=headers, timeout=(10, 180) )
             response.raise_for_status()
 
             data = orjson.loads(response.content)
