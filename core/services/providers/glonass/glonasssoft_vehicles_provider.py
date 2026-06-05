@@ -162,6 +162,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
 
         grade_mapping = {}
         fuelGradeTable = None
+        is_mileage_present = False
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
             sensor_name = sensor.get("name", "")
@@ -170,6 +171,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             input_number = sensor.get("inputNumber")
             input_type = sensor.get("inputType")
             expr = sensor.get("expr", "")
+            is_disabled = sensor.get("disabled", False)
+            if is_disabled:
+                continue
             
 
             if "Скорость" in sensor_name or parameter_name == "can_speed":
@@ -242,9 +246,12 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping["rpm"] = f"parameters.{key_part}"
             elif (
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
-                    or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2
+                    or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2 or sensor_name == "Датчик пробега"
             ):
-                if "mileage" in sensors_mapping:
+
+                if is_mileage_present:
+                    pass
+                elif "mileage" in sensors_mapping:
                     pass
                 elif parameter_name:
                     key_part = parameter_name.split(";")[0]
@@ -262,6 +269,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         grade_mapping["mileage"] = grades_tables[-1].get("grades",) if grades_tables else None
                     else:
                         grade_mapping["mileage"] = None
+                    is_mileage_present = True
             elif sensor_type == "Temperature":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
