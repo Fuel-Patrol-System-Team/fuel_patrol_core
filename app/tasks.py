@@ -47,6 +47,7 @@ from core.services.providers.mileage_calculation_service import MileageAlgorithm
 from core.services.providers.norms_service import NormsService
 from core.services.providers.provider_factory import ProviderFactory
 from core.services.providers.report_service import ReportService
+from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
 from core.services.providers.vehicle_sync_service import VehicleSyncService
 
 from core.helpers.alert import (
@@ -365,6 +366,41 @@ def process_single_car_data_task(
             )
         return {"success": False, "car_id": car_id, "error": error_msg}
 
+@shared_task(bind=True)
+def calculate_auto_rpm(self, provider_id: str, start_time: str | None, is_save_bad_data = False):
+    provider = DataProvider.objects.filter(id=provider_id).first()
+    cars = provider.cars.select_related("parsingcar_stats")
+    mapping = [[str(car.id), start_time,is_save_bad_data ] for car in cars]
+    try:
+        tasks = chain(
+            *(calculate_auto_rpm_single.si(m[0], m[1], m[2]) for m in mapping)
+            
+        ).apply_async()
+    except BaseException as err:
+        logger.error(f"Error {err}")
+
+
+    
+@shared_task(bind=True)
+def calculate_auto_rpm_single(self, car_id: str, start_time: str | None, is_save_bad_data = False):
+    time_start = datetime.now()
+    if start_time is None:
+        time_start = datetime.now()
+    else:
+        time_start = datetime.fromisoformat(start_time)
+    
+    try:
+        service = RpmAutoCalculationService()
+        status, result = service.try_calculate_rpms(car_id, time_start, is_save_bad_data=is_save_bad_data)
+        if status:
+            pass
+
+    except BaseException as err:
+        logger.error(f"Ошибка при расчетах: {err}")
+        raise BaseException(err)
+    
+
+    
 
 @shared_task(bind=True)
 def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):

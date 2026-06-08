@@ -18,3 +18,8 @@ def django_db_setup():
         },
         "ATOMIC_REQUESTS": False
     }
+
+@pytest.fixture(autouse=True)
+def celery_eager(settings):
+    settings.CELERY_TASK_ALWAYS_EAGER = True
+    settings.CELERY_TASK_EAGER_PROPAGATES = True

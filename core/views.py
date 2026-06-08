@@ -453,9 +453,9 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 
         try:
-            rpm = RpmAutoCalculationService.try_calculate_rpms(car_id=car_id, start_date=end_date - timedelta(30),
-                                                               end_date=end_date, is_save_bad_data=True)
-            logger.info(f"Rpm computed, result is here {rpm}")
+            # status, rpm = RpmAutoCalculationService.try_calculate_rpms(car_id=car_id,
+            #                                                    datetime=end_date, is_save_bad_data=True)
+            # logger.info(f"Rpm computed, result is here {rpm}")
             result, status_code = MotohoursCalculationService.calculate_motohours(
                 car_id=car_id, agg=agg,
                 start_date=start_date, end_date=end_date, is_save_bad_data=is_save_bad_data

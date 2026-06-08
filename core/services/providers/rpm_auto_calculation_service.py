@@ -1,12 +1,11 @@
 import logging
 from typing import Dict, Any, Optional, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import polars
 
-from app.tasks import ParsingCarStats
 from core.helpers.motohours import compute_theoretical_rpm
-from core.models import Car, CarBadData, DataProvider, ReportQuery, SensorsValues
+from core.models import Car, CarBadData, DataProvider, ParsingCarStats, ReportQuery, SensorsValues
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.report_service import ReportService
 
@@ -19,8 +18,7 @@ class RpmAutoCalculationService:
     @staticmethod
     def try_calculate_rpms(
             car_id: str,
-            start_date: datetime = datetime.now(),
-            end_date: datetime = datetime.now(),
+            datetime: datetime = datetime.now(),
             is_save_bad_data: bool = True
     ) -> Tuple[bool, Dict[str, Any] | None]:
         """
@@ -35,9 +33,11 @@ class RpmAutoCalculationService:
                 if not contains_rpm:
                     logger.warning(f"Для машины {car.name} нет rpm для расчетов")
                     return False, None
+                start_date = datetime - timedelta(days=30)
+
 
                 if car.parsingcar_stats.rpm_idle is None:
-                    return True, RpmAutoCalculationService.calculate_rpm_automatic(car_id, start_date, end_date, is_save_bad_data)
+                    return True, RpmAutoCalculationService.calculate_rpm_automatic(car_id, start_date, datetime + timedelta(days=10), is_save_bad_data)
                 else:
                     logger.warning(f"Для машины {car.name} rpm присутствует, пропускаем")
                     return False, None
@@ -141,7 +141,7 @@ class RpmAutoCalculationService:
                         pass
                     if not trigger: # значит с расчетами все ок
                         statsManager.update(
-                            rpm_idle=wall_value,
+                            rpm_idle=wall_value + wall_std,
                         )
             except Exception as calc_error:
                 error_msg = f"Ошибка при расчете rpm: {str(calc_error)}"

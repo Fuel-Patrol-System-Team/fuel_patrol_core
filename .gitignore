@@ -38,3 +38,7 @@ debug.log
 # OS
 .DS_Store
 Thumbs.db
+
+*.csv
+*.json
+00*
