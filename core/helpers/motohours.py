@@ -76,6 +76,8 @@ def make_motohours_result(
     rpm_idle: int | float | None = None,
     unefficient_cases: int | float | None = None,
     unefficient_time: int | float | None = None,
+    rpm_same_cases: int | float | None = None,
+    rpm_same_cases_time: int | float | None = None
 ):
 
     return {
@@ -91,6 +93,9 @@ def make_motohours_result(
         "rpm_idle": rpm_idle,
         "unefficient_cases": unefficient_cases, 
         "unefficient_time": unefficient_time,
+        "rpm_same_cases": rpm_same_cases,
+        "rpm_same_cases_time": rpm_same_cases_time
+        
     }
 
 def make_motohours_response_empty():
@@ -143,7 +148,7 @@ def _compute_motohours(
         return df, reports
     result = None
     if method == "ign":
-        result, reports = _compute_motohours_by_ign(df, AGG_TIME)
+        result, reports = _compute_motohours_by_ign(df, stats, AGG_TIME)
     else:
         result, reports = _compute_motohours_by_motohours(df, units, stats, AGG_TIME)
 
@@ -151,6 +156,27 @@ def _compute_motohours(
 
 
 RPM_TEST_IDLE = 820
+
+def _compute_motohours_active_idle(df: pl.DataFrame, is_rpm_present: bool, rpm_idle: int | float, col_dtime_idle_checking_period: pl.Expr):
+
+    if is_rpm_present:
+        df = df.with_columns(
+            pl.col("rpm")
+            .mean()
+            .over(["auto", col_dtime_idle_checking_period])
+            .alias("rpm_direct")
+        )
+        df = df.with_columns(
+            pl.col("rpm_direct").lt(rpm_idle).cast(pl.Int8).alias("is_idle")
+        )
+    else:
+        df = df.with_columns(pl.lit(0).alias("is_idle"))
+    
+    df = df.with_columns(
+        pl.col("is_idle").mul(pl.col("dtime")).truediv(3600).alias("dtime_idle")
+    )
+    return df
+    
 
 
 def _compute_motohours_by_motohours(
@@ -175,18 +201,7 @@ def _compute_motohours_by_motohours(
         df = df.with_columns(
             pl.col("motohours").diff().abs().gt(0).cast(pl.Int8).alias("compare_active")
         )
-    if is_rpm_present:
-        df = df.with_columns(
-            pl.col("rpm")
-            .mean()
-            .over(["auto", col_dtime_idle_checking_period])
-            .alias("rpm_direct")
-        )
-        df = df.with_columns(
-            pl.col("rpm_direct").lt(rpm_idle).cast(pl.Int8).alias("is_idle")
-        )
-    else:
-        df = df.with_columns(pl.lit(0).alias("is_idle"))
+
 
     df = df.filter(pl.col("motohours").is_not_null())
     df = df.with_columns(
@@ -213,9 +228,7 @@ def _compute_motohours_by_motohours(
         pl.col("motohours").truediv(multiplier).alias("motohours"),
     )
 
-    df = df.with_columns(
-        pl.col("is_idle").mul(pl.col("dtime")).truediv(3600).alias("dtime_idle")
-    )
+    df = _compute_motohours_active_idle(df, is_rpm_present, rpm_idle, col_dtime_idle_checking_period)
 
     df = df.with_columns(
         pl.when(pl.col("motohours_diff").ne(0)).then(pl.col("dtime")).otherwise(0)
@@ -264,8 +277,10 @@ def _compute_motohours_by_motohours(
         df["motohours_fraud"].sum() + df["motohours_fraud_by_sensor"].sum()
     )
 
-    unefficient_cases = df["unefficient_case"].sum()
+    unefficient_cases = df["unefficient_cases_total"].sum()
     unefficient_time = df["dtime_unefficient"].sum()
+    rpm_same_cases = df["rpm_same_cases_total"].max()
+    rpm_same_cases_time = df["rpm_same_cases_time"].sum()
     return make_motohours_result(
         motohours_start=df["motohours"].first(),
         motohours_end=df["motohours"].last(),
@@ -274,14 +289,21 @@ def _compute_motohours_by_motohours(
         sensor_check=sensor_check,
         motohours=df["motohours_diff"].sum(),
         sensor="motohours",
+        rpm_idle=rpm_idle,
         idle_motohours=idle_motohours,
         active_motohours=df["motohours_diff"].sum() - idle_motohours,
         unefficient_cases=unefficient_cases,
         unefficient_time=unefficient_time,
+        rpm_same_cases=rpm_same_cases,
+        rpm_same_cases_time=rpm_same_cases_time
     ), reports
 
 
-def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
+def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIOD: int | None):
+
+    rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
+    col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10m")
+    is_rpm_present = df["rpm"].is_not_null().any()
     reports = []
     df = df.with_columns(
         pl.col("timestamp")
@@ -296,7 +318,9 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
         (pl.col("ign") * pl.col("dtime") / 3600).alias("engine_working")
     )
     reports = maintenance_rpm_slow_change_on_speed(df, reports)
+    df = _compute_motohours_active_idle(df, is_rpm_present, rpm_idle, col_dtime_idle_checking_period)
     df = rpm_unefficient_cases(df)
+    df = rpm_almost_same_rpm(df, 15)
 
     data = None
     sensor_check = "ign"
@@ -317,8 +341,12 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
     hours = (df["timestamp"].last() - df["timestamp"].first()).total_seconds() / 3600
 
     motohours = df["engine_working"].sum()
-    unefficient_cases = df["unefficient_case"].sum()
+    idle_motohours = df["dtime_idle"].sum()
+    active_motohours = motohours - idle_motohours
+    unefficient_cases = df["unefficient_cases_total"].max()
     unefficient_time = df["dtime_unefficient"].sum()
+    rpm_same_cases = df["rpm_same_cases_total"].max()
+    rpm_same_cases_time = df["rpm_same_cases_time"].sum()
     return make_motohours_result(
         motohours_start=0,
         motohours_end=motohours,
@@ -327,8 +355,11 @@ def _compute_motohours_by_ign(df: pl.DataFrame, AGG_PERIOD: int | None):
         data=data,
         sensor="ign",
         sensor_check=sensor_check,
-        idle_motohours=0,
-        active_motohours=motohours,
+        rpm_idle=rpm_idle,
+        idle_motohours=idle_motohours,
+        active_motohours=active_motohours,
         unefficient_cases=unefficient_cases,
         unefficient_time=unefficient_time,
+        rpm_same_cases=rpm_same_cases,
+        rpm_same_cases_time=rpm_same_cases_time
     ), reports

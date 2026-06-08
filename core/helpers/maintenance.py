@@ -65,7 +65,7 @@ def maintenance_rpm_slow_change_on_speed(df: pl.DataFrame, reports = []):
             reports.append(
                 {
                     "event_date": check["timestamp"].first(),
-                    "message": f"Подозрительно стабильный rpm при движении {check["auto"].first()} {check["timestamp"].dt.date().__str__()}",
+                    "message": f"Подозрительно стабильный rpm при движении {check["auto"].first()} {check["timestamp"].dt.date().first().__str__()}",
                     "tags": [CarBadData.Tag.SENSOR],
                     "category": CarBadData.Category.MAINTENANCE,
                     "severity": CarBadData.Severity.WARNING
