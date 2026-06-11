@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/5.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.1/ref/settings/
 """
+import sentry_sdk
 import os
 import sys
 from datetime import timedelta
@@ -568,3 +569,17 @@ DOCKER_CONFIG = {
 BASE_URL = os.getenv('BASE_URL', 'http://127.0.0.1:8000')
 
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 20000
+
+# ======================
+# NOOTRACKING
+# ======================
+
+
+sentry_sdk.init(
+    dsn="https://a075e62d45db4eeea8c76643c9628328@api.sherlog.noodev.ru/25",
+    send_default_pii=True,
+    traces_sample_rate=1.0,
+    profile_session_sample_rate=1.0,
+    profile_lifecycle="trace",
+    enable_logs=True,
+)

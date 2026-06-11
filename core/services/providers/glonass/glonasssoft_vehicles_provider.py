@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 import logging
 import re
 import time
@@ -17,6 +18,13 @@ from core.helpers.decorators import retry_on_status
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class SensorType:
+    parameter: str
+    metadata: dict[str, Any] | None
+    priority: int # датчик с наивысшим приоритетом по группе выбирается
+    is_active: bool # является ли активным
+    is_picked: bool = False
 
 class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
     """Провайдер для работы с транспортными средствами GlonassSoft"""
@@ -142,7 +150,16 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             self, vehicle_data: Dict[str, Any], provider: DataProvider | None = None
     ) -> Dict[str, Any]:
         input_value, output_value = None, None
-        sensors_mapping = {}
+        sensors_mapping: dict[str, List[SensorType]] = {
+            "mileage": [],
+            "motohours": [],
+            "speed": [],
+            "rpm": [],
+            "calc_sensors_fuel_level": [],
+            "engine_temp": [],
+            "ign": [],
+            "fuel_consumpt": [],
+        }
 
         unit_name = vehicle_data.get("unitName")
         car_unit = None
@@ -160,9 +177,6 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             vehicle_data["car_unit_id"] = str(car_unit.id)
         vehicle_data["unit_name"] = unit_name
 
-        grade_mapping = {}
-        fuelGradeTable = None
-        is_mileage_present = False
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
             sensor_name = sensor.get("name", "")
@@ -172,23 +186,19 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             input_type = sensor.get("inputType")
             expr = sensor.get("expr", "")
             is_disabled = sensor.get("disabled", False)
-            if is_disabled:
-                continue
             
 
             if "Скорость" in sensor_name or parameter_name == "can_speed":
-                sensors_mapping["speed"] = f"parameters.{parameter_name}"
+                sensors_mapping["speed"].append(SensorType(f"parameters.{parameter_name}", None, 3, is_disabled))
+                continue
             elif sensor_type == "FuelLvl":
+                sensor_grades = None
                 if sensor.get("gradeType") == "GradeTable":
 
                     grades_tables = sensor.get("gradesTables", [{}])
                     if grades_tables and grades_tables[-1]:
                         grades = grades_tables[-1].get("grades", [{}])
-                        grade_mapping["calc_sensors_fuel_level"] = grades
-                        if grades:
-                            record = self._get_right_grade(grades)
-                            input_value = record.get("input")
-                            output_value = record.get("output")
+                        sensor_grades = grades
                             
                     
                 if parameter_name:
@@ -196,123 +206,140 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     
 
                     if key_part.startswith("can_fuel_volume"):
-                        sensors_mapping["calc_sensors_fuel_level"] = (
-                            f"parameters.can_fuel_volume"
+                        sensors_mapping["calc_sensors_fuel_level"].append(
+                            SensorType(f"parameters.can_fuel_volume", {"grades": sensor_grades}, 3, is_disabled)
                         )
-                    elif key_part.startswith("can_fuel_level"):
-                        sensors_mapping["calc_sensors_fuel_level"] = (
-                            f"parameters.can_fuel_level"
+                        continue
+                    if key_part.startswith("can_fuel_level"):
+                        sensors_mapping["calc_sensors_fuel_level"].append(
+                            SensorType(f"parameters.can_fuel_level",{"grades": sensor_grades}, 3, is_disabled)
                         )
+                        continue
 
-                    elif key_part.startswith("can_") and input_number:
-                        sensors_mapping["calc_sensors_fuel_level"] = (
-                            f"parameters.can{input_number}"
+                    if key_part.startswith("can_") and input_number:
+                        sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                            SensorType(f"parameters.can{input_number}",{"grades": sensor_grades}, 3, is_disabled)
                         )
-                    elif input_type == "Analog":
+                        continue
+                    if  input_type == "Analog":
                         match = re.search(r"\bflex_adc(\d+)\b", expr)
                         analog_match = re.search(r"\banalog(\d+)\b", expr)
                         if match is not None:
-                            sensors_mapping["calc_sensors_fuel_level"] = (
-                                f"parameters.{match.group(0)}"
+                            sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                                SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, 3, is_disabled)
                             )
                         if analog_match is not None:
-                            sensors_mapping["calc_sensors_fuel_level"] = (
-                                f"paramaters.{analog_match.group(0)}"
+                            sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                                
+                                SensorType(f"paramaters.{analog_match.group(0)}", {"grades": sensor_grades}, 3, is_disabled)
                             )
                     else:
 
-                        sensors_mapping["calc_sensors_fuel_level"] = (
-                            f"parameters.{key_part}"
+                        sensors_mapping.get("calc_sensors_fuel_level", []).append (
+                            SensorType(f"parameters.{key_part}", {"grades": sensor_grades}, 3, is_disabled)
                         )
                 elif input_number:
                     if input_type == "Analog":
                         match = re.search(r"\bflex_adc(\d+)\b", expr)
                         analog_match = re.search(r"\banalog(\d+)\b", expr)
                         if match is not None:
-                            sensors_mapping["calc_sensors_fuel_level"] = (
-                                f"parameters.{match.group(0)}"
+                            sensors_mapping.get("calc_sensors_fuel_level", []).append (
+                                
+                            SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, 3, is_disabled)
                             )
                     else:
-                        sensors_mapping["calc_sensors_fuel_level"] = (
-                        f"parameters.analog{input_number}"
+                        sensors_mapping.get("calc_sensors_fuel_level", []).append (
+                            SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades}, 3, is_disabled)
                     )
 
             elif sensor_type == "EngineRPM":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping["rpm"] = f"parameters.can{input_number}"
+                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.can{input_number}", None, 3, is_disabled))
                     else:
-                        sensors_mapping["rpm"] = f"parameters.{key_part}"
+                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", None, 3, is_disabled))
             elif (
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2 or sensor_name == "Датчик пробега"
             ):
+                mileage_priority = 3 if sensor_type == "MileageSensor" else 1
+                mileage_grading = None
 
-                if is_mileage_present:
-                    pass
-                elif "mileage" in sensors_mapping:
-                    pass
-                elif parameter_name:
+                if parameter_name:
                     key_part = parameter_name.split(";")[0]
-                    if key_part == "can_mileage":
-                        if provider and provider.metadata.get("mileage_source") == "can":
-                            sensors_mapping["mileage"] = f"parameters.can_mileage"
-                        else:
-                            sensors_mapping["mileage"] = f"parameters.mileage" # пока так
-                    elif key_part.startswith("can_") and input_number:
-                        sensors_mapping["mileage"] = f"parameters.can{input_number}"
-                    else:
-                        sensors_mapping["mileage"] = f"parameters.{key_part}"
+
                     if sensor.get("gradeType") == "GradeTable":
                         grades_tables = sensor.get("gradesTables")
-                        grade_mapping["mileage"] = grades_tables[-1].get("grades",) if grades_tables else None
+                        mileage_grading = grades_tables[-1].get("grades",) if grades_tables else None
                     else:
-                        grade_mapping["mileage"] = None
-                    is_mileage_present = True
+                        mileage_grading = None
+                    if mileage_grading is not None:
+                        mileage_grading = {"grades": mileage_grading}
+
+                    if key_part == "can_mileage":
+                        if provider and provider.metadata.get("mileage_source") == "can":
+                            sensors_mapping.get("mileage", []).append(SensorType(f"parameters.can_mileage",mileage_grading, mileage_priority, is_disabled))
+                        else:
+                            sensors_mapping.get("mileage", []).append(SensorType(f"parameters.mileage" ,mileage_grading, mileage_priority, is_disabled))# пока так
+                    elif key_part.startswith("can_") and input_number:
+                        sensors_mapping.get("mileage", []).append(SensorType(f"parameters.can{input_number}",mileage_grading, mileage_priority, is_disabled))
+                    else:
+                        sensors_mapping.get("mileage", []).append(SensorType(f"parameters.{key_part}",mileage_grading, mileage_priority, is_disabled))
+                    
             elif sensor_type == "Temperature":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping["engine_temp"] = f"parameters.can{input_number}"
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", None, 3, is_disabled))
                     else:
-                        sensors_mapping["engine_temp"] = f"parameters.{key_part}"
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
             elif sensor_type == "EngineTemperature":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping["engine_temp"] = f"parameters.can{input_number}"
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", None, 3, is_disabled))
                     else:
-                        sensors_mapping["engine_temp"] = f"parameters.{key_part}"
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
             elif sensor_type == "Ignition":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if input_type == "FMS":
                         key_part = "ign"
                     if key_part.startswith("iobits"):
-                        sensors_mapping["ign"] = f"parameters.iobits"
+                        iobit = 0
+                        iobit_byte_reg = r"iobits(\d*)"
+                        match = re.match(iobit_byte_reg, key_part)
+                        if match is not None:
+                            iobit = int(match.group(1))
+                        ign_metadata = None if iobit == 0 else {"iobit": iobit}
+                        sensors_mapping.get("ign", []).append(SensorType(f"parameters.iobits", ign_metadata, 3, is_disabled))
                     else:
-                        sensors_mapping["ign"] = f"parameters.{key_part}"
+                        sensors_mapping.get("ign", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
             elif sensor_type == "Consumption":
                 if "can_fuel_consumpt" in parameter_name:
-                    sensors_mapping["fuel_consumpt"] = f"parameters.{parameter_name}"
+                    sensors_mapping.get("fuel_consumpt", []).append(SensorType(f"parameters.{parameter_name}", None, 3, is_disabled))
             elif (
                     sensor_type == "Motohours"
                     or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2
             ):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
-                    if key_part == "can_engine_hours":
-                        sensors_mapping["motohours"] = f"parameters.engine_hours"
+                    if parameter_name == "can_engine_hours":
+                        sensors_mapping.get("motohours", []).append(SensorType(f"parameters.can_engine_hours", None, 3, is_disabled))
                     elif key_part.startswith("can_") and input_number:
-                        sensors_mapping["motohours"] = f"parameters.can{input_number}"
+                        sensors_mapping.get("motohours", []).append(SensorType(f"parameters.can{input_number}", None, 3, is_disabled))
                     else:
-                        sensors_mapping["motohours"] = f"parameters.{key_part}"
+                        sensors_mapping.get("motohours", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
 
         if "speed" not in sensors_mapping:
-            sensors_mapping["speed"] = "speed"
+            sensors_mapping.get("speed", []).append(SensorType("speed", None, 3, is_disabled))
+        
+        for label, group in sensors_mapping.items():
+            group.sort(key=lambda x: x.priority, reverse=True)
+            if len(group) > 0:
+                group[0].is_picked = True
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
         vehicle_data["sensorsMapping"] = sensors_mapping
-        vehicle_data["gradeMapping"] = grade_mapping
         return vehicle_data

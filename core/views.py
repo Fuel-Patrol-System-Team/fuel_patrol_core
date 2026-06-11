@@ -55,7 +55,7 @@ from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, Or
     APICalculationLog
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
+    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_RPM_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA,
@@ -66,8 +66,8 @@ from core.helpers.rest import (
 from app.tasks import sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
     APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer,
-    CarLeaksChartsRequestSerializer,
-    ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, UserRegistrationSerializer,
+    CarLeaksChartsRequestSerializer, CarSensorsSwitchSerializer,
+    ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, SensorsValuesOutputSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -567,11 +567,11 @@ class CarListBySensorGroupAPIView(ListAPIView):
         key_value = self.request.query_params.get("key")
         if key_value == "motohours":
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
-                car_id__data_providers__org_id=self.request.user.org.id
+                car_id__data_providers__org_id=self.request.user.org.id, is_active=True
             ).filter(Q(key__key="motohours") | Q(key__key="ign"))
         else:
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
-                car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value
+                car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value, is_active=True
             )
         return result.order_by("id")
 
@@ -1003,11 +1003,12 @@ class SensorsKeyListAPIView(ListAPIView):
         )
 
 
+#TODO: убрать, мотив написавшего не особо ясен
 class CarSensorsValuesAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
     filter_backends = [SearchFilter]
-    search_fields = ['key__key']
+    search_fields = ['key__key',]
     serializer_class = SensorsKeyOutputSerializer
 
     def get_queryset(self):
@@ -1020,6 +1021,51 @@ class CarSensorsValuesAPIView(ListAPIView):
             language_code=language_code,
             search_query=search_query
         )
+
+class CarSensorsValuesTrue(ListAPIView):
+    permission_classes = [IsOrgMember]
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [SearchFilter]
+    search_fields = ["car_id"]
+    serializer_class = SensorsValuesOutputSerializer
+    
+    def get_queryset(self):
+        language_code = get_user_language_code(self.request.user)
+        search_query = self.request.query_params.get('search', None)
+        return 
+        
+# TODO: сделать по людски, учесть мультидатчики и реализовать понятную для юзера логику
+class CarSensorsSwitchView(APIView):
+    permission_classes = [IsOrgMember]
+
+    @swagger_auto_schema(**CAR_SENSOR_SWITCH_SCHEMA)
+    def post(self, request):
+            
+        serializer = CarSensorsSwitchSerializer(data=request.data)
+        if not serializer.is_valid():
+            return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+        try:
+            vdata = serializer.validated_data
+            car_id = vdata.get("car_id") or ""
+            sensor_id = vdata.get("sensor_id") or ""
+            key_name = vdata.get("key_name")
+            # пока выключаем остальных (если они не multi)
+            non_multi_updated = SensorsValues.objects.filter(car_id=car_id,key__key=key_name, multi=False).exclude(id=sensor_id).update(
+                is_active=False
+            )
+            
+            # меняем состояние текущих
+            updated = SensorsValues.objects.filter(car_id=car_id, key__key=key_name, id=sensor_id).update(
+                is_active=~F("is_active")
+            )
+            if updated == 0:
+                return error_response(f"Не найден сенсор с {key_name} для {car_id} и id {sensor_id}", 404)
+            return success_response({"updated": updated}, 200)
+    
+        except BaseException as err:
+            return error_response(f"Непредвиденная ошибка {err}", 500 )
+            
+            
 
 
 class CarBadDataAPIView(ListAPIView):
@@ -1258,7 +1304,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
             pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
 
         data_fast = tmp.filter(polars.col("pos_s").gt(1)).select(["timestamp", "pos_s", "spent_fuel", "fpm", "color"])
-        is_rpm = SensorsValues.objects.filter(key__key="rpm", car_id__id=car_id).count() > 0
+        is_rpm = SensorsValues.objects.filter(key__key="rpm", car_id__id=car_id, is_active=True).count() > 0
         target_column = "rpm_mean" if is_rpm else "ign_spread"
         data_slow = tmp.filter(polars.col("pos_s").lt(1)).select(["timestamp", "pos_s", target_column, "fpm", "color"])
         data_agg = tmp.filter(polars.col("spent_fuel").gt(0))

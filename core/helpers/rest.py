@@ -624,6 +624,53 @@ PARSE_RAW_DATA_SCHEMA = {
     }
 }
 
+CAR_SENSOR_SWITCH_SCHEMA = {
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        properties={
+            'car_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='uuid',
+                description='UUID машины (опционально)',
+                default=''
+            ),
+            'sensor_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format='uuid',
+                description='UUID сенсора (опционально)',
+                default=''
+            ),
+            'key_name': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description='Название ключа (опционально)'
+            ),
+        }
+    ),
+    'responses': {
+        200: openapi.Response(
+            description='Успешный ответ',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'car_id': openapi.Schema(type=openapi.TYPE_STRING),
+                    'sensor_id': openapi.Schema(type=openapi.TYPE_STRING),
+                    'key_name': openapi.Schema(type=openapi.TYPE_STRING),
+                    'status': openapi.Schema(type=openapi.TYPE_STRING),
+                }
+            )
+        ),
+        400: openapi.Response(
+            description='Неверные параметры запроса',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(type=openapi.TYPE_STRING),
+                }
+            )
+        )
+    }
+}
+
 CAR_SENSORS_RAW_DATA_SCHEMA = {
     'request_body': openapi.Schema(
         type=openapi.TYPE_OBJECT,

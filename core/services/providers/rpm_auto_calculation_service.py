@@ -29,7 +29,7 @@ class RpmAutoCalculationService:
 
             car, provider = RpmAutoCalculationService._get_car_and_provider(car_id)
             if car is not None:
-                contains_rpm = SensorsValues.objects.filter(car_id__id=car.id,key__key="rpm" ).count() > 0
+                contains_rpm = SensorsValues.objects.filter(car_id__id=car.id,key__key="rpm", is_active=True ).count() > 0
                 if not contains_rpm:
                     logger.warning(f"Для машины {car.name} нет rpm для расчетов")
                     return False, None

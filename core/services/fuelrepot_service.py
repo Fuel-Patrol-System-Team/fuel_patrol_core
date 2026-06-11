@@ -11,6 +11,10 @@ class FuelReportService:
         df = df.join( fillings, on="timestamp", how="left")
         return df
     @staticmethod
+    def build_right_history_no_refuel(df: polars.DataFrame):
+        df = df.with_columns(polars.lit(0).alias("refill"))
+        return df
+    @staticmethod
     def make_reports_from_df(df: polars.DataFrame):
         slice = df.select(["timestamp", "fuel_start", "fuel_end", "auto", "refill"])
         slice = slice.rename({"timestamp": "start_moment", "auto": "car_id_id", "refill": "fuel_filled"})

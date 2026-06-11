@@ -157,12 +157,18 @@ class CarDataService:
             fuel_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).first()
             fuel_sensors_amount= SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).count()
             mileage_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="mileage", is_active=True).first()
+            grades = None
+            if fuel_sensor and fuel_sensor.metadata is not None:
+                grades = fuel_sensor.metadata.get("grades")
+            if grades is None:
+                raise BaseException( f"Нет тарировки, когда она должна быть для машины {car.name} {car.id}")
+                
             auto_data = [{
                 "id": str(car.id),
                 "auto": str(car.id),
                 "input": float(car.input) if car.input else 1.0,
                 "output": float(car.output) if car.output else 1.0,
-                "grades": car.grades,
+                "grades": grades,
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,
                 "is_tarrified": car.is_tarrified,

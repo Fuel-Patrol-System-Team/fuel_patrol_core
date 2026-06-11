@@ -99,9 +99,11 @@ class CarOutputSerializer(serializers.ModelSerializer):
                     display_name = sensor_value.key.key
 
             sensors_data.append({
+                "id": sensor_value.id,
                 "display_name": display_name,
                 "value": sensor_value.value,
                 "key": sensor_value.key.key,
+                "is_active": sensor_value.is_active
             })
         return sensors_data
 
@@ -262,11 +264,20 @@ class OrgUserOutputSerializer(serializers.ModelSerializer):
 
 
 class SensorsKeyOutputSerializer(serializers.ModelSerializer):
-    display_name = serializers.CharField(read_only=True)
+    key_display_name = serializers.CharField(read_only=True)
+    value = serializers.CharField(read_only=True)
+    is_active = serializers.BooleanField()
 
     class Meta:
         model = SensorsKey
-        fields = ["id", "key", "display_name"]
+        fields = ["id", "key", "value", "key_display_name", "is_active"]
+
+class SensorsValuesOutputSerializer(serializers.ModelSerializer):
+    display_name = serializers.CharField(read_only=True)
+    
+    class Meta:
+        model = SensorsValues
+        fields = ["id", "key", "value", "display_name"]
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -341,6 +352,11 @@ class CarLeaksSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     label = serializers.CharField()
     value = serializers.FloatField()
+
+class CarSensorsSwitchSerializer(serializers.Serializer):
+    car_id = serializers.UUIDField()
+    key_name= serializers.CharField()
+    sensor_id = serializers.UUIDField()
 
 
 class CarMileageReportOutputSerializer(serializers.ModelSerializer):

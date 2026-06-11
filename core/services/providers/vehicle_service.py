@@ -1,10 +1,13 @@
+from collections import defaultdict
 import datetime
+from itertools import chain
 import logging
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Tuple, List, cast
 from venv import create
 from django.db import transaction
 from pytz import utc
 from core.models import Car, DataProvider, SensorsValues, SensorsKey, CarUnit
+from core.services.providers.glonass.glonasssoft_vehicles_provider import SensorType
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +26,7 @@ class VehicleService:
         Возвращает (car, created, critical_errors)
         """
         critical_errors = []
+        
 
         try:
             car_unit_id = vehicle_data.get("car_unit_id")
@@ -57,19 +61,17 @@ class VehicleService:
                     "name": vehicle_data.get("name", ""),
                     "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                     "engine_type": engine_type,
-                    "input": vehicle_data.get("input"),
+                    "input": 0,
                     "grades": vehicle_data.get("gradeMapping", {}).get("calc_sensors_fuel_level", None),
-                    "output": vehicle_data.get("output"),
+                    "output": 0,
                     "is_tarrified": VehicleService._calculate_is_tarrified(vehicle_data),
                     "is_active": len(critical_errors) == 0,
                 },
             )
 
             provider.cars.add(car)
-
             sensors_mapping = vehicle_data.get("sensorsMapping", {})
-            grade_mapping = vehicle_data.get("gradeMapping", {})
-            VehicleService._save_sensors_mapping(car, sensors_mapping, grade_mapping)
+            VehicleService._save_sensors_mapping(car, sensors_mapping, created)
 
             logger.info(
                 f"Сохранены данные для vehicleId={vehicle_id}. "
@@ -94,14 +96,17 @@ class VehicleService:
 
         sensors_mapping = vehicle_data.get("sensorsMapping", {})
 
-        sensor_paths = list(sensors_mapping.values())
-        if len(sensor_paths) != len(set(sensor_paths)):
-            seen_paths = set()
-            for path in sensor_paths:
-                if path in seen_paths and path:
-                    errors.append("Один датчик ремапится в два поля")
-                    break
-                seen_paths.add(path)
+
+        items = list(chain(*[ [ (label, value) for value in arr   ] for label, arr in sensors_mapping.items() ]))
+        duplicate_preparation = defaultdict(list)
+        for label, value in items:
+            duplicate_preparation[value.parameter].append(label)
+        
+        duplicates = {v: labels for v, labels in duplicate_preparation.items() if len(labels) > 1}
+        for raw_param, params in duplicates.items():
+            params = set(params)
+            if len(params) > 1:
+                errors.append(f"Для датчиков ({' '.join(params)})  используется одинаковый параметр {raw_param}")
 
         is_active = vehicle_data.get("isActive", True)
         if not is_active:
@@ -112,28 +117,42 @@ class VehicleService:
     @staticmethod
     def _calculate_is_tarrified(vehicle_data: Dict[str, Any]) -> bool:
         """Определяет, является ли ТС тарированным"""
-        input_val = vehicle_data.get("input")
-        output_val = vehicle_data.get("output")
+        sensors = cast(Dict[str, List[SensorType]], vehicle_data.get("sensorsMapping"))
+        if sensors is None:
+            return False
+        fuel_sensors = sensors.get("calc_sensors_fuel_level")
+        if fuel_sensors is None or len(fuel_sensors) == 0:
+            return True
+        target_sensor = list(filter(lambda x: x.is_picked, fuel_sensors))
+        if len(target_sensor) == 0:
+            logger.warning(f"Машина не имеет тарировки т.к. нет сенсора, который подходит системе")
+            return False
+        target_sensor = target_sensor[0]
+        return target_sensor.metadata is not None and target_sensor.metadata.get("grades") is not None
 
-        return not (
-                (input_val is None or input_val == 1.0) and
-                (output_val is None or output_val == 1.0)
-        )
 
+    # TODO: придумать как избавить от is_first_parsing он не позволяет при появлении нового сенсора заменить текущий выбранный пользователем
     @staticmethod
-    def _save_sensors_mapping(car: Car, sensors_mapping: Dict[str, str], grade_mapping: Dict[str, List[Dict[str, Any]]]) -> None:
+    def _save_sensors_mapping(car: Car, sensors_mapping: Dict[str, List[SensorType]], is_first_parsing = False) -> None:
         """Сохраняет маппинг сенсоров в БД"""
-        for label, value in sensors_mapping.items():
+        for category, mappings in sensors_mapping.items():
             try:
-                sensor_key, _ = SensorsKey.objects.get_or_create(key=label)
-                grade_table = grade_mapping.get(label, None)
-                value, status =  SensorsValues.objects.update_or_create(
-                    car_id=car,
-                    key=sensor_key,
-                    defaults={"value": str(value), "grades": grade_table, "created_at": datetime.datetime.now().astimezone(tz=utc)},
-                )
+                sensor_key, _ = SensorsKey.objects.get_or_create(key=category)
+                for mapping in mappings:
+                    grades = None if mapping.metadata is None else mapping.metadata.get("grades")
+                    
+                    new_sensor, is_created =  SensorsValues.objects.update_or_create(
+                        car_id=car,
+                        key=sensor_key,
+                        value=str(mapping.parameter),
+                        defaults={ "grades": grades, "metadata": mapping.metadata, "created_at": datetime.datetime.now().astimezone(tz=utc), "is_system_pick": mapping.is_picked },
+                    )
+                    if is_created and is_first_parsing:
+                        new_sensor.is_active = new_sensor.is_system_pick
+                        new_sensor.save()
+                        pass
             except Exception as e:
-                logger.error(f"Ошибка при сохранении сенсора {label}: {e}")
+                logger.error(f"Ошибка при сохранении сенсора {category}: {e}")
                 continue
 
     @staticmethod

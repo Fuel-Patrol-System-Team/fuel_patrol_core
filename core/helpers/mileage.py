@@ -7,7 +7,6 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from core.helpers.alg_pieces import rpm_unefficient_cases
-from core.helpers.fuel import tarify_car_by_sensor
 
 class MileageModes(str, Enum):
     standart = "standart"

@@ -113,7 +113,7 @@ class GlonassSoftTerminalMessagesParser:
             try:
                 sensors_mapping = {
                     sv.key.key: sv.value
-                    for sv in SensorsValues.objects.filter(car_id=car).select_related("key")
+                    for sv in SensorsValues.objects.filter(car_id=car, is_active=True).select_related("key")
                 }
                 self.sensors_mapping_cache[car.id] = sensors_mapping
                 logger.debug(f"Загружен маппинг для {car.name}: {len(sensors_mapping)} сенсоров")

@@ -5,7 +5,7 @@ from datetime import datetime
 import polars
 
 from app.tasks import ParsingCarStats
-from core.helpers.motohours import compute_motohours
+from core.helpers.motohours import compute_motohours, make_motohours_response_empty
 from core.models import Car, CarBadData, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
@@ -73,13 +73,7 @@ class MotohoursCalculationService:
                 return {"error": error_msg}, 400
 
             if df.is_empty():
-                result = {
-                    "motohours_start": None,
-                    "motohours_end": None,
-                    "data": [],
-                    "motohours_fraud": 0,
-                    "motohours": 0
-                }
+                result = make_motohours_response_empty()
 
                 ReportService.create_bad_data_record(
                     car,

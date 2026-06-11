@@ -2,7 +2,7 @@ import logging
 import os
 import time
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, TypedDict
 from uuid import UUID
 import zipfile
 
@@ -15,7 +15,7 @@ import requests
 from django.utils import timezone
 
 from core.models import Car, DataProvider, SensorsValues
-from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol
+from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol, SensorMappingParserType
 from core.services.providers.rate_limiter import global_rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class GlonassGeneralProvider:
     old_car_id: UUID | None
     i = 0
     last_auth: datetime 
-
+    
     def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage", default_period_days=90):
         if cars is None and car is not None:
             self.cars = list([car])
@@ -58,12 +58,13 @@ class GlonassGeneralProvider:
         self.total_messages = 0
         self.processed_messages = 0
     
+    
 
     def _enforce_rate_limit(self) -> None:
         """Соблюдение rate limit (1 запрос в секунду)"""
         global_rate_limiter.wait_for_rate_limit()
 
-    def _get_sensors_mapping(self, car: Car) -> Dict[str, list[str]]:
+    def _get_sensors_mapping(self, car: Car) -> Dict[str, list[SensorMappingParserType]]:
         """Получает маппинг сенсоров для машины"""
         if self.old_car_id is None or self.old_car_id != car.id:
             self.old_car_id = car.id
@@ -71,12 +72,12 @@ class GlonassGeneralProvider:
         
         if not self.sensors_mapping_cache:
             right_car = Car.objects.only("id").get(id_in_provider_system=car.id_in_provider_system)
-            sensors = SensorsValues.objects.filter(car_id=right_car.id)
+            sensors = SensorsValues.objects.filter(car_id=right_car.id, is_active=True)
             try:
                 sensors_mapping = {sv.key.key: [] for sv in sensors}
                 for sv in sensors:
                     if sv.key.key in sensors_mapping:
-                        sensors_mapping[sv.key.key].append(sv.value)
+                        sensors_mapping[sv.key.key].append({"value": sv.value, "metadata": sv.metadata})
 
                 self.sensors_mapping_cache = sensors_mapping
                 logger.debug(f"Загружен маппинг для {car.name}: {len(sensors_mapping)} сенсоров")
@@ -278,7 +279,7 @@ class GlonassGeneralProvider:
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.msg_number, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude, GP.fuel_consumpt], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.msg_number, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude, GP.fuel_consumpt, GP.event_code], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
@@ -365,7 +366,7 @@ class GlonassGeneralProvider:
             logger.error(f"Ошибка запроса данных для {vehicle_id}: {e}")
             return None
 
-    def _build_use_cols(self, required_columns, sensors_mapping: Dict[str, list[str]] ):
+    def _build_use_cols(self, required_columns, sensors_mapping: Dict[str, list[SensorMappingParserType]] ):
         usecols = ["auto"]
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -376,7 +377,8 @@ class GlonassGeneralProvider:
                 if path_to_param == "":
                     continue
                 if isinstance(path_to_param, list):
-                    usecols.extend(path_to_param)
+                    mapping = [p["value"] for p in path_to_param]
+                    usecols.extend(mapping)
                     continue
                 usecols.append(path_to_param)
         return usecols
@@ -458,7 +460,7 @@ class GlonassGeneralProvider:
         return result
 
 
-    def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, list[str]], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
+    def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, list[SensorMappingParserType]], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
         use_cols = self._build_use_cols(required_columns, sensors_mapping )
         result = self._process_unmapped(car, messages, use_cols)
         
@@ -481,6 +483,8 @@ class GlonassGeneralProvider:
                 msensor = len(path_to_params) > 1
                 # должен быть один, иначе идем по каждому
                 for index, path_to_param in enumerate(path_to_params):
+                    if isinstance(path_to_param, dict):
+                        path_to_param = path_to_param["value"]
                     true_label = param.label + f"_{index}" if msensor else param.label 
                     if path_to_param == "" or path_to_param not in result.columns:
                         # заменить спец значением весь столбец
@@ -491,7 +495,7 @@ class GlonassGeneralProvider:
                         
                         result = result.rename({path_to_param: true_label})
                         if param.cast: # если есть каст, кастуем
-                            result = param.cast(result)
+                            result = param.cast(result, sensors_mapping)
                         if param.default_value is not None:
                             result = result.with_columns(pl.col(true_label).fill_null(param.default_value))
                         if param.filter_on_absence:

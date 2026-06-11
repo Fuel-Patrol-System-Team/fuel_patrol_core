@@ -70,7 +70,7 @@ class CarSensorsRawParser:
             try:
                 sensors_mapping = {
                     sv.key.key: sv.value
-                    for sv in SensorsValues.objects.filter(car_id=self.car).select_related("key")
+                    for sv in SensorsValues.objects.filter(car_id=self.car, is_active=True).select_related("key")
                 }
                 self.sensors_mapping_cache = sensors_mapping
                 logger.debug(f"Загружен маппинг для {self.car.name}: {len(sensors_mapping)} сенсоров")

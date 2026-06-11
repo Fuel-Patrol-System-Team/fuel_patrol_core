@@ -145,7 +145,7 @@ def _compute_motohours(
 ):
     reports = []
     if df.shape[0] == 0:
-        return df, reports
+        return make_motohours_response_empty(), reports
     result = None
     if method == "ign":
         result, reports = _compute_motohours_by_ign(df, stats, AGG_TIME)

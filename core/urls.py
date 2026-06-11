@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, OrganizationListAPIView, \
+from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, CarSensorsSwitchView, CarSensorsValuesAPIView, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ParsingStatsUpdateRpm, ReportQueryListAPIView, \
     ReportQueryDetailAPIView, \
@@ -65,6 +65,7 @@ urlpatterns = [
     path('report-queries/<uuid:pk>', ReportQueryDetailAPIView.as_view(), name='report-query-detail'),
     path('car-reports', CarReportListAPIView.as_view(), name='car-report-list'),
     path('car-reports/<uuid:pk>', CarReportDetailAPIView.as_view(), name='car-report-detail'),
+    
 
     path('car-fuel-reports', CarFuelReportListAPIView.as_view(), name='fuel-report-list'),
     path('car-fuel-reports/<uuid:pk>', CarFuelReportDetailAPIView.as_view(), name='fuel-report-detail'),
@@ -79,12 +80,12 @@ urlpatterns = [
     path('dataprovider/create', DataProviderCreateAPIView.as_view(), name='data-provider-create'),
 
     path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status'),
-
-    # path('sensors', SensorsMappingListByCardAPIView.as_view(), name='sensors'), ##TODO: Переписать
+    path('sensors/values/<uuid:car_id>', CarSensorsValuesAPIView.as_view(), name='sensors'), ##TODO: Переписать
     path('parsing-stats/switch', ParsingStatsParsingSwitch.as_view(), name='parsing-stats-switch'),
     path("parsing-stats/rpm", ParsingStatsUpdateRpm.as_view(), name='parsing-stats-rpm'), 
 
     path('sensors/keys', SensorsKeyListAPIView.as_view(), name='sensors-keys-list'),
+    path('sensors/switch', CarSensorsSwitchView.as_view() , name='car-sensors-switch'),
 
     path('parsing/mileage', MileageCalculationAPIView.as_view(), name='mileage-test'),
 

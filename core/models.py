@@ -598,9 +598,12 @@ class SensorsValues(models.Model):
     key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name="values")
     value = models.CharField(max_length=255)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="values")
-    is_active = models.BooleanField(default=True)
+    is_system_pick = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=False)
     grades = models.JSONField(**NULLABLE)
+    metadata = models.JSONField(null=True)
     created_at = models.DateTimeField(default=timezone.now)
+    multi = models.BooleanField(default=False)
 
     class Meta:
         verbose_name = "SensorsValues"

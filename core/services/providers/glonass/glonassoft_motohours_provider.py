@@ -108,7 +108,7 @@ class GlonassSoftMotohoursProvider(RateLimitedProvider):
         try:
             car = Car.objects.only("id").get(id_in_provider_system=vehicle_id)
             sensor_value = (
-                SensorsValues.objects.filter(car_id=car, key__key=sensor_key)
+                SensorsValues.objects.filter(car_id=car, key__key=sensor_key, is_active=True)
                 .select_related("key")
                 .first()
             )

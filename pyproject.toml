@@ -133,6 +133,7 @@ dependencies = [
     "zope.interface==7.2",
     "zstandard==0.23.0",
     "scikit-learn>=1.8.0",
+    "sentry-sdk>=2.62.0",
 ]
 
 [project.scripts]

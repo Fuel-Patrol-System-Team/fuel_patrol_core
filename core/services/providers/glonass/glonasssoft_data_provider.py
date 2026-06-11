@@ -225,7 +225,7 @@ class GlonassSoftDataProvider(RateLimitedProvider):
             car = Car.objects.get(id_in_provider_system=vehicle_id)
             sensors_mapping = {
                 sv.key.key: sv.value
-                for sv in SensorsValues.objects.filter(car_id=car).select_related("key")
+                for sv in SensorsValues.objects.filter(car_id=car, is_active=True).select_related("key")
             }
             logger.info(f"Получен маппинг сенсоров: {len(sensors_mapping)} сенсоров")
         except Exception as e:

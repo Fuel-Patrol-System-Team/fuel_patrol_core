@@ -1,16 +1,19 @@
 from enum import Enum
-from typing import Any
+from typing import Any, Dict, TypedDict
 from attr import dataclass
 import polars as pl
 from typing import Protocol
 
 from core.models import Car 
 
+class SensorMappingParserType(TypedDict):
+    value: str
+    metadata: Dict[str, Any]
 class GlonassCastProtocol(Protocol): 
-    def __call__(self, df: pl.DataFrame) -> pl.DataFrame:
+    def __call__(self, df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]]) -> pl.DataFrame:
         ...
 class GlonassAfterParsingProtocol(Protocol):
-    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]) ->pl.DataFrame:
+    def __call__(self, df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]) ->pl.DataFrame:
         ...
 @dataclass
 class GlonassParameter:
@@ -40,6 +43,7 @@ class GL_PARAM_KEYS(Enum):
     satellites = "satellites"
     msg_number = "msg_number"
     fuel_consumpt = "can_fuel_consumpt"
+    event_code = "event_code"
     
 class GL_ACTION_KEYS(Enum):
     tarify_car = "tarify"
@@ -47,13 +51,24 @@ class GL_ACTION_KEYS(Enum):
     amtr_merge = "amtr_merge"
     chart_preprocess = "chart_preprocess"
 
+
+def _cast_ign(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]]):
+
+    sensor = sensor_mapping[GL_PARAM_KEYS.ignition.value][0]
+    ign_bit = 0
+    if sensor['metadata'] is not None:
+        ign_bit = sensor["metadata"].get("iobit", 0)
+    ign_bit = (-1 * ign_bit) -1
+    df = df.with_columns(pl.col("ign").cast(pl.String).str.slice(ign_bit, 1).cast(pl.Int32).clip(upper_bound=1))
+    return df
+
 GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
-    GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
+    GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
     GL_PARAM_KEYS.speed: GlonassParameter(True, "speed", "pos_s", None, False, 0, None ),
     GL_PARAM_KEYS.fuel_level: GlonassParameter(True, "", "calc_sensors_fuel_level", None, False, None, None ),
     GL_PARAM_KEYS.mileage: GlonassParameter(True, "", "mileage", None, False, 0, None),
     GL_PARAM_KEYS.motohours: GlonassParameter(True, "", "motohours", None, False, None, None),
-    GL_PARAM_KEYS.ignition: GlonassParameter(True, "", "ign", lambda df: df.with_columns(pl.col("ign").cast(pl.String).str.slice(-1, 1).cast(pl.Int32).clip(upper_bound=1)), False, 0, None),
+    GL_PARAM_KEYS.ignition: GlonassParameter(True, "", "ign",_cast_ign, False, 0, None),
     GL_PARAM_KEYS.rpm: GlonassParameter(True, "", "rpm", None, False, None, None),
     GL_PARAM_KEYS.engine_temp: GlonassParameter(True, "", "engine_temp", None, False, 0, None),
     GL_PARAM_KEYS.voltage: GlonassParameter(False, "voltage", "calc_sensors_voltage", None, False, None, None),
@@ -62,20 +77,22 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.amtr_x: GlonassParameter(False, "amtr_x", "amtr_x", None, False, 0, 0),
     GL_PARAM_KEYS.amtr_y: GlonassParameter(False, "amtr_y", "amtr_y", None, False, 0, 0),
     GL_PARAM_KEYS.amtr_z: GlonassParameter(False, "amtr_z", "amtr_z", None, False, 0,0),
-    GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None),
+    GL_PARAM_KEYS.satellites: GlonassParameter(False, "satellites", "satellites",lambda df, sensor_mapping: df.with_columns(pl.col("satellites").cast(pl.Int8)),False, None, None),
     GL_PARAM_KEYS.msg_number: GlonassParameter(True, "parameters.msg_number", "msg_number", None, False, 999, 999),
+    GL_PARAM_KEYS.event_code: GlonassParameter(True, "parameters.event_code", "event_code", None, False, None, None),
     GL_PARAM_KEYS.fuel_consumpt: GlonassParameter(True, "", "fuel_consumpt", None,  False, 0, 0),
     }
     
 
+    
 
-def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
     df = df.with_columns(pl.lit(str(car.id)).alias("auto").cast(pl.Categorical)) 
     mapping.append("auto")
     return df
 
 
-def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
     df = df.with_columns(pl.col("amtr_x").add(pl.col("amtr_y")).add(pl.col("amtr_z")).alias("amtr")) 
     mapping.remove("amtr_x")
     mapping.remove("amtr_y")
@@ -83,7 +100,7 @@ def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: 
     mapping.append("amtr")
     return df
 
-def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
 
     sensors = filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns)
 
@@ -107,7 +124,7 @@ def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: 
         df = df.filter(pl.col(sensor).le(lp["input"]))
     return df
 
-def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
     if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
         df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
     print(sensor_mapping)
@@ -117,7 +134,7 @@ def _reconcile_multisensor(df: pl.DataFrame, sensors: list[str]):
     pass
     
 
-def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[str]]):
+def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
     sensors = list(filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns))
 
     if "msg_number" in df.columns:
