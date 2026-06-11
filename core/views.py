@@ -92,6 +92,12 @@ from .services.providers.motohours_calculation_service import MotohoursCalculati
 
 logger = logging.getLogger(__name__)
 
+_ANON_GUARD = lambda self: (
+    getattr(self, 'swagger_fake_view', False) or
+    not getattr(self.request, 'user', None) or
+    not self.request.user.is_authenticated
+)
+
 
 def _car_prefetch(language_code: str, prefix: str = ''):
     localization_prefetch = Prefetch(
@@ -183,11 +189,14 @@ class CarActiveStatusAPIView(APIView):
         return success_response(result, status.HTTP_200_OK)
 
 
-
 class UserInfoAPIView(APIView):
     permission_classes = [IsDemoUser, IsOrgMember]
 
-    @swagger_auto_schema(responses={200: UserOutputSerializer(), 401: "Unauthorized"})
+    @swagger_auto_schema(
+        operation_summary="Получить информацию о текущем пользователе",
+        operation_description="Возвращает данные авторизованного пользователя: имя, организацию, часовой пояс и ссылку на Telegram-бота.",
+        responses={200: UserOutputSerializer(), 401: "Не авторизован"}
+    )
     def get(self, request):
         user = request.user
         if not user:
@@ -202,14 +211,20 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
     @swagger_auto_schema(
+        operation_summary="Обновить часовой пояс пользователя",
+        operation_description="Позволяет изменить часовой пояс текущего пользователя. Принимает строку из списка `pytz.common_timezones`.",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'timezone': openapi.Schema(type=openapi.TYPE_STRING, example='Europe/Moscow')
+                'timezone': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    example='Europe/Moscow',
+                    description='Часовой пояс из списка pytz.common_timezones'
+                )
             },
             required=['timezone']
         ),
-        responses={200: UserOutputSerializer(), 400: "Bad Request", 401: "Unauthorized"}
+        responses={200: UserOutputSerializer(), 400: "Неверный часовой пояс", 401: "Не авторизован"}
     )
     def patch(self, request):
         user = request.user
@@ -234,33 +249,50 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
-
 class TimezoneListAPIView(APIView):
     permission_classes = [IsOrgMember]
 
     @swagger_auto_schema(
-        operation_summary="Список всех доступных UTC-зон",
-        responses={200: openapi.Response(
-            description="Успешный ответ",
-            schema=openapi.Schema(
-                type=openapi.TYPE_OBJECT,
-                properties={'timezones': openapi.Schema(type=openapi.TYPE_ARRAY,
-                                                        items=openapi.Schema(type=openapi.TYPE_STRING))}
-            )
-        ), 401: "Unauthorized"}
+        operation_summary="Список доступных часовых поясов",
+        operation_description="Возвращает полный список поддерживаемых часовых поясов (pytz.common_timezones).",
+        responses={
+            200: openapi.Response(
+                description="Список часовых поясов",
+                schema=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    properties={
+                        'timezones': openapi.Schema(
+                            type=openapi.TYPE_ARRAY,
+                            items=openapi.Schema(type=openapi.TYPE_STRING),
+                            description='Список строк часовых поясов'
+                        )
+                    }
+                )
+            ),
+            401: "Не авторизован"
+        }
     )
     def get(self, request):
         return user_response({"timezones": pytz.common_timezones}, status.HTTP_200_OK)
-
 
 
 class VehicleSyncAPIView(APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
-        operation_description="Запускает асинхронную синхронизацию транспортных средств",
+        operation_summary="Запустить синхронизацию транспортных средств",
+        operation_description=(
+            "Запускает асинхронную задачу синхронизации ТС от указанного провайдера данных. "
+            "Создаёт ReportQuery для отслеживания статуса. "
+            "Возвращает `task_id` для проверки прогресса."
+        ),
         request_body=VEHICLE_SYNC_SCHEMA,
-        responses={202: "Задача синхронизации запущена", 400: "Неверные данные", 404: "Провайдер не найден"}
+        responses={
+            202: "Задача синхронизации запущена",
+            400: "Не указан provider_name или пользователь не привязан к организации",
+            404: "Провайдер с указанным именем не найден",
+            503: "Ошибка запуска задачи Celery"
+        }
     )
     def post(self, request):
         provider_name = request.data.get('provider_name')
@@ -295,9 +327,19 @@ class CarDataRequestAPIView(APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
-        operation_description="Создаёт заявку на получение и обработку данных по автомобилям",
+        operation_summary="Запустить обработку данных по автомобилям",
+        operation_description=(
+            "Создаёт группу задач Celery для получения и обработки телематических данных "
+            "по указанным автомобилям или подразделениям. "
+            "Поддерживает режимы: конкретные car_ids, unit_ids, или parse_all=true для всего парка."
+        ),
         request_body=CAR_DATA_REQUEST_SCHEMA,
-        responses={202: "Задачи обработки запущены", 400: "Неверные данные", 404: "Не найдено"}
+        responses={
+            202: "Задачи обработки запущены",
+            400: "Ошибка валидации входных данных",
+            404: "Провайдер или автомобили не найдены",
+            503: "Ошибка запуска задач Celery"
+        }
     )
     def post(self, request):
         data = request.data
@@ -366,9 +408,20 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
-        operation_description="Расчет пробега для автомобиля за период",
+        operation_summary="Рассчитать пробег автомобиля за период",
+        operation_description=(
+            "Вычисляет пробег по телематическим данным за указанный период. "
+            "Максимальный период — 60 дней. "
+            "Поддерживает несколько алгоритмов расчёта (`alg`) и агрегацию (`agg`). "
+            "Логирует результат в APICalculationLog."
+        ),
         request_body=MILEAGE_REQUEST_SCHEMA,
-        responses={200: "Успешно", 400: "Неверные данные", 404: "Не найден", 500: "Ошибка"}
+        responses={
+            200: "Результат расчёта пробега",
+            400: "Неверные параметры или превышен период 60 дней",
+            404: "Автомобиль не найден",
+            500: "Ошибка расчёта"
+        }
     )
     def post(self, request):
         car_id = request.data.get("car_id")
@@ -429,9 +482,19 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
-        operation_description="Расчет моточасов для автомобиля за период",
+        operation_summary="Рассчитать моточасы автомобиля за период",
+        operation_description=(
+            "Вычисляет моточасы по данным датчиков зажигания/RPM за указанный период. "
+            "Максимальный период — 60 дней. "
+            "Логирует результат в APICalculationLog."
+        ),
         request_body=MOTOHOURS_REQUEST_SCHEMA,
-        responses={200: "Успешно", 400: "Неверные данные", 404: "Не найден", 500: "Ошибка"}
+        responses={
+            200: "Результат расчёта моточасов",
+            400: "Неверные параметры или превышен период 60 дней",
+            404: "Автомобиль не найден",
+            500: "Ошибка расчёта"
+        }
     )
     def post(self, request):
         car_id = request.data.get("car_id")
@@ -459,9 +522,6 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
 
         try:
-            # status, rpm = RpmAutoCalculationService.try_calculate_rpms(car_id=car_id,
-            #                                                    datetime=end_date, is_save_bad_data=True)
-            # logger.info(f"Rpm computed, result is here {rpm}")
             result, status_code = MotohoursCalculationService.calculate_motohours(
                 car_id=car_id, agg=agg,
                 start_date=start_date, end_date=end_date, is_save_bad_data=is_save_bad_data
@@ -477,7 +537,11 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
 class UserRegistrationAPIView(APIView):
     permission_classes = [IsNotDemoUser]
 
-    @swagger_auto_schema(responses={201: UserRegistrationSerializer(), 400: "Bad Request", 404: "Not found"})
+    @swagger_auto_schema(
+        operation_summary="Зарегистрировать нового пользователя",
+        operation_description="Создаёт нового пользователя в системе. Требует передачи данных организации.",
+        responses={201: UserRegistrationSerializer(), 400: "Ошибка валидации", 404: "Организация не найдена"}
+    )
     def post(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
@@ -512,6 +576,8 @@ class OrganizationListAPIView(ListAPIView):
     search_fields = ['name', 'bot_token', 'chat_id']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return Organization.objects.none()
         return Organization.objects.filter(users=self.request.user).order_by('id')
 
 
@@ -519,6 +585,7 @@ class OrganizationDetailAPIView(RetrieveAPIView):
     serializer_class = OrganizationOutputSerializer
     queryset = Organization.objects.all()
     lookup_field = 'pk'
+
 
 class OrgUserListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -529,6 +596,8 @@ class OrgUserListAPIView(ListAPIView):
     search_fields = ['username', 'org_id__name']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return OrgUser.objects.none()
         return OrgUser.objects.filter(
             org_id=self.request.user.org_id
         ).select_related('org', 'active_language').order_by('id')
@@ -550,6 +619,8 @@ class CarListAPIView(ListAPIView):
     search_fields = ['name', 'description', 'car_unit__name']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return Car.objects.none()
         user = self.request.user
         language_code = _get_language_code(user)
         return Car.objects.filter(
@@ -560,7 +631,6 @@ class CarListAPIView(ListAPIView):
 
 
 class CarListBySensorGroupAPIView(ListAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarByGroupSensorsValuesOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -572,6 +642,8 @@ class CarListBySensorGroupAPIView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return SensorsValues.objects.none()
         key_value = self.request.query_params.get("key")
         if key_value == "motohours":
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
@@ -584,17 +656,12 @@ class CarListBySensorGroupAPIView(ListAPIView):
         return result.order_by("id")
 
 
-# ---------------------------------------------------------------------------
-# Staff — только GET, только staff юзеры (is_staff проверяется внутри)
-# ---------------------------------------------------------------------------
-
 class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
-    # Staff-only вьюха, демо точно не должен иметь доступ
     permission_classes = [IsNotDemoUser, IsOrgMember]
     serializer_class = AutoDataOutputSerializer
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+        if _ANON_GUARD(self):
             return Car.objects.none()
         if self.request.user.is_staff:
             fuel_subquery = Subquery(
@@ -616,19 +683,12 @@ class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
                 total_autos = auto_df
             else:
                 total_autos.extend(auto_df)
-
-        df = pandas.DataFrame(total_autos, )
+        df = pandas.DataFrame(total_autos)
         df.to_csv("/data/datasets/fuel/Cars-new.csv")
-
         return queryset
 
 
-# ---------------------------------------------------------------------------
-# Mileage / Fuel reports — только GET
-# ---------------------------------------------------------------------------
-
 class CarMileageReportListAPIView(ListAPIView):
-    # Только GET
     serializer_class = CarMileageReportOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -636,30 +696,26 @@ class CarMileageReportListAPIView(ListAPIView):
     search_fields = ['car_id__name', 'fraud']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarMileageReport.objects.none()
         return CarMileageReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id').order_by('-datetime')
 
 
 class CarMileageReportDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
-    # Только GET
     serializer_class = CarMileageReportOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return CarMileageReport.objects.none()
         return CarMileageReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id')
 
 
-# ---------------------------------------------------------------------------
-# ParsingStats — только POST, parsing
-# ---------------------------------------------------------------------------
-
 class ParsingStatsParsingSwitch(APIView):
-    # Parsing: только POST → IsNotDemoUser
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**PARSING_STATS_SWITCH_SCHEMA)
@@ -680,7 +736,6 @@ class ParsingStatsParsingSwitch(APIView):
 
 
 class ParsingStatsUpdateRpm(APIView):
-    # Parsing: только POST → IsNotDemoUser
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**PARSING_STATS_RPM_SCHEMA)
@@ -700,18 +755,13 @@ class ParsingStatsUpdateRpm(APIView):
         return success_response({"updated": result}, 200)
 
 
-# ---------------------------------------------------------------------------
-# Car detail — только GET
-# ---------------------------------------------------------------------------
-
 class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+        if _ANON_GUARD(self):
             return Car.objects.none()
         language_code = _get_language_code(self.request.user)
         return Car.objects.filter(
@@ -727,7 +777,7 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
-        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+        if _ANON_GUARD(self):
             return context
         user_language = getattr(self.request.user, 'active_language', None)
         context['language_code'] = user_language.code if user_language else 'ru'
@@ -740,12 +790,7 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
         return context
 
 
-# ---------------------------------------------------------------------------
-# CarUnit, Consumptions, Reports — только GET
-# ---------------------------------------------------------------------------
-
 class CarUnitListAPIView(ListAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarUnitSerializer
     pagination_class = StandardResultsSetPagination
@@ -754,13 +799,14 @@ class CarUnitListAPIView(ListAPIView):
     search_fields = ['name']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarUnit.objects.none()
         return CarUnit.objects.filter(
             car__data_providers__org_id=self.request.user.org.id
         ).distinct().order_by('name')
 
 
 class CarConsumptionListAPIView(ListAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarConsumptionOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -769,6 +815,8 @@ class CarConsumptionListAPIView(ListAPIView):
     search_fields = ['car_id__name', 'valid_period']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarConsumption.objects.none()
         user = self.request.user
         if user.org is None:
             return CarConsumption.objects.none()
@@ -781,7 +829,6 @@ class CarConsumptionListAPIView(ListAPIView):
 
 
 class CarConsumptionDetailAPIView(RetrieveAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarConsumptionOutputSerializer
     queryset = CarConsumption.objects.all()
@@ -789,7 +836,6 @@ class CarConsumptionDetailAPIView(RetrieveAPIView):
 
 
 class ReportQueryListAPIView(ListAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -798,19 +844,20 @@ class ReportQueryListAPIView(ListAPIView):
     search_fields = ['provider_id__name', 'status']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return ReportQuery.objects.none()
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
         ).select_related('provider_id')
 
 
 class ReportQueryDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return ReportQuery.objects.none()
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
@@ -818,7 +865,6 @@ class ReportQueryDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
 
 
 class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -827,6 +873,8 @@ class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
     search_fields = ['car_id__name', 'datetime']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarReport.objects.none()
         language_code = _get_language_code(self.request.user)
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
@@ -842,13 +890,12 @@ class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
 
 
 class CarReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverterMixin, RetrieveAPIView):
-    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return CarReport.objects.none()
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
@@ -862,7 +909,6 @@ class CarReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverte
 
 
 class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
-    # Только GET
     serializer_class = CarFuelReportSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -870,6 +916,8 @@ class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
     search_fields = ['car_id__name', 'car_id__id_in_provider_system']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarFuelReport.objects.none()
         return CarFuelReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct().order_by('-start_moment')
@@ -882,12 +930,11 @@ class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
 
 
 class CarFuelReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverterMixin, RetrieveAPIView):
-    # Только GET
     serializer_class = CarFuelReportSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return CarFuelReport.objects.none()
         return CarFuelReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
@@ -900,12 +947,7 @@ class CarFuelReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConv
         return response
 
 
-# ---------------------------------------------------------------------------
-# UserCarList — GET + POST/PUT/PATCH/DELETE, демо может только читать
-# ---------------------------------------------------------------------------
-
 class UserCarListListView(ListCreateAPIView):
-    # GET + POST → IsDemoUser разрешает GET, блокирует POST для демо
     permission_classes = [IsDemoUser, IsOrgMember]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -913,6 +955,8 @@ class UserCarListListView(ListCreateAPIView):
     search_fields = ['name']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return UserCarList.objects.none()
         return UserCarList.objects.filter(user=self.request.user).order_by('name')
 
     def get_serializer_class(self):
@@ -927,9 +971,10 @@ class UserCarListListView(ListCreateAPIView):
 class UserCarListDetailView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyAPIView):
     permission_classes = [IsDemoUser, IsAuthenticated]
     lookup_field = 'pk'
+    http_method_names = ['get', 'head', 'options']
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return UserCarList.objects.none()
         language_code = _get_language_code(self.request.user)
         return UserCarList.objects.filter(user=self.request.user).prefetch_related(
@@ -950,7 +995,6 @@ class UserCarListDetailView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyAPIVi
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         data = serializer.data
-
         stats = Car.objects.filter(list_id=instance).aggregate(
             car_count=Count('id'),
             active_cars=Count('id', filter=Q(is_active=True)),
@@ -973,6 +1017,8 @@ class DriverListAPIView(ListAPIView):
     search_fields = ['fullname', 'address', 'phone']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return Driver.objects.none()
         return Driver.objects.filter(
             driver_cars__car_id__data_providers__org_id=self.request.user.org
         ).prefetch_related('driver_cars__car_id').order_by('id')
@@ -984,7 +1030,7 @@ class DriverDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+        if _ANON_GUARD(self):
             return Driver.objects.none()
         return Driver.objects.filter(
             driver_cars__car_id__data_providers__org_id=self.request.user.org
@@ -1000,6 +1046,8 @@ class DataProviderListAPIView(ListAPIView):
     search_fields = ['name']
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return DataProvider.objects.none()
         return DataProvider.objects.filter(org_id=self.request.user.org).order_by('id')
 
 
@@ -1007,9 +1055,10 @@ class DataProviderDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyA
     permission_classes = [IsDemoUser, IsOrgMember]
     serializer_class = DataProviderUpdateSerializer
     lookup_field = 'pk'
+    http_method_names = ['get', 'head', 'options']
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return DataProvider.objects.none()
         return DataProvider.objects.filter(
             org_id=self.request.user.org.id
@@ -1046,6 +1095,8 @@ class CarLeaksAPIView(ListAPIView):
         return self.list(request, *args, **kwargs)
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarReport.objects.none()
         language_code = _get_language_code(self.request.user)
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org,
@@ -1063,6 +1114,8 @@ class SensorsKeyListAPIView(ListAPIView):
     serializer_class = SensorsKeyOutputSerializer
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return SensorsValues.objects.none()
         language_code = get_user_language_code(self.request.user)
         search_query = self.request.query_params.get('search', None)
         return get_sensors_keys_with_localization(
@@ -1072,15 +1125,16 @@ class SensorsKeyListAPIView(ListAPIView):
         )
 
 
-#TODO: убрать, мотив написавшего не особо ясен
 class CarSensorsValuesAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
     filter_backends = [SearchFilter]
-    search_fields = ['key__key',]
+    search_fields = ['key__key']
     serializer_class = SensorsKeyOutputSerializer
 
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return SensorsValues.objects.none()
         car_id = self.kwargs.get('car_id')
         language_code = get_user_language_code(self.request.user)
         search_query = self.request.query_params.get('search', None)
@@ -1091,25 +1145,35 @@ class CarSensorsValuesAPIView(ListAPIView):
             search_query=search_query
         )
 
+
 class CarSensorsValuesTrue(ListAPIView):
     permission_classes = [IsOrgMember]
     pagination_class = StandardResultsSetPagination
     filter_backends = [SearchFilter]
     search_fields = ["car_id"]
     serializer_class = SensorsValuesOutputSerializer
-    
+
     def get_queryset(self):
+        if _ANON_GUARD(self):
+            return SensorsValues.objects.none()
         language_code = get_user_language_code(self.request.user)
         search_query = self.request.query_params.get('search', None)
-        return 
-        
-# TODO: сделать по людски, учесть мультидатчики и реализовать понятную для юзера логику
-class CarSensorsSwitchView(APIView):
-    permission_classes = [IsOrgMember]
+        return SensorsValues.objects.none()
 
-    @swagger_auto_schema(**CAR_SENSOR_SWITCH_SCHEMA)
+
+class CarSensorsSwitchView(APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_summary="Переключить активный датчик автомобиля",
+        operation_description=(
+            "Переключает активный датчик (`is_active`) для указанного автомобиля и типа датчика. "
+            "Если датчик не является мультидатчиком (`multi=False`), остальные датчики того же типа деактивируются. "
+            "Для мультидатчиков состояние переключается независимо."
+        ),
+        **CAR_SENSOR_SWITCH_SCHEMA
+    )
     def post(self, request):
-            
         serializer = CarSensorsSwitchSerializer(data=request.data)
         if not serializer.is_valid():
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
@@ -1118,23 +1182,17 @@ class CarSensorsSwitchView(APIView):
             car_id = vdata.get("car_id") or ""
             sensor_id = vdata.get("sensor_id") or ""
             key_name = vdata.get("key_name")
-            # пока выключаем остальных (если они не multi)
-            non_multi_updated = SensorsValues.objects.filter(car_id=car_id,key__key=key_name, multi=False).exclude(id=sensor_id).update(
-                is_active=False
-            )
-            
-            # меняем состояние текущих
-            updated = SensorsValues.objects.filter(car_id=car_id, key__key=key_name, id=sensor_id).update(
-                is_active=~F("is_active")
-            )
+            SensorsValues.objects.filter(
+                car_id=car_id, key__key=key_name, multi=False
+            ).exclude(id=sensor_id).update(is_active=False)
+            updated = SensorsValues.objects.filter(
+                car_id=car_id, key__key=key_name, id=sensor_id
+            ).update(is_active=~F("is_active"))
             if updated == 0:
                 return error_response(f"Не найден сенсор с {key_name} для {car_id} и id {sensor_id}", 404)
             return success_response({"updated": updated}, 200)
-    
         except BaseException as err:
-            return error_response(f"Непредвиденная ошибка {err}", 500 )
-            
-            
+            return error_response(f"Непредвиденная ошибка {err}", 500)
 
 
 class CarBadDataAPIView(ListAPIView):
@@ -1147,7 +1205,7 @@ class CarBadDataAPIView(ListAPIView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return CarBadData.objects.none()
 
         filter_serializer = CarBadDataFilterSerializer(data=self.request.query_params)
@@ -1188,7 +1246,6 @@ class CarBadDataAPIView(ListAPIView):
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.filter_queryset(self.get_queryset())
-
             car_id = request.query_params.get('car_id')
             if car_id and not queryset.exists():
                 try:
@@ -1201,12 +1258,10 @@ class CarBadDataAPIView(ListAPIView):
                     return Response({"error": "Автомобиль не найден"}, status=status.HTTP_404_NOT_FOUND)
                 except ValueError:
                     return Response({"error": "Неверный формат UUID автомобиля"}, status=status.HTTP_400_BAD_REQUEST)
-
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)
                 return self.get_paginated_response(serializer.data)
-
             serializer = self.get_serializer(queryset, many=True)
             return Response(serializer.data)
         except Exception as e:
@@ -1220,11 +1275,12 @@ class CarBadDataDetailAPIView(RetrieveAPIView):
     lookup_field = 'pk'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return CarBadData.objects.none()
         return CarBadData.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
+
 
 class CarBadDataDashboardAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -1235,24 +1291,21 @@ class CarBadDataDashboardAPIView(APIView):
         if not serializer.is_valid():
             logger.error(f"Ошибка валидации параметров: {serializer.errors}")
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-
         data = serializer.validated_data
         org_id = request.user.org.id
         period_from = data.get("periodFrom")
         period_due = data.get("periodDue")
         category = data.get("category") or None
         tags = data.get("tags") or None
-
         dispatch = {
             BadDataQuerySerializer.TYPE_CALENDAR: get_bad_data_calendar,
             BadDataQuerySerializer.TYPE_CAR: get_bad_data_by_car,
             BadDataQuerySerializer.TYPE_TAG: get_bad_data_by_tag,
         }
-
         handler = dispatch[data["type"]]
         result = handler(org_id, period_from, period_due, category, tags)
-
         return success_response(result, status.HTTP_200_OK)
+
 
 class StartTerminalMessagesParsingView(APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
@@ -1334,7 +1387,13 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
     permission_classes = [IsNotDemoUser, IsAuthenticated]
 
     @swagger_auto_schema(
-        operation_summary="Получение данных о графике для слива",
+        operation_summary="Получить данные для графика сливов топлива",
+        operation_description=(
+            "Возвращает три набора данных для построения аналитических графиков по сливам: "
+            "`data_fast` — точки при движении (pos_s > 1), "
+            "`data_slow` — точки в покое (pos_s < 1) с RPM или IGN данными, "
+            "`data_bar` — агрегированные значения по месяцу и году с маркировкой сливов."
+        ),
         request_body=CAR_LEAKS_CHARTS_SCHEMA["request_body"],
         responses=CAR_LEAKS_CHARTS_SCHEMA["responses"],
     )
@@ -1367,8 +1426,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
         tmp = tmp.filter(polars.col("spent_fuel").gt(0))
         tmp = tmp.with_columns(
-            pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias(
-                "color"))
+            pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias("color"))
         tmp = tmp.with_columns(
             pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
 
@@ -1393,7 +1451,6 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
             month.row(0, named=True)
         ]
 
-        logger.info(f"{len(data_slow)} - {len(data_fast)} - {len(data_bar)}")
         response_data = {
             "data_slow": data_slow.with_columns(
                 polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
@@ -1409,7 +1466,13 @@ class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
     permission_classes = [IsNotDemoUser, IsAuthenticated]
 
     @swagger_auto_schema(
-        operation_summary="Получение сырых данных по машине для графиков",
+        operation_summary="Получить сырые данные датчиков для графиков",
+        operation_description=(
+            "Возвращает обработанные сырые телематические данные автомобиля за период. "
+            "Режим (`mode`) определяет тип обработки: `mileage` — пробег, `motohours` — моточасы, "
+            "`fuel` — уровень топлива. "
+            "Параметр `agg` задаёт агрегацию временного ряда."
+        ),
         request_body=CAR_SENSORS_RAW_DATA_SCHEMA['request_body'],
         responses=CAR_SENSORS_RAW_DATA_SCHEMA['responses']
     )
@@ -1436,8 +1499,7 @@ class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
 
             car_r = Car.objects.select_related('car_unit').get(id=car_id)
             provider = car_r.data_providers.first()
-            result, parser, parse_error = CarSensorsHelper.parse_raw_data(car, provider, start_date, end_date, agg,
-                                                                          mode)
+            result, parser, parse_error = CarSensorsHelper.parse_raw_data(car, provider, start_date, end_date, agg, mode)
             if parse_error:
                 error_status = (
                     status.HTTP_400_BAD_REQUEST
@@ -1466,7 +1528,6 @@ class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
         if not is_valid_mode:
             return error_response(mode_error, status.HTTP_400_BAD_REQUEST)
         return None
-
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -1499,21 +1560,20 @@ class TelegramRegisterAPIView(APIView):
     authentication_classes = []
     permission_classes = []
 
-    @swagger_auto_schema(**TELEGRAM_REGISTER_SCHEMA)
+    @swagger_auto_schema(
+        **TELEGRAM_REGISTER_SCHEMA
+    )
     def post(self, request):
         serializer = TelegramUserRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
             return error_response(serializer.errors, 400)
-
         data = serializer.validated_data
         chat_id = data['chat_id']
         user_id = data['user_id']
-
         try:
             org_user = OrgUser.objects.get(id=user_id)
         except OrgUser.DoesNotExist:
             return error_response('User not found', 404)
-
         tg_user, created = TelegramUser.objects.update_or_create(
             chat_id=chat_id,
             defaults={
@@ -1524,7 +1584,6 @@ class TelegramRegisterAPIView(APIView):
                 'is_active': True,
             }
         )
-
         output_serializer = TelegramUserOutputSerializer(tg_user)
         return success_response(output_serializer.data, 201 if created else 200)
 
@@ -1538,7 +1597,7 @@ class APICalculationLogListAPIView(ListAPIView):
     search_fields = ['view_name', 'car__id', 'car__name', 'car__id_in_provider_system']
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return APICalculationLog.objects.none()
         return APICalculationLog.objects.filter(
             user=self.request.user
@@ -1551,7 +1610,7 @@ class APICalculationLogRetrieveAPIView(RetrieveAPIView):
     lookup_field = "pk"
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        if _ANON_GUARD(self):
             return APICalculationLog.objects.none()
         return APICalculationLog.objects.filter(
             user=self.request.user
@@ -1562,7 +1621,8 @@ class AlertSubscriptionAPIView(APIView):
     permission_classes = [IsDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
-        operation_summary="Получить текущие настройки подписки",
+        operation_summary="Получить настройки подписки на алерты",
+        operation_description="Возвращает текущие настройки подписки пользователя на уведомления о сливах и аномалиях.",
         responses={200: AlertSubscriptionPatchSerializer()}
     )
     def get(self, request, *args, **kwargs):
@@ -1570,39 +1630,33 @@ class AlertSubscriptionAPIView(APIView):
         serializer = AlertSubscriptionPatchSerializer(subscription)
         return success_response(serializer.data, status.HTTP_200_OK)
 
-    @swagger_auto_schema(**ALERT_SUBSCRIPTION_PATCH_SCHEMA)
+    @swagger_auto_schema(
+        **ALERT_SUBSCRIPTION_PATCH_SCHEMA
+    )
     def patch(self, request, *args, **kwargs):
         try:
             check_telegram_user(request.user)
         except PermissionDenied as e:
             return error_response(str(e), status.HTTP_403_FORBIDDEN)
-
         subscription = get_or_create_subscription(request.user)
-
         serializer = AlertSubscriptionPatchSerializer(
             instance=subscription,
             data=request.data,
             partial=True,
         )
-
         if not serializer.is_valid():
             logger.warning(
-                f"Невалидные данные подписки: user={request.user.username}, "
-                f"errors={serializer.errors}"
+                f"Невалидные данные подписки: user={request.user.username}, errors={serializer.errors}"
             )
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
-
         try:
             subscription = patch_subscription(
                 user=request.user,
                 validated_data=serializer.validated_data,
             )
         except Exception as e:
-            logger.error(
-                f"Ошибка сохранения подписки: user={request.user.username}, error={e}"
-            )
+            logger.error(f"Ошибка сохранения подписки: user={request.user.username}, error={e}")
             return error_response(str(e), status.HTTP_500_INTERNAL_SERVER_ERROR)
-
         serializer = AlertSubscriptionPatchSerializer(subscription)
         return success_response(serializer.data, status.HTTP_200_OK)
 
