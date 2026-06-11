@@ -61,7 +61,7 @@ class VehicleSyncService:
 
             current_cars = self.provider.cars.values_list("id_in_provider_system", flat=True)
             cars_to_inactivate =  set(current_cars) - set(stats["vehicles_ids"]) if len(current_cars) > 0 else set()
-            self._deacrivate_missing_cars(cars_to_inactivate)
+            self._deactivate_missing_cars(cars_to_inactivate)
             result = {
                 "success": True,
                 "total_vehicles": len(vehicles),
@@ -93,11 +93,11 @@ class VehicleSyncService:
                 "error": error_msg
             }
     
-    def _deacrivate_missing_cars(self, cars_to_inactivate: set):
+    def _deactivate_missing_cars(self, cars_to_inactivate: set):
         """Деактивирует автомобили, которые отсутствуют в новом списке от провайдера"""
         for car_id in cars_to_inactivate:
             try:
-                car = Car.objects.get(id_in_provider_system=car_id, provider=self.provider)
+                car = self.provider.cars.filter(id_in_provider_system=car_id).first()
                 car.is_active = False
                 car.save()
                 logger.info(f"Деактивирован автомобиль {car.name} (ID: {car.id}) - отсутствует у провайдера")

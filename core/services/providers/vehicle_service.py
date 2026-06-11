@@ -135,6 +135,12 @@ class VehicleService:
     @staticmethod
     def _save_sensors_mapping(car: Car, sensors_mapping: Dict[str, List[SensorType]], is_first_parsing = False) -> None:
         """Сохраняет маппинг сенсоров в БД"""
+        is_first_parsing_logical = is_first_parsing
+        amount = SensorsValues.objects.filter(car_id=car).count()
+        if amount == 0:
+            is_first_parsing_logical = True
+
+            
         for category, mappings in sensors_mapping.items():
             try:
                 sensor_key, _ = SensorsKey.objects.get_or_create(key=category)
@@ -147,7 +153,7 @@ class VehicleService:
                         value=str(mapping.parameter),
                         defaults={ "grades": grades, "metadata": mapping.metadata, "created_at": datetime.datetime.now().astimezone(tz=utc), "is_system_pick": mapping.is_picked },
                     )
-                    if is_created and is_first_parsing:
+                    if is_created and is_first_parsing_logical:
                         new_sensor.is_active = new_sensor.is_system_pick
                         new_sensor.save()
                         pass
