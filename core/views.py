@@ -85,6 +85,7 @@ from .serializers import (
 from core.helpers.responses import error_response, user_registered_response, user_response, \
     success_response
 from core.helpers.permissions import IsOrgMember
+from core.demo_auth.permissions import IsNotDemoUser, IsDemoUser
 from .services.providers.car_data_service import CarDataService
 from .services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
@@ -93,12 +94,6 @@ logger = logging.getLogger(__name__)
 
 
 def _car_prefetch(language_code: str, prefix: str = ''):
-    """
-    Возвращает список Prefetch-объектов для CarOutputSerializer:
-      - values → select_related('key') + prefetch локализаций по языку
-      - parsingcar_stats
-    prefix используется когда Car доступен через связь, напр. 'car_id__'.
-    """
     localization_prefetch = Prefetch(
         'key__locations',
         queryset=SensorsKeyLocalization.objects.select_related('language').filter(
@@ -177,7 +172,7 @@ class CarLeaksVolumeAPIView(APIView):
 
 
 class CarActiveStatusAPIView(APIView):
-    permission_classes = [IsOrgMember]
+    permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**CAR_ACTIVE_STATUS_SCHEMA)
     def post(self, request):
@@ -188,8 +183,9 @@ class CarActiveStatusAPIView(APIView):
         return success_response(result, status.HTTP_200_OK)
 
 
+
 class UserInfoAPIView(APIView):
-    permission_classes = [IsOrgMember]
+    permission_classes = [IsDemoUser, IsOrgMember]
 
     @swagger_auto_schema(responses={200: UserOutputSerializer(), 401: "Unauthorized"})
     def get(self, request):
@@ -238,6 +234,7 @@ class UserInfoAPIView(APIView):
         return user_response(serializer.data, status.HTTP_200_OK)
 
 
+
 class TimezoneListAPIView(APIView):
     permission_classes = [IsOrgMember]
 
@@ -256,7 +253,10 @@ class TimezoneListAPIView(APIView):
         return user_response({"timezones": pytz.common_timezones}, status.HTTP_200_OK)
 
 
+
 class VehicleSyncAPIView(APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
     @swagger_auto_schema(
         operation_description="Запускает асинхронную синхронизацию транспортных средств",
         request_body=VEHICLE_SYNC_SCHEMA,
@@ -292,6 +292,8 @@ class VehicleSyncAPIView(APIView):
 
 
 class CarDataRequestAPIView(APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
     @swagger_auto_schema(
         operation_description="Создаёт заявку на получение и обработку данных по автомобилям",
         request_body=CAR_DATA_REQUEST_SCHEMA,
@@ -361,6 +363,8 @@ class CarDataRequestAPIView(APIView):
 
 
 class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
     @swagger_auto_schema(
         operation_description="Расчет пробега для автомобиля за период",
         request_body=MILEAGE_REQUEST_SCHEMA,
@@ -422,6 +426,8 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
 
 
 class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
     @swagger_auto_schema(
         operation_description="Расчет моточасов для автомобиля за период",
         request_body=MOTOHOURS_REQUEST_SCHEMA,
@@ -469,6 +475,8 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
 
 
 class UserRegistrationAPIView(APIView):
+    permission_classes = [IsNotDemoUser]
+
     @swagger_auto_schema(responses={201: UserRegistrationSerializer(), 400: "Bad Request", 404: "Not found"})
     def post(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
@@ -479,7 +487,7 @@ class UserRegistrationAPIView(APIView):
 
 
 class DataProviderCreateAPIView(APIView):
-    permission_classes = [IsOrgMember]
+    permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**DATA_PROVIDER_CREATE_SCHEMA)
     def post(self, request):
@@ -511,7 +519,6 @@ class OrganizationDetailAPIView(RetrieveAPIView):
     serializer_class = OrganizationOutputSerializer
     queryset = Organization.objects.all()
     lookup_field = 'pk'
-
 
 class OrgUserListAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
@@ -553,6 +560,7 @@ class CarListAPIView(ListAPIView):
 
 
 class CarListBySensorGroupAPIView(ListAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarByGroupSensorsValuesOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -576,10 +584,18 @@ class CarListBySensorGroupAPIView(ListAPIView):
         return result.order_by("id")
 
 
+# ---------------------------------------------------------------------------
+# Staff — только GET, только staff юзеры (is_staff проверяется внутри)
+# ---------------------------------------------------------------------------
+
 class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
-    permission_classes = [IsOrgMember]
+    # Staff-only вьюха, демо точно не должен иметь доступ
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+    serializer_class = AutoDataOutputSerializer
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+            return Car.objects.none()
         if self.request.user.is_staff:
             fuel_subquery = Subquery(
                 SensorsValues.objects.filter(
@@ -607,7 +623,12 @@ class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
         return queryset
 
 
+# ---------------------------------------------------------------------------
+# Mileage / Fuel reports — только GET
+# ---------------------------------------------------------------------------
+
 class CarMileageReportListAPIView(ListAPIView):
+    # Только GET
     serializer_class = CarMileageReportOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -621,17 +642,25 @@ class CarMileageReportListAPIView(ListAPIView):
 
 
 class CarMileageReportDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
+    # Только GET
     serializer_class = CarMileageReportOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CarMileageReport.objects.none()
         return CarMileageReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id')
 
 
+# ---------------------------------------------------------------------------
+# ParsingStats — только POST, parsing
+# ---------------------------------------------------------------------------
+
 class ParsingStatsParsingSwitch(APIView):
-    permission_classes = [IsOrgMember]
+    # Parsing: только POST → IsNotDemoUser
+    permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**PARSING_STATS_SWITCH_SCHEMA)
     def post(self, request):
@@ -651,7 +680,8 @@ class ParsingStatsParsingSwitch(APIView):
 
 
 class ParsingStatsUpdateRpm(APIView):
-    permission_classes = [IsOrgMember]
+    # Parsing: только POST → IsNotDemoUser
+    permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**PARSING_STATS_RPM_SCHEMA)
     def post(self, request):
@@ -670,12 +700,19 @@ class ParsingStatsUpdateRpm(APIView):
         return success_response({"updated": result}, 200)
 
 
+# ---------------------------------------------------------------------------
+# Car detail — только GET
+# ---------------------------------------------------------------------------
+
 class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+            return Car.objects.none()
         language_code = _get_language_code(self.request.user)
         return Car.objects.filter(
             data_providers__org_id=self.request.user.org
@@ -690,6 +727,8 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
+        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+            return context
         user_language = getattr(self.request.user, 'active_language', None)
         context['language_code'] = user_language.code if user_language else 'ru'
         car = self.get_object()
@@ -701,7 +740,12 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
         return context
 
 
+# ---------------------------------------------------------------------------
+# CarUnit, Consumptions, Reports — только GET
+# ---------------------------------------------------------------------------
+
 class CarUnitListAPIView(ListAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarUnitSerializer
     pagination_class = StandardResultsSetPagination
@@ -716,6 +760,7 @@ class CarUnitListAPIView(ListAPIView):
 
 
 class CarConsumptionListAPIView(ListAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarConsumptionOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -736,6 +781,7 @@ class CarConsumptionListAPIView(ListAPIView):
 
 
 class CarConsumptionDetailAPIView(RetrieveAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarConsumptionOutputSerializer
     queryset = CarConsumption.objects.all()
@@ -743,6 +789,7 @@ class CarConsumptionDetailAPIView(RetrieveAPIView):
 
 
 class ReportQueryListAPIView(ListAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -757,17 +804,21 @@ class ReportQueryListAPIView(ListAPIView):
 
 
 class ReportQueryDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = ReportQueryOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return ReportQuery.objects.none()
         return ReportQuery.objects.filter(
             provider_id__org_id=self.request.user.org
         ).select_related('provider_id', 'report_query_details')
 
 
 class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -791,11 +842,14 @@ class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
 
 
 class CarReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverterMixin, RetrieveAPIView):
+    # Только GET
     permission_classes = [IsOrgMember]
     serializer_class = CarReportOutputSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CarReport.objects.none()
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id__car_unit')
@@ -808,6 +862,7 @@ class CarReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverte
 
 
 class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
+    # Только GET
     serializer_class = CarFuelReportSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
@@ -827,10 +882,13 @@ class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
 
 
 class CarFuelReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverterMixin, RetrieveAPIView):
+    # Только GET
     serializer_class = CarFuelReportSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CarFuelReport.objects.none()
         return CarFuelReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
@@ -842,8 +900,13 @@ class CarFuelReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConv
         return response
 
 
+# ---------------------------------------------------------------------------
+# UserCarList — GET + POST/PUT/PATCH/DELETE, демо может только читать
+# ---------------------------------------------------------------------------
+
 class UserCarListListView(ListCreateAPIView):
-    permission_classes = [IsOrgMember]
+    # GET + POST → IsDemoUser разрешает GET, блокирует POST для демо
+    permission_classes = [IsDemoUser, IsOrgMember]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['name']
@@ -862,10 +925,12 @@ class UserCarListListView(ListCreateAPIView):
 
 
 class UserCarListDetailView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsDemoUser, IsAuthenticated]
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return UserCarList.objects.none()
         language_code = _get_language_code(self.request.user)
         return UserCarList.objects.filter(user=self.request.user).prefetch_related(
             Prefetch(
@@ -919,6 +984,8 @@ class DriverDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False) or not self.request.user.is_authenticated:
+            return Driver.objects.none()
         return Driver.objects.filter(
             driver_cars__car_id__data_providers__org_id=self.request.user.org
         )
@@ -937,11 +1004,13 @@ class DataProviderListAPIView(ListAPIView):
 
 
 class DataProviderDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsOrgMember]
+    permission_classes = [IsDemoUser, IsOrgMember]
     serializer_class = DataProviderUpdateSerializer
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return DataProvider.objects.none()
         return DataProvider.objects.filter(
             org_id=self.request.user.org.id
         ).prefetch_related('cars')
@@ -1151,10 +1220,11 @@ class CarBadDataDetailAPIView(RetrieveAPIView):
     lookup_field = 'pk'
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return CarBadData.objects.none()
         return CarBadData.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
-
 
 class CarBadDataDashboardAPIView(APIView):
     permission_classes = [IsOrgMember]
@@ -1184,9 +1254,8 @@ class CarBadDataDashboardAPIView(APIView):
 
         return success_response(result, status.HTTP_200_OK)
 
-
 class StartTerminalMessagesParsingView(APIView):
-    permission_classes = [IsOrgMember]
+    permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(**PARSE_RAW_DATA_SCHEMA)
     def post(self, request):
@@ -1262,7 +1331,7 @@ class LanguageListAPIView(ListAPIView):
 
 
 class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsNotDemoUser, IsAuthenticated]
 
     @swagger_auto_schema(
         operation_summary="Получение данных о графике для слива",
@@ -1337,7 +1406,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
 
 
 class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsNotDemoUser, IsAuthenticated]
 
     @swagger_auto_schema(
         operation_summary="Получение сырых данных по машине для графиков",
@@ -1397,6 +1466,7 @@ class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
         if not is_valid_mode:
             return error_response(mode_error, status.HTTP_400_BAD_REQUEST)
         return None
+
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
@@ -1468,6 +1538,8 @@ class APICalculationLogListAPIView(ListAPIView):
     search_fields = ['view_name', 'car__id', 'car__name', 'car__id_in_provider_system']
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return APICalculationLog.objects.none()
         return APICalculationLog.objects.filter(
             user=self.request.user
         ).select_related('car').order_by('-created_at')
@@ -1479,13 +1551,15 @@ class APICalculationLogRetrieveAPIView(RetrieveAPIView):
     lookup_field = "pk"
 
     def get_queryset(self):
+        if getattr(self, 'swagger_fake_view', False):
+            return APICalculationLog.objects.none()
         return APICalculationLog.objects.filter(
             user=self.request.user
         ).select_related('car').order_by('-created_at')
 
 
 class AlertSubscriptionAPIView(APIView):
-    permission_classes = [IsOrgMember]
+    permission_classes = [IsDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
         operation_summary="Получить текущие настройки подписки",
