@@ -49,7 +49,7 @@ class FilteringService(BaseFilteringService):
         return filtered_df, result_df
 
     def filtering_ptime(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
-        filtered_df = result_df.filter(pl.col("ptime") > 5 * 60)
+        filtered_df = result_df.filter(pl.col("ptime") > 5)
         return filtered_df, result_df
 
     def filtering_nan(self, result_df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
