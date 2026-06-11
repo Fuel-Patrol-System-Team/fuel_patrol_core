@@ -160,8 +160,6 @@ class CarDataService:
             grades = None
             if fuel_sensor and fuel_sensor.metadata is not None:
                 grades = fuel_sensor.metadata.get("grades")
-            if grades is None:
-                raise BaseException( f"Нет тарировки, когда она должна быть для машины {car.name} {car.id}")
                 
             auto_data = [{
                 "id": str(car.id),
