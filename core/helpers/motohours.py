@@ -304,6 +304,8 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
     col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10m")
     is_rpm_present = df["rpm"].is_not_null().any()
+    if is_rpm_present:
+        df = df.with_columns(pl.when(pl.col("ign").eq(1)).then(pl.col("rpm").fill_null(0)).otherwise(pl.col("rpm")).alias("rpm"))
     reports = []
     df = df.with_columns(
         pl.col("timestamp")
@@ -347,6 +349,8 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     unefficient_time = df["dtime_unefficient"].sum()
     rpm_same_cases = df["rpm_same_cases_total"].max()
     rpm_same_cases_time = df["rpm_same_cases_time"].sum()
+    if rpm_same_cases_time is not None:
+        rpm_same_cases_time /= 3600
     return make_motohours_result(
         motohours_start=0,
         motohours_end=motohours,
