@@ -1,15 +1,3 @@
-"""
-Management command для генерации бессрочного демо-токена.
-
-Использование:
-    python manage.py generate_demo_token
-    python manage.py generate_demo_token --username demo_user
-    python manage.py generate_demo_token --create-user
-
-После выполнения добавьте вывод в .env:
-    DEMO_ACCESS_TOKEN=<сгенерированный токен>
-"""
-
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 
@@ -56,7 +44,6 @@ class Command(BaseCommand):
                 )
                 return
 
-            # Создаём демо-пользователя
             org_id = options.get("org_id")
             if not org_id:
                 self.stderr.write(
@@ -75,7 +62,7 @@ class Command(BaseCommand):
 
             user = User.objects.create_user(
                 username=username,
-                password=None,  # пароль не нужен — вход только по токену
+                password=None,
                 org=org,
             )
             self.stdout.write(self.style.SUCCESS(f"Создан демо-пользователь: {username}"))

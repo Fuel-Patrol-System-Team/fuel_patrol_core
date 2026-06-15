@@ -71,11 +71,9 @@ ALWAYS_PRIVATE_PATHS = {
 
 PRIVATE_METHODS = {"put", "post", "delete", "patch"}
 
-# Теги для Spotlight
 TAG_PUBLIC = "✅ Public"
 TAG_PRIVATE = "🔒 Private"
 
-# Человекочитаемые описания приватных групп
 PRIVATE_TAG_DESCRIPTIONS = {
     "parsing": "Эндпоинты запуска и управления парсингом данных. Требуют прав staff.",
     "auth": "Авторизация и регистрация пользователей.",
@@ -110,7 +108,6 @@ def _get_private_subtag(path: str) -> str:
 def _annotate_operation(operation: dict, tag: str, note: str = None):
     """Добавляет тег и описание к операции."""
     existing_tags = operation.get("tags", [])
-    # Убираем старые теги, добавляем наш
     operation["tags"] = [tag]
 
     if note:
@@ -201,7 +198,6 @@ class SpotlightSchemaGenerator(OpenAPISchemaGenerator):
                 is_mutating = method_lower in PRIVATE_METHODS
 
                 if is_private_path:
-                    # Путь полностью приватный
                     subtag = _get_private_subtag(normalized)
                     _annotate_operation(
                         operation,
@@ -210,7 +206,6 @@ class SpotlightSchemaGenerator(OpenAPISchemaGenerator):
                              "Требует авторизации staff-пользователя."
                     )
                 elif is_public_path and is_mutating:
-                    # Публичный путь но мутирующий метод (patch alerts, put dataprovider и т.д.)
                     _annotate_operation(
                         operation,
                         tag="🔒 Private — Мутации",
@@ -219,10 +214,8 @@ class SpotlightSchemaGenerator(OpenAPISchemaGenerator):
                              "Для записи нужен полноценный JWT."
                     )
                 else:
-                    # Публичный GET — просто помечаем тегом
                     _annotate_operation(operation, tag=TAG_PUBLIC)
 
-        # Обновляем секцию tags в корне схемы
         schema['tags'] = [
             {
                 "name": TAG_PUBLIC,

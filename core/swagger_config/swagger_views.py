@@ -1,10 +1,3 @@
-"""
-Swagger / ReDoc views с разграничением доступа.
-
-Публичный  (/api/v1/docs/)         — открыт для всех, только GET-эндпоинты
-Приватный  (/api/v1/docs/private/) — только IsAdminUser или BasicAuth
-"""
-
 from django.conf import settings
 from drf_yasg import openapi
 from drf_yasg.views import get_schema_view
@@ -13,11 +6,6 @@ from rest_framework.authentication import BasicAuthentication, SessionAuthentica
 
 
 class IsStaffOrBasicAuth(permissions.BasePermission):
-    """
-    Разрешает доступ только:
-    - staff/superuser пользователям (через любую авторизацию)
-    - BasicAuth (для CI/CD или прямого доступа по логину/паролю)
-    """
 
     def has_permission(self, request, view):
         # BasicAuth уже прошёл — достаточно is_staff
@@ -43,7 +31,6 @@ public_schema_view = get_schema_view(
     ),
     public=True,
     permission_classes=[permissions.AllowAny],
-    # generator_class подключается в urls.py через kwargs
 )
 
 # ============================================================
