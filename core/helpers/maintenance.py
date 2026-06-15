@@ -9,20 +9,20 @@ def maintenance_analysis(df: pl.DataFrame):
 
 def maintenance_fuel_level_check(df: pl.DataFrame, reports = []):
     # spent_fuel
-    moving_with_no_loss = df.filter(
-        pl.col("pos_s").gt(0) & pl.col("spent_fuel").eq(0)
-    )
-    for maintenance in moving_with_no_loss.iter_rows(named=True):
-        reports.append(
-            {
-                "event_date": maintenance["timestamp"],
-                "message": f"Одинаковый уровень топлива, несмотря на пройденное расстояние {str(maintenance["timestamp"])}",
-                "tags": [CarBadData.Tag.SENSOR,],
-                "category": CarBadData.Category.MAINTENANCE,
-                "severity": CarBadData.Severity.WARNING,
+    # moving_with_no_loss = df.filter(
+    #     pl.col("pos_s").gt(0) & pl.col("spent_fuel").eq(0)
+    # )
+    # for maintenance in moving_with_no_loss.iter_rows(named=True):
+    #     reports.append(
+    #         {
+    #             "event_date": maintenance["timestamp"],
+    #             "message": f"Одинаковый уровень топлива, несмотря на пройденное расстояние {str(maintenance["timestamp"])}",
+    #             "tags": [CarBadData.Tag.SENSOR,],
+    #             "category": CarBadData.Category.MAINTENANCE,
+    #             "severity": CarBadData.Severity.WARNING,
                 
-            }
-        )
+    #         }
+    #     )
     return reports
 
 def maintenance_critical_raw_fuel_values(df: pl.DataFrame, reports = []):

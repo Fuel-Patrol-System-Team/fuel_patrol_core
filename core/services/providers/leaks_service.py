@@ -459,9 +459,9 @@ class LeaksService(BaseLeaksCalculator):
 
         df_values = df_values.with_columns(pl.lit(LEAK_LIMIT).alias("leak_factor"))
         logger.debug("Установлен leak_factor")
-
+        grades = cars["grades"] is None
         df_values = df_values.with_columns(
-            [(pl.lit(cars["input"]) == pl.lit(cars["output"])).alias("untariffed")]
+            [pl.lit(grades).alias("untariffed")]
         )
         untariffed_count = df_values.filter(pl.col("untariffed")).height
         logger.debug(f"Нетарированных записей: {untariffed_count}")
