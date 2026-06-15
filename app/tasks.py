@@ -1,6 +1,7 @@
 import logging
 from typing import Literal, Optional, List, cast
 
+import requests
 from django.db.models import Q
 import polars as pl
 from datetime import datetime, timedelta, timezone
@@ -1285,7 +1286,6 @@ def send_alert_digests(self):
     tz = pytz.UTC
     now = datetime.now(tz)
     current_hour = now.hour
-    print(current_hour)
 
     try:
         subscriptions = (
@@ -1299,7 +1299,6 @@ def send_alert_digests(self):
             return
 
         org_alerts = get_unsent_alerts_by_org()
-        print(org_alerts)
         if not org_alerts:
             logger.info("[send_alert_digests] Нет несентованных алертов")
             return
@@ -1368,4 +1367,27 @@ def send_alert_digests(self):
 
     except Exception as e:
         logger.error(f"[send_alert_digests] Ошибка: {e}", exc_info=True)
+        raise self.retry(exc=e)
+
+@shared_task(
+    bind=True,
+    name="push_uptime_kuma",
+    max_retries=3,
+    default_retry_delay=10,
+)
+def push_uptime_kuma(self):
+    import os
+    url = os.getenv("UPTIME_KUMA_PUSH_URL")
+
+    if not url:
+        logger.error("[push_uptime_kuma] UPTIME_KUMA_PUSH_URL not set in environment")
+        return
+
+    try:
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        logger.info(f"[push_uptime_kuma] ✅ Heartbeat sent — {resp.status_code}")
+        return {"status": "ok", "code": resp.status_code}
+    except Exception as e:
+        logger.error(f"[push_uptime_kuma] ❌ Failed: {e}")
         raise self.retry(exc=e)

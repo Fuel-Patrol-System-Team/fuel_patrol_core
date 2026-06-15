@@ -5,9 +5,9 @@ from typing import List, Union
 from telebot import TeleBot
 
 from core.models import Organization, TelegramUser
+from telebot import apihelper
 
 logger = logging.getLogger(__name__)
-
 
 def get_telegram_bot() -> TeleBot:
     if hasattr(get_telegram_bot, 'bot'):
@@ -18,16 +18,15 @@ def get_telegram_bot() -> TeleBot:
         logger.error("ALERT_BOT_TOKEN not found in environment variables")
         raise ValueError("ALERT_BOT_TOKEN is required")
 
-    proxy = os.getenv('HTTPS_PROXY') or os.getenv('ALL_PROXY')
-    if proxy:
-        from telebot import apihelper
-        apihelper.proxy = {'https': proxy}
-        logger.info(f"Telegram bot using proxy: {proxy}")
+    custom_api_url = os.getenv('TELEGRAM_API_URL')
+    if custom_api_url:
+
+        apihelper.API_URL = f"{custom_api_url}/bot{{0}}/{{1}}"
+        logger.info(f"Telegram bot using custom API: {custom_api_url}")
 
     get_telegram_bot.bot = TeleBot(token)
     logger.info("Telegram bot initialized")
     return get_telegram_bot.bot
-
 
 notification_bot = get_telegram_bot()
 
