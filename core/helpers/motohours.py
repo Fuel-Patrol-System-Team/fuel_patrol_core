@@ -304,8 +304,11 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
     col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10m")
     is_rpm_present = df["rpm"].is_not_null().any()
+    sensor_check = "ign"
     if is_rpm_present:
         df = df.with_columns(pl.when(pl.col("ign").eq(1)).then(pl.col("rpm").fill_null(0)).otherwise(pl.col("rpm")).alias("rpm"))
+        sensor_check = "rpm"
+    
     reports = []
     df = df.with_columns(
         pl.col("timestamp")
@@ -325,7 +328,6 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     df = rpm_almost_same_rpm(df, 15)
 
     data = None
-    sensor_check = "ign"
 
     if AGG_PERIOD is not None:
         data = df.group_by_dynamic(
