@@ -289,6 +289,7 @@ def mileage_test_fraud_new(
     CLIPPING_FACTOR = 5  # 1 - infinity нужен для сравненения последней части пробега с со всем остальным, для правильного вычисления накрутки
     MAX_SPEED_FOR_CHECK = 224
     MAX_CAP_MINUTES = 240
+    MIN_MILEAGE_PER_HOUR = 5
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
@@ -594,6 +595,18 @@ def mileage_test_fraud_new(
         }
     else:
         df = df.with_columns(pl.lit(0).alias("dmileage_suspicious"))
+    df = df.with_columns(
+        pl.col("ign_fraud_spent").sum().over(pl.col("timestamp").dt.truncate("1h")).lt(MIN_MILEAGE_PER_HOUR).alias("is_small_mileage")
+    )
+    df = df.with_columns(
+        pl.when(pl.col("is_small_mileage")).then(pl.col("ign_fraud_spent")).otherwise(pl.lit(0)).alias("ign_fraud_spent")
+    )
+    df = df.with_columns(
+        pl.col("dmileage_missed").sum().over(pl.col("timestamp").dt.truncate("1h")).lt(MIN_MILEAGE_PER_HOUR).alias("is_small_mileage")
+    )
+    df = df.with_columns(
+        pl.when(pl.col("is_small_mileage").eq(False)).then(pl.col("dmileage_missed")).otherwise(pl.lit(0)).alias("dmileage_missed")
+    )
     df_working = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
