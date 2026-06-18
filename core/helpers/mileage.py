@@ -495,35 +495,7 @@ def mileage_test_fraud_new(
     else:
         df = df.with_columns(pl.lit(0).alias("ign_spent"))
 
-    agg = None
-    if regime == MileageModes.agg:
-        agg = df.group_by_dynamic(
-            index_column="timestamp", every=f"{AGG_PERIOD_MINUTES}m", group_by="auto"
-        ).agg(
-            [
-                pl.col("ncm").first().alias("first_mileage"),
-                pl.col("mileage").last().alias("last_mileage_real"),
-                pl.col("ncm").last().alias("last_mileage"),
-                pl.col("dmileage").sum().alias("travel"),
-                pl.col("dmileage").max().alias("max_change"),
-                pl.col("dmileage_r").sum().alias("travel_r"),
-                pl.col("ncm").last(),
-                pl.col("ptime").sum(),
-                pl.col("sensortype").first(),
-                pl.col("sensormax").max(),
-                pl.max("spikes"),
-                pl.sum("spikes_big"),
-                pl.sum("jumps"),
-                pl.max("sensor_mileage_broken"),
-                pl.sum("dmileage_factor"),
-                pl.sum("dmileage_missed").alias("dmileage_fraud_ign"),
-                pl.sum("dmileage_missed_skip").alias("travel_skipped"),
-                pl.max("msg_skip_big"),
-            ]
-        )
-        agg = agg.with_columns(pl.col("timestamp").dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
-        agg = agg.with_columns(pl.col("dmileage_fraud_ign").alias("travel_fraud"))
-        agg = agg.to_dicts()
+    
     df = df.with_columns(
         pl.col("dmileage").sub(pl.col("dmileage_r")).mean().alias("dmileage_diff")
     )
@@ -607,6 +579,37 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.when(pl.col("is_small_mileage").eq(False)).then(pl.col("dmileage_missed")).otherwise(pl.lit(0)).alias("dmileage_missed")
     )
+
+    agg = None
+    if regime == MileageModes.agg:
+        agg = df.group_by_dynamic(
+            index_column="timestamp", every=f"{AGG_PERIOD_MINUTES}m", group_by="auto"
+        ).agg(
+            [
+                pl.col("ncm").first().alias("first_mileage"),
+                pl.col("mileage").last().alias("last_mileage_real"),
+                pl.col("ncm").last().alias("last_mileage"),
+                pl.col("dmileage").sum().alias("travel"),
+                pl.col("dmileage").max().alias("max_change"),
+                pl.col("dmileage_r").sum().alias("travel_r"),
+                pl.col("ncm").last(),
+                pl.col("ptime").sum(),
+                pl.col("sensortype").first(),
+                pl.col("sensormax").max(),
+                pl.max("spikes"),
+                pl.sum("spikes_big"),
+                pl.sum("jumps"),
+                pl.max("sensor_mileage_broken"),
+                pl.sum("dmileage_factor"),
+                pl.sum("dmileage_missed").alias("dmileage_fraud_ign"),
+                pl.sum("dmileage_missed_skip").alias("travel_skipped"),
+                pl.max("msg_skip_big"),
+            ]
+        )
+        agg = agg.with_columns(pl.col("timestamp").dt.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        agg = agg.with_columns(pl.col("dmileage_fraud_ign").alias("travel_fraud"))
+        agg = agg.to_dicts()
+        
     df_working = df.group_by_dynamic(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
