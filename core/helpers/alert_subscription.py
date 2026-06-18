@@ -1,6 +1,6 @@
 import logging
 from django.db import transaction
-from rest_framework.exceptions import PermissionDenied
+from django.core.exceptions import PermissionDenied
 
 from core.models import AlertSubscription, TelegramUser, OrgUser
 
