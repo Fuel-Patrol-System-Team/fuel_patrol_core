@@ -233,6 +233,18 @@ MILEAGE_REQUEST_SCHEMA = openapi.Schema(
     },
     required=['car_id', 'start_date', 'end_date']
 )
+FUELREPORT_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        'car_id': openapi.Schema(type=openapi.TYPE_STRING, description='UUID автомобиля'),
+        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                     description='Дата начала в ISO формате'),
+        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                   description='Дата конца в ISO формате'),
+        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах")
+    },
+    required=['car_id', 'start_date', 'end_date']
+)
 
 MOTOHOURS_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,

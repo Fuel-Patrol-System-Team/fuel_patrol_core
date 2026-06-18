@@ -55,7 +55,7 @@ from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, Or
     APICalculationLog
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
+    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, FUELREPORT_REQUEST_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_RPM_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA,
@@ -63,7 +63,7 @@ from core.helpers.rest import (
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA
 )
-from app.tasks import sync_vehicles_task, parse_terminal_messages_task
+from app.tasks import FuelReportService, sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
     APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer,
     CarLeaksChartsRequestSerializer, CarSensorsSwitchSerializer,
@@ -477,6 +477,75 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
 
         return Response(result, status=status_code)
 
+class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_summary="Рассчитать пробег автомобиля за период",
+        operation_description=(
+            "Вычисляет пробег по телематическим данным за указанный период. "
+            "Максимальный период — 60 дней. "
+            "Поддерживает несколько алгоритмов расчёта (`alg`) и агрегацию (`agg`). "
+            "Логирует результат в APICalculationLog."
+        ),
+        request_body=FUELREPORT_REQUEST_SCHEMA,
+        responses={
+            200: "Результат расчёта пробега",
+            400: "Неверные параметры или превышен период 60 дней",
+            404: "Автомобиль не найден",
+            500: "Ошибка расчёта"
+        }
+    )
+    def post(self, request):
+        car_id = request.data.get("car_id")
+        agg = request.data.get("agg")
+        force_chart = request.data.get("force_chart", False)
+        start_date = request.data.get("start_date")
+        end_date = request.data.get("end_date")
+        is_save_bad_data = request.data.get("is_save_bad_data", True)
+
+        try:
+            if not car_id:
+                return Response({"error": "Параметр car_id обязателен"}, status=404)
+            uuid.UUID(str(car_id))
+        except (ValueError, TypeError):
+            return Response({"error": "Автомобиль не найден (неверный формат ID)"}, status=404)
+
+        try:
+            user = request.user
+            if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
+                target_timezone = ZoneInfo(user.timezone)
+            else:
+                target_timezone = ZoneInfo("UTC")
+            if start_date:
+                start_date = datetime.fromisoformat(start_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
+            if end_date:
+                end_date = datetime.fromisoformat(end_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
+            else:
+                end_date = datetime.now()
+        except ValueError as e:
+            return Response({"error": f"Неверный формат даты: {e}"}, status=400)
+        except Exception as e:
+            return Response({"error": f"Ошибка обработки дат: {e}"}, status=400)
+
+        if start_date and (end_date - start_date).days > 60:
+            return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
+
+        try:
+            result, status_code = FuelReportService.calculate_fuelspent(
+                car_id=car_id,
+                agg=agg,
+                start_date=start_date,
+                end_date=end_date,
+                is_save_bad_data=is_save_bad_data,
+                force_chart=force_chart
+            )
+            if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
+                status_code = 404
+        except (ObjectDoesNotExist, ValidationError):
+            return Response({"error": "Автомобиль не найден в системе"}, status=404)
+
+        return Response(result, status=status_code)
 
 class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
@@ -1637,7 +1706,7 @@ class AlertSubscriptionAPIView(APIView):
         try:
             check_telegram_user(request.user)
         except PermissionDenied as e:
-            return error_response(str(e), status.HTTP_403_FORBIDDEN)
+            return error_response(str(e), status.HTTP_400_BAD_REQUEST) # для клиента
         subscription = get_or_create_subscription(request.user)
         serializer = AlertSubscriptionPatchSerializer(
             instance=subscription,

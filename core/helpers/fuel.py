@@ -1,7 +1,34 @@
-from typing import Any
+from typing import Any, List
 import polars as pl
+
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
-def fuel_spent_calculate(result: pl.DataFrame):
+
+def make_primary_fast(df: pl.DataFrame):
+    primary = {}
+    primary["norm_speed"] = df.with_columns(pl.col("pos_s").gt(0))["pos_s"].mean() 
+    fuel = df["calc_sensors_fuel_level"].filter(df["calc_sensors_fuel_level"].is_between(0, 65000))
+    max_fuel = fuel.max()
+    if max_fuel > 100 and max_fuel < 103:
+        max_fuel = 100
+    primary["max_fuel"] = max_fuel
+    primary["is_special_car"] = True
+    primary["ign_working"] = False
+    
+    return primary
+
+def make_fuel_spent(fuel_start: int, fuel_end: int, total_filling: int, agg: list[Any], fillings: list[Any]):
+    return {
+        "fuel_start": fuel_start,
+        "fuel_end": fuel_end,
+        "total_fillings": total_filling,
+        "agg": agg,
+        "fillings": fillings
+    }
+    
+
+
+
+def fuel_spent_calculate(result: pl.DataFrame, ):
     spent_report = result.group_by_dynamic(
         index_column="timestamp", group_by="auto", every=f"24h"
     ).agg(
@@ -43,17 +70,17 @@ def tarify_car_by_sensor(df: pl.DataFrame, cars: dict[str, Any], column = "calc_
     )
     return df, lp, b, slope
     
-
 def preprocess_basic_one(
     df: pl.DataFrame,
     cars: dict[str, Any],
     primary: dict[str, Any],
-    VOLTAGE_LIMIT,
-    FUEL_JUMP_BARRIER_PERC,
-    ANTI_BUG_TIME_SECONDS,
-    REFUELING_LIMIT,
-    PRE_PRIOD_TIME,
-    DTIME_LIMIT,
+    VOLTAGE_LIMIT = 0.16,
+    FUEL_JUMP_BARRIER_PERC = 0.05,
+    ANTI_BUG_TIME_SECONDS = 30,
+    REFUELING_LIMIT = 4000,
+    PRE_PRIOD_TIME = 3,
+    DTIME_LIMIT =5,
+    reports: List[Any] = [],
 ):
     if "rpm" not in df.columns:
         df = df.with_columns(pl.lit(65535).alias("rpm"))
@@ -371,4 +398,4 @@ def preprocess_basic_one(
         .alias("refuel")
     )
 
-    return df
+    return df, reports

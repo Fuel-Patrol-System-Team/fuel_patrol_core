@@ -90,7 +90,7 @@ class LeaksService(BaseLeaksCalculator):
                 )
 
                 logger.info(f"🔄 Машина {auto_id}: предобработка данных")
-                result_prep, inter_prep, _ = self._preprocess(
+                result_prep, inter_prep, _, reports = self._preprocess(
                     data, auto_info, primary_info, initial_df=initial_df
                 )
 
@@ -206,6 +206,7 @@ class LeaksService(BaseLeaksCalculator):
         cars: Dict[str, Any],
         norms: Dict[str, Any],
         initial_df: Optional[pl.DataFrame] = None,
+        reports: List[Any] = [],
         ANTI_BUG_TIME_SECONDS: int = 30,
         PRE_PERIOD_TIME: int = 3,
         PERIOD_2_MIN: int = 60,
@@ -216,14 +217,14 @@ class LeaksService(BaseLeaksCalculator):
         RPM_DRIVING_VALUE: int = 20,
         DTIME_LIMIT: int = 5,
         is_debug: bool = False,
-    ) -> Tuple[pl.DataFrame, pl.DataFrame, Optional[pl.DataFrame]]:
+    ) -> Tuple[pl.DataFrame, pl.DataFrame, Optional[pl.DataFrame], List[Any]]:
         """Основная предобработка данных"""
         logger.debug("🔄 Начало основной предобработки")
 
         anti_bug = None
         if initial_df is None:
             logger.debug("Используется базовая предобработка")
-            anti_bug = preprocess_basic_one(
+            anti_bug, reports = preprocess_basic_one(
                 df,
                 cars,
                 norms,
@@ -240,7 +241,7 @@ class LeaksService(BaseLeaksCalculator):
 
         if anti_bug.is_empty():
             logger.warning("⚠️ Нет данных после базовой предобработки")
-            return pl.DataFrame(), pl.DataFrame(), None
+            return pl.DataFrame(), pl.DataFrame(), None, reports
 
         logger.debug(f"Группировка по {PRE_PERIOD_TIME}-минутным интервалам")
         initial_count = len(anti_bug)
@@ -346,9 +347,9 @@ class LeaksService(BaseLeaksCalculator):
 
         if is_debug:
             logger.debug("Режим отладки: возвращаются все данные")
-            return result, anti_bug, df
+            return result, anti_bug, df, reports
         else:
-            return result, anti_bug, None, 
+            return result, anti_bug, None, reports
 
     def _fuel_leak_calculate(
         self,
