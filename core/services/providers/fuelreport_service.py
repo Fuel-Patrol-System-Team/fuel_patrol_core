@@ -52,8 +52,9 @@ class FuelReportService:
             spent_report = result.group_by_dynamic(
                 index_column="timestamp", group_by="auto", every=f"{agg}m"
             ).agg(
-                pl.first("fuel_first").alias("fuel_start"),
-                pl.last("fuel_last").alias("fuel_end"),
+                pl.col("calc_sensors_fuel_level").first().alias("fuel_start"),
+                pl.col("calc_sensors_fuel_level").last().alias("fuel_last"),
+                pl.col("spent_fuel").sum().clip(upper_bound=0).abs().alias("fuel_spent"),
             ).to_dicts()
         result = result.group_by_dynamic(
             index_column="timestamp", group_by="auto", every="1h"
