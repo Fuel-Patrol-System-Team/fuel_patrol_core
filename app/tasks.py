@@ -33,7 +33,7 @@ import os
 import psutil
 import time
 
-from core.services.fuelrepot_service import FuelReportService
+from core.services.providers.fuelreport_service import FuelReportService
 from core.services.notifications.tg_notifier import send_telegram_message
 from core.services.providers import leaks_service
 from core.services.providers.car_consumption_service import CarConsumptionService
