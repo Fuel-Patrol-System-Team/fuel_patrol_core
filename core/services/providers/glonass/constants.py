@@ -27,6 +27,7 @@ class GlonassParameter:
 
 class GL_PARAM_KEYS(Enum):
     timestamp = "timestamp"
+    timestamp_server = "timestamp_server"
     speed = "speed"
     fuel_level = "calc_sensors_fuel_level"
     mileage = "mileage"
@@ -64,6 +65,7 @@ def _cast_ign(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingPars
 
 GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
+    GL_PARAM_KEYS.timestamp_server : GlonassParameter(False, "serverTime", "timestamp_server",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp_server").cast(pl.Datetime)),True, None, None),
     GL_PARAM_KEYS.speed: GlonassParameter(True, "speed", "pos_s", None, False, 0, None ),
     GL_PARAM_KEYS.fuel_level: GlonassParameter(True, "", "calc_sensors_fuel_level", None, False, None, None ),
     GL_PARAM_KEYS.mileage: GlonassParameter(True, "", "mileage", None, False, 0, None),

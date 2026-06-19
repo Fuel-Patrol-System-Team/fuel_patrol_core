@@ -4,6 +4,7 @@ import polars as pl
 from textdistance import jaccard
 
 from core.helpers.alg_pieces import rpm_almost_same_rpm, rpm_unefficient_cases
+from core.helpers.alg_utils import alg_piece_remove_message_delays
 from core.helpers.maintenance import maintenance_rpm_slow_change_on_speed
 
 
@@ -190,6 +191,7 @@ def _compute_motohours_by_motohours(
     # if units == "seconds":
     # df = df.with_columns(pl.col("motohours") / 3600)
     reports = []
+    df = alg_piece_remove_message_delays(df)
     if "rpm" in df.columns:
         sensor_check = "rpm"
         df = df.with_columns(pl.col("rpm").gt(0).cast(pl.Int8).alias("compare_active"))
@@ -304,6 +306,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
     col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10m")
     is_rpm_present = df["rpm"].is_not_null().any()
+    df = alg_piece_remove_message_delays(df)
     sensor_check = "ign"
     if is_rpm_present:
         df = df.with_columns(pl.when(pl.col("ign").eq(1)).then(pl.col("rpm").fill_null(0)).otherwise(pl.col("rpm")).alias("rpm"))

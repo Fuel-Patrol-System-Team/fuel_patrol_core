@@ -1,6 +1,8 @@
 from typing import Any, List
 import polars as pl
 
+from core.helpers.alg_utils import alg_piece_remove_message_delays
+
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
 def make_primary_fast(df: pl.DataFrame):
@@ -86,6 +88,7 @@ def preprocess_basic_one(
         df = df.with_columns(pl.lit(65535).alias("rpm"))
     if "satellites" not in df.columns:
         df = df.with_columns(pl.lit(20).alias("satellites"))
+    df = alg_piece_remove_message_delays(df)
 
     df = df.with_columns(
         pl.when(pl.col("calc_sensors_fuel_level") > primary["max_fuel"])

@@ -55,7 +55,7 @@ class FuelReportService:
                 pl.col("calc_sensors_fuel_level").first().alias("fuel_start"),
                 pl.col("calc_sensors_fuel_level").last().alias("fuel_last"),
                 pl.col("spent_fuel").sum().clip(upper_bound=0).abs().alias("fuel_spent"),
-            ).to_dicts()
+            ).with_columns(pl.col("timestamp").dt.replace_time_zone("UTC")).to_dicts()
         result = result.group_by_dynamic(
             index_column="timestamp", group_by="auto", every="1h"
         ).agg(

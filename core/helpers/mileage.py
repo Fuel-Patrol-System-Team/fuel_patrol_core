@@ -7,6 +7,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from core.helpers.alg_pieces import rpm_unefficient_cases
+from core.helpers.fuel import alg_piece_remove_message_delays
 
 class MileageModes(str, Enum):
     standart = "standart"
@@ -291,6 +292,7 @@ def mileage_test_fraud_new(
     MAX_CAP_MINUTES = 240
     MIN_MILEAGE_PER_HOUR = 5
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
+    df = alg_piece_remove_message_delays(df)
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
     if auto_record["mileage_grading"] is not None:
