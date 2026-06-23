@@ -1309,16 +1309,42 @@ def send_alert_digests(self):
     now = datetime.now(tz)
     current_hour = now.hour
 
+    # Логируем текущий час по серверу
+    logger.info(f"[send_alert_digests] Текущий час по серверу (UTC): {current_hour}")
+
     try:
+        # Получаем все подписки ДО проверки
         subscriptions = (
             AlertSubscription.objects
             .filter(is_active=True, notify_hour=current_hour)
             .select_related("user", "user__org")
         )
 
+        # Выводим информацию о подписках ДО проверки на существование
+        # Получаем все часы из всех активных подписок (не только для текущего часа)
+        all_active_subscriptions = AlertSubscription.objects.filter(is_active=True)
+        all_hours = list(all_active_subscriptions.values_list('notify_hour', flat=True).distinct())
+
+        logger.info(f"[send_alert_digests] Все часы из активных подписок: {sorted(all_hours)}")
+        logger.info(f"[send_alert_digests] Количество подписок для часа {current_hour}: {subscriptions.count()}")
+
+        # Теперь проверяем, есть ли подписки для текущего часа
         if not subscriptions.exists():
             logger.info(f"[send_alert_digests] Нет подписок для часа {current_hour} UTC")
+            # Выводим пример подписок для других часов (для отладки)
+            if all_active_subscriptions.exists():
+                sample_hours = list(all_active_subscriptions.values_list('notify_hour', flat=True)[:5])
+                logger.info(f"[send_alert_digests] Примеры часов из других подписок: {sample_hours}")
             return
+
+        # Детальная информация по подпискам для текущего часа
+        for sub in subscriptions:
+            logger.info(
+                f"[send_alert_digests] Подписка для часа {current_hour}: "
+                f"user={sub.user.username}, "
+                f"org={sub.user.org.name if sub.user.org else 'None'}, "
+                f"sub_id={sub.id}"
+            )
 
         org_alerts = get_unsent_alerts_by_org()
         if not org_alerts:
