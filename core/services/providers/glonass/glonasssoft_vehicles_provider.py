@@ -311,7 +311,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 if parameter_name or expr:
                     key_part = parameter_name.split(";")[0]
                     if expr:
-                        sensors_mapping.get("ign", []).append(SensorType("expr", metadata_postfix if is_affix else None, 3, is_disabled))
+                        # Поломанная система, пока не юзать expr игнорирутся так как expr не в датафрейме
+                        # sensors_mapping.get("ign", []).append(SensorType("expr", metadata_postfix if is_affix else None, 3, is_disabled))
+                        pass
                     if input_type == "FMS":
                         key_part = "ign"
                     if key_part.startswith("iobits"):
