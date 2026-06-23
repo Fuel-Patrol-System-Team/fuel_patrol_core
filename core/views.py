@@ -718,6 +718,10 @@ class CarListBySensorGroupAPIView(ListAPIView):
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id, is_active=True
             ).filter(Q(key__key="motohours") | Q(key__key="ign"))
+        elif key_value == "fuel":
+            result = SensorsValues.objects.select_related("car_id", 'key').filter(
+                car_id__data_providers__org_id=self.request.user.org.id, is_active=True
+            ).filter(Q(key__key="calc_sensors_fuel_level") | Q(key__key="fuel_consumpt"))
         else:
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value, is_active=True

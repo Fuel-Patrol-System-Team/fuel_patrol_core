@@ -442,6 +442,9 @@ class ComputedData(models.Model):
     fuel_first = models.FloatField()
     fuel_last = models.FloatField()
     es = models.FloatField()
+    no_sat_data = models.FloatField(default=0)
+    count = models.IntegerField(default=60)
+    norma_rasx_per_travel = models.FloatField(null=True)
 
     class Meta:
         verbose_name = "Computed Data"
@@ -461,7 +464,7 @@ class ComputedData(models.Model):
     @classmethod
     def get_required_columns(cls):
         return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
-                "fuel_first", "fuel_last"]
+                "fuel_first", "fuel_last", "count", "no_sat_data", "norma_rasx_per_travel"]
 
 
 class CarMileageReport(models.Model):

@@ -24,7 +24,8 @@ def make_fuel_spent(fuel_start: int, fuel_end: int, total_filling: int, agg: lis
         "fuel_end": fuel_end,
         "total_fillings": total_filling,
         "agg": agg,
-        "fillings": fillings
+        "fillings": fillings,
+        "count": 0
     }
     
 

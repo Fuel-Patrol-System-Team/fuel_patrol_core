@@ -31,6 +31,7 @@ def make_empty_mileage_result(mode: MileageModes):
         "last_mileage": None,
         "data": [] if mode is not MileageModes.agg else None,
         "chart_data": None,
+        "count": 0
     }
 
 
@@ -85,6 +86,7 @@ def mileage_test_compute(df: pl.DataFrame, auto_record: Dict[str, Any], AGG: int
         "intercept": 0,
         "std": 0,
         "mileage_suspicious": 0,
+        "count": 0
     }
 
 def mileage_test_fraud(
@@ -258,6 +260,7 @@ def mileage_test_fraud(
         "first_mileage": df["first_mileage"].first(),
         "last_mileage": df["last_mileage"].last(),
         "data": show_df if regime is MileageModes.agg else None,
+        "count": 0
     }
 
 def mileage_test_fraud_new(
@@ -292,6 +295,7 @@ def mileage_test_fraud_new(
     MAX_CAP_MINUTES = 240
     MIN_MILEAGE_PER_HOUR = 5
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
+    df = df.filter(pl.col("msg_number").gt(0))
     df = alg_piece_remove_message_delays(df)
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
@@ -760,4 +764,5 @@ def mileage_test_fraud_new(
         "std": std,
         "mileage_suspicious": mileage_suspicious,
         "ign_fraud_spent_false": ign_fraud_spent_false,
+        "count": 0
     }

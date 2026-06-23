@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class GlobalRateLimiter:
     """
     Глобальный rate limiter для всех запросов к API провайдера
-    Гарантирует не более 1 запроса в секунду для всего приложения
+    Гарантирует не более 0.5 запроса в секунду для всего приложения
     """
     _instance: Optional['GlobalRateLimiter'] = None
     _lock = threading.Lock()
@@ -26,7 +26,7 @@ class GlobalRateLimiter:
         if not hasattr(self, '_initialized') or not self._initialized:
             self._lock = threading.Lock()
             self._last_request_time = 0.0
-            self._min_interval = 1.55
+            self._min_interval = 0.6
             self._initialized = True
             logger.info("GlobalRateLimiter инициализирован")
 

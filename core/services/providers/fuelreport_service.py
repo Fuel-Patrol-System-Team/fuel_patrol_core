@@ -40,8 +40,11 @@ class FuelReportService:
     
     @staticmethod
     def fuel_spent_calculate_instant(result: pl.DataFrame, fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
-        primary = make_primary_fast(result)
-        result, reports = preprocess_basic_one(result, cars, primary)
+        if result["calc_sensors_fuel_level"].is_not_null().any():
+            primary = make_primary_fast(result)
+            result, reports = preprocess_basic_one(result, cars, primary)
+        elif result["fuel_consumpt"].is_not_null().any():
+            result = result.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"), pl.col("fuel_consumpt").diff().mul(-1).alias("spent_fuel"))
         refuel = 0
         return_fillings = []
         if fillings is not None and fillings.shape[0] > 0:
@@ -72,14 +75,15 @@ class FuelReportService:
             pl.col("fuel_spent").clip(upper_bound=0).abs().sum().alias("fuel_spent"),
             pl.lit(refuel).alias("refuel")
         ]).to_dicts()
-        if len(spent_result) == 0:
+        if len(spent_result) == 0 or result.shape[0] == 0:
             spent_result = {
                 "fuel_first": 0,
                 "fuel_last": 0,
                 "fuel_spent": 0,
                 "refuel": refuel,
                 "agg": [],
-                "fillings": []
+                "fillings": [],
+                "count": 0,
             }
         else:
             spent_result = spent_result[0]
@@ -88,7 +92,8 @@ class FuelReportService:
         return {
             **spent_result,
             "agg": spent_report,
-            "fillings": return_fillings
+            "fillings": return_fillings,
+            "count": 1,
         }, []
     @staticmethod
     def calculate_fuelspent(

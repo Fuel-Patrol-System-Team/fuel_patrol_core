@@ -78,7 +78,8 @@ def make_motohours_result(
     unefficient_cases: int | float | None = None,
     unefficient_time: int | float | None = None,
     rpm_same_cases: int | float | None = None,
-    rpm_same_cases_time: int | float | None = None
+    rpm_same_cases_time: int | float | None = None,
+    count: int = 0
 ):
 
     return {
@@ -95,7 +96,8 @@ def make_motohours_result(
         "unefficient_cases": unefficient_cases, 
         "unefficient_time": unefficient_time,
         "rpm_same_cases": rpm_same_cases,
-        "rpm_same_cases_time": rpm_same_cases_time
+        "rpm_same_cases_time": rpm_same_cases_time,
+        "count": count
         
     }
 
@@ -168,7 +170,7 @@ def _compute_motohours_active_idle(df: pl.DataFrame, is_rpm_present: bool, rpm_i
             .alias("rpm_direct")
         )
         df = df.with_columns(
-            pl.col("rpm_direct").lt(rpm_idle).cast(pl.Int8).alias("is_idle")
+            pl.col("rpm_direct").is_between(1, rpm_idle).cast(pl.Int8).alias("is_idle")
         )
     else:
         df = df.with_columns(pl.lit(0).alias("is_idle"))
@@ -297,7 +299,8 @@ def _compute_motohours_by_motohours(
         unefficient_cases=unefficient_cases,
         unefficient_time=unefficient_time,
         rpm_same_cases=rpm_same_cases,
-        rpm_same_cases_time=rpm_same_cases_time
+        rpm_same_cases_time=rpm_same_cases_time,
+        count=1
     ), reports
 
 
@@ -307,6 +310,9 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10m")
     is_rpm_present = df["rpm"].is_not_null().any()
     df = alg_piece_remove_message_delays(df)
+    if df.shape[0] == 0:
+        return make_motohours_response_empty(), 
+
     sensor_check = "ign"
     if is_rpm_present:
         df = df.with_columns(pl.when(pl.col("ign").eq(1)).then(pl.col("rpm").fill_null(0)).otherwise(pl.col("rpm")).alias("rpm"))
@@ -328,7 +334,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     reports = maintenance_rpm_slow_change_on_speed(df, reports)
     df = _compute_motohours_active_idle(df, is_rpm_present, rpm_idle, col_dtime_idle_checking_period)
     df = rpm_unefficient_cases(df)
-    df = rpm_almost_same_rpm(df, 15)
+    df = rpm_almost_same_rpm(df, 15, rpm_idle)
 
     data = None
 
@@ -353,7 +359,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     unefficient_cases = df["unefficient_cases_total"].max()
     unefficient_time = df["dtime_unefficient"].sum()
     rpm_same_cases = df["rpm_same_cases_total"].max()
-    rpm_same_cases_time = df["rpm_same_cases_time"].sum()
+    rpm_same_cases_time = df["rpm_same_cases_time"].sum() 
     if rpm_same_cases_time is not None:
         rpm_same_cases_time /= 3600
     return make_motohours_result(
@@ -370,5 +376,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
         unefficient_cases=unefficient_cases,
         unefficient_time=unefficient_time,
         rpm_same_cases=rpm_same_cases,
-        rpm_same_cases_time=rpm_same_cases_time
+        rpm_same_cases_time=rpm_same_cases_time,
+        count=1
+
     ), reports

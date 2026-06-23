@@ -101,6 +101,24 @@ def _cleanup_temp_files(base_dir, report_id, timestamp):
 
 @shared_task(
     bind=True,
+    priority=5,
+)
+def sync_vehicles_master(self):
+    providers = list(DataProvider.objects.exclude(metadata__login__isnull=True).order_by("metadata__login").distinct("metadata__login")) 
+
+    pre_tasks = [sync_vehicles_task.si(str(provider.id), str(provider.org_id_id) ) for provider in providers]
+    logger.warning(f"Found {len(providers)} providers for an update, updating...")
+
+    try:
+        tasks = chain(
+            *pre_tasks
+        ).apply_async()
+    except BaseException as err:
+        logger.error("Ошибка при обновлении машин")
+
+
+@shared_task(
+    bind=True,
     name="sync_vehicles_task",
     soft_time_limit=600,
     time_limit=650,
@@ -798,6 +816,7 @@ def calculate_leaks_cron_one(
                 leaks_result, _, reports = leak_service.compute_leaks(auto_data, data_df, primary_df, norms_df)
                 if is_save_bad_data:
                     ReportService.create_bad_data_record_from_list(car, reports, report_query)
+                # вычисления расхода ежедневного
                 if isinstance(leaks_result, pl.DataFrame):
                     spent_report = fuel_spent_calculate(leaks_result)
                     try:
@@ -857,7 +876,10 @@ def calculate_leaks_cron_new(self, provider_name: str, is_save_bad_data = False)
     tasks = [
         calculate_leaks_cron_one.si(provider_name, str(car.id), is_save_bad_data) for car in cars_for_computing 
     ]
-    chain(*tasks).apply_async()
+    try:
+        chain(*tasks).apply_async()
+    except BaseException as err:
+        logger.error(f"Ошибка при расчете сливов {err}")
         
     
 
