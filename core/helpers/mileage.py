@@ -764,5 +764,5 @@ def mileage_test_fraud_new(
         "std": std,
         "mileage_suspicious": mileage_suspicious,
         "ign_fraud_spent_false": ign_fraud_spent_false,
-        "count": 0
+        "count": 1
     }
