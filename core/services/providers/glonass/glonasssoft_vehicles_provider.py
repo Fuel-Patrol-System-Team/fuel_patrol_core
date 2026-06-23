@@ -176,7 +176,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
         if car_unit:
             vehicle_data["car_unit_id"] = str(car_unit.id)
         vehicle_data["unit_name"] = unit_name
-
+        # TODO: добить постфиксы metadata_postfix для датчиков пробега и прочего
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
             sensor_name = sensor.get("name", "")
@@ -184,9 +184,15 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             parameter_name = sensor.get("parameterName")
             input_number = sensor.get("inputNumber")
             input_type = sensor.get("inputType")
-            expr = sensor.get("expr", "")
+            expr = sensor.get("expr", None)
             is_disabled = sensor.get("disabled", False)
-            
+            pseudonym = sensor.get("pseudonym", None)
+            metadata_postfix = {}
+            if expr is not None:
+                metadata_postfix["expr"] = expr
+            if pseudonym is not None:
+                metadata_postfix["pseudonym"] = pseudonym
+            is_affix = metadata_postfix != {}
 
             if "Скорость" in sensor_name or parameter_name == "can_speed":
                 sensors_mapping["speed"].append(SensorType(f"parameters.{parameter_name}", None, 3, is_disabled))
@@ -207,18 +213,18 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
 
                     if key_part.startswith("can_fuel_volume"):
                         sensors_mapping["calc_sensors_fuel_level"].append(
-                            SensorType(f"parameters.can_fuel_volume", {"grades": sensor_grades}, 3, is_disabled)
+                            SensorType(f"parameters.can_fuel_volume", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                         )
                         continue
                     if key_part.startswith("can_fuel_level"):
                         sensors_mapping["calc_sensors_fuel_level"].append(
-                            SensorType(f"parameters.can_fuel_level",{"grades": sensor_grades}, 3, is_disabled)
+                            SensorType(f"parameters.can_fuel_level",{"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                         )
                         continue
 
                     if key_part.startswith("can_") and input_number:
                         sensors_mapping.get("calc_sensors_fuel_level", []).append(
-                            SensorType(f"parameters.can{input_number}",{"grades": sensor_grades}, 3, is_disabled)
+                            SensorType(f"parameters.can{input_number}",{"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                         )
                         continue
                     if  input_type == "Analog":
@@ -226,12 +232,12 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         analog_match = re.search(r"\banalog(\d+)\b", expr)
                         if match is not None:
                             sensors_mapping.get("calc_sensors_fuel_level", []).append(
-                                SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, 3, is_disabled)
+                                SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                             )
                         if analog_match is not None:
                             sensors_mapping.get("calc_sensors_fuel_level", []).append(
                                 
-                                SensorType(f"paramaters.{analog_match.group(0)}", {"grades": sensor_grades}, 3, is_disabled)
+                                SensorType(f"paramaters.{analog_match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                             )
                     else:
 
@@ -256,9 +262,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.can{input_number}", None, 3, is_disabled))
+                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
                     else:
-                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", None, 3, is_disabled))
+                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif (
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2 or sensor_name == "Датчик пробега"
@@ -291,19 +297,21 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", None, 3, is_disabled))
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
                     else:
-                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif sensor_type == "EngineTemperature":
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", None, 3, is_disabled))
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
                     else:
-                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
+                        sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif sensor_type == "Ignition":
-                if parameter_name:
+                if parameter_name or expr:
                     key_part = parameter_name.split(";")[0]
+                    if expr:
+                        sensors_mapping.get("ign", []).append(SensorType("expr", metadata_postfix if is_affix else None, 3, is_disabled))
                     if input_type == "FMS":
                         key_part = "ign"
                     if key_part.startswith("iobits"):
@@ -312,13 +320,13 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         match = re.match(iobit_byte_reg, key_part)
                         if match is not None:
                             iobit = int(match.group(1))
-                        ign_metadata = None if iobit == 0 else {"iobit": iobit}
+                        ign_metadata = None if iobit == 0 else {"iobit": iobit, **metadata_postfix}
                         sensors_mapping.get("ign", []).append(SensorType(f"parameters.iobits", ign_metadata, 3, is_disabled))
                     else:
-                        sensors_mapping.get("ign", []).append(SensorType(f"parameters.{key_part}", None, 3, is_disabled))
+                        sensors_mapping.get("ign", []).append(SensorType(f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif sensor_type == "Consumption":
                 if "can_fuel_consumpt" in parameter_name:
-                    sensors_mapping.get("fuel_consumpt", []).append(SensorType(f"parameters.{parameter_name}", None, 3, is_disabled))
+                    sensors_mapping.get("fuel_consumpt", []).append(SensorType(f"parameters.{parameter_name}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif (
                     sensor_type == "Motohours"
                     or textdistance.damerau_levenshtein(sensor_name, "моточасы") <= 2

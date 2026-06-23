@@ -43,7 +43,7 @@ class GL_PARAM_KEYS(Enum):
     amtr_z= "amtr_z"
     satellites = "satellites"
     msg_number = "msg_number"
-    fuel_consumpt = "can_fuel_consumpt"
+    fuel_consumpt = "fuel_consumpt"
     event_code = "event_code"
     
 class GL_ACTION_KEYS(Enum):
@@ -54,6 +54,10 @@ class GL_ACTION_KEYS(Enum):
 
 
 def _cast_ign(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]]):
+    if "ign" in df.columns:
+        if df["ign"].dtype == pl.Boolean:
+            df = df.with_columns(pl.col("ign").cast(pl.Int32))
+            return df
 
     sensor = sensor_mapping[GL_PARAM_KEYS.ignition.value][0]
     ign_bit = 0
@@ -106,9 +110,10 @@ def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: 
 
     sensors = filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns)
 
+
     for sensor in sensors:
-        grades = car.grades
-        unique = list({tuple(sorted(d.items())): d for d in grades["grades"]}.values())
+        grades = sensor_mapping[sensor][0].get("metadata", {}).get("grades", None)
+        unique = list({tuple(sorted(d.items())): d for d in grades}.values())
         pairs = list(zip(unique, unique[1:]))
         mp = unique[0]
         lp = unique[-1]

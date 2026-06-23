@@ -16,6 +16,7 @@ from django.utils import timezone
 
 from core.models import Car, DataProvider, SensorsValues
 from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol, SensorMappingParserType
+from core.services.providers.glonass.glonass_expression_parser import GlonassExpresssionParser
 from core.services.providers.rate_limiter import global_rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -268,7 +269,7 @@ class GlonassGeneralProvider:
         if mode == "mileage":
             result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.mileage, GP.satellites, GP.fuel_consumpt, GP.rpm, GP.ignition, GP.msg_number],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
         elif mode == "fuel":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number , GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number , GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.fuel_consumpt], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge),  GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
         elif mode == "motohours":
@@ -466,25 +467,66 @@ class GlonassGeneralProvider:
         
 
         parameters_count = {}
+        expr_parser = GlonassExpresssionParser()
+        variables = expr_parser.make_variables(sensors_mapping)
+        
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
-
             if param:
                 "test"
-                path_to_params = [""]
+                # result = expr_parser.parse_expression(param.label, param. , , variables, df )
+                path_to_params = [{"value": ""}]
                 msensor = False
+
                 if param.is_dynamic:
-                    path_to_params = sensors_mapping.get(col.value, param.default_key)
+                    path_to_params = sensors_mapping.get(col.value, [{"value": param.default_key}])
                     path_to_params = [path_to_params] if isinstance(path_to_params, str) else path_to_params
                 else:
                     if param.default_key in result.columns:
-                        path_to_params = [param.default_key]
+                        path_to_params = [{"value": param.default_key}]
+                for index, sensor in enumerate(path_to_params):
+                    
+                    path_to_param = sensor["value"]
+                    expr = None
+                    
+                    if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
+                        expr = sensor["metadata"]["expr"]
+                    if ( path_to_param == "" or path_to_param not in result.columns) and not expr:
+                        continue
+                    else:
+                        if expr is not None:
+                            result = expr_parser.parse_expression(param.label, path_to_param, expr, variables, result )
+
+            
+
+        for col in required_columns:
+            param = GLOBAL_GLONASS_PARAMS.get(col)
+            if param:
+                "test"
+                # result = expr_parser.parse_expression(param.label, param. , , variables, df )
+                path_to_params = [{"value": ""}]
+                msensor = False
+
+                if param.is_dynamic:
+                    path_to_params = sensors_mapping.get(col.value, [{"value": param.default_key}])
+                    path_to_params = [path_to_params] if isinstance(path_to_params, str) else path_to_params
+                else:
+                    if param.default_key in result.columns:
+                        path_to_params = [{"value": param.default_key}]
+
                 
                 msensor = len(path_to_params) > 1
                 # должен быть один, иначе идем по каждому
-                for index, path_to_param in enumerate(path_to_params):
-                    if isinstance(path_to_param, dict):
-                        path_to_param = path_to_param["value"]
+                for index, sensor in enumerate(path_to_params):
+                    
+                    path_to_param = sensor["value"]
+                    expr = None
+                    
+                    if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
+                        expr = sensor["metadata"]["expr"]
+
+                    
+                    
                     true_label = param.label + f"_{index}" if msensor else param.label 
                     if path_to_param == "" or path_to_param not in result.columns:
                         # заменить спец значением весь столбец
