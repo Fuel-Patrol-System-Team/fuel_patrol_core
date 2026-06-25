@@ -37,6 +37,10 @@ class FuelReportService:
         )
         return len(reports)
     
+    # TODO: написать для fuel_consumpt с dtime, убранными сообщениями и прочим
+    @staticmethod
+    def fuel_spent_calculate_by_consumpt(result: pl.DataFrame):
+        return result 
     
     @staticmethod
     def fuel_spent_calculate_instant(result: pl.DataFrame, fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):

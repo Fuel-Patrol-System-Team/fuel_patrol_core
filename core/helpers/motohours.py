@@ -1,7 +1,6 @@
 from datetime import timedelta
 from typing import Any, cast
 import polars as pl
-from textdistance import jaccard
 
 from core.helpers.alg_pieces import rpm_almost_same_rpm, rpm_unefficient_cases
 from core.helpers.alg_utils import alg_piece_remove_message_delays
