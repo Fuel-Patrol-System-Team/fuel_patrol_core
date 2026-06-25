@@ -7,6 +7,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression
 
 from core.helpers.alg_pieces import rpm_unefficient_cases
+from core.helpers.alg_utils import alg_piece_remove_skipped_messages
 from core.helpers.fuel import alg_piece_remove_message_delays
 
 class MileageModes(str, Enum):
@@ -348,6 +349,7 @@ def mileage_test_fraud_new(
             .alias("dtime"),
         ]
     )
+    df = alg_piece_remove_skipped_messages(df)
 
     # внутренний примивный фильтр
     is_zero_one_sensor = df.filter(pl.col("dmileage") < 1)["dmileage"].max() in [0, 0.5]
@@ -378,22 +380,7 @@ def mileage_test_fraud_new(
     # df = df.filter(
     #     [~((pl.col("du") > MAX_SPEED_FOR_CHECK) & (pl.col("satellites") == 0))]
     # )
-    df = df.with_columns(
-        pl.col("msg_number").diff().abs().gt(2).cast(pl.Int32).alias("msg_skip")
-    )
-    df = df.with_columns(
-        pl.col("msg_number").diff().abs().gt(5).cast(pl.Int32).alias("msg_skip_big")
-    )
-    df = df.with_columns(
-        pl.col("msg_number")
-        .diff()
-        .abs()
-        .gt(100)
-        .cast(pl.Int32)
-        .alias("msg_skip_critical")
-    )
 
-    df = df.filter(pl.col("msg_skip_critical").eq(0))
     if df.shape[0] == 0:
         return make_empty_mileage_result(regime)
 

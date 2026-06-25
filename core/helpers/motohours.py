@@ -6,6 +6,7 @@ from textdistance import jaccard
 from core.helpers.alg_pieces import rpm_almost_same_rpm, rpm_unefficient_cases
 from core.helpers.alg_utils import alg_piece_remove_message_delays
 from core.helpers.maintenance import maintenance_rpm_slow_change_on_speed
+from core.helpers.mileage import alg_piece_remove_skipped_messages
 
 
 def compute_theoretical_rpm(df: pl.DataFrame):
@@ -335,6 +336,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     df = _compute_motohours_active_idle(df, is_rpm_present, rpm_idle, col_dtime_idle_checking_period)
     df = rpm_unefficient_cases(df)
     df = rpm_almost_same_rpm(df, 15, rpm_idle)
+    df = alg_piece_remove_skipped_messages(df)
 
     data = None
 

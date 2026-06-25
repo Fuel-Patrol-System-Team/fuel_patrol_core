@@ -2,6 +2,7 @@ from typing import Any, List
 import polars as pl
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays
+from core.helpers.mileage import alg_piece_remove_skipped_messages
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
@@ -151,6 +152,7 @@ def preprocess_basic_one(
         .alias("dtime"),
         pl.col("rpm").fill_null(0),
     )
+    df = alg_piece_remove_skipped_messages(df)
 
     df = df.with_columns(
         pl.when(pl.col("dtime") > 5 * 60)
@@ -270,12 +272,12 @@ def preprocess_basic_one(
         ]
     )
 
-    df = df.with_columns(
-        pl.when((pl.col("no_sat_data") == 1) & (pl.col("spent_fuel") != 0))
-        .then(0)
-        .otherwise(pl.col("spent_fuel"))
-        .alias("spent_fuel")
-    )
+    # df = df.with_columns(
+    #     pl.when((pl.col("no_sat_data") == 1) & (pl.col("spent_fuel") != 0))
+    #     .then(0)
+    #     .otherwise(pl.col("spent_fuel"))
+    #     .alias("spent_fuel")
+    # )
 
     df = df.with_columns(pl.lit(1).alias("count"))
     df = df.with_columns(
