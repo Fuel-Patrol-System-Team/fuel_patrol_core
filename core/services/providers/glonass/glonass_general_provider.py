@@ -443,7 +443,8 @@ class GlonassGeneralProvider:
     def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]], parameters: list[str] | None = None) -> pl.DataFrame:
         if parameters is not None:
             messages = self.filter_parameters(messages, parameters)
-        result = pl.DataFrame(messages, infer_schema_length=30_000)
+        # TODO: нужно что-то делать с этим магическим числом, если очень редко появляется сенсор, его система может пропустить
+        result = pl.DataFrame(messages, infer_schema_length=200_000)
         fields = list(map(lambda x: f"parameters.{x}" , result["parameters"].struct.fields))
         result = result.with_columns(pl.col("parameters").struct.rename_fields(fields)).unnest("parameters") # разбить на части
         result = result.with_columns(pl.lit(str(car.id)).alias("auto"))
@@ -492,12 +493,11 @@ class GlonassGeneralProvider:
                     if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
                         expr = sensor["metadata"]["expr"]
                     if ( path_to_param == "" or path_to_param not in result.columns) and not expr:
+                        result = result.with_columns(pl.lit(param.default_on_absence).alias(path_to_param))
                         continue
                     else:
                         if expr is not None:
                             result = expr_parser.parse_expression(param.label, path_to_param, expr, variables, result )
-
-            
 
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
