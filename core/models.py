@@ -475,6 +475,8 @@ class CarMileageReport(models.Model):
     mileage_end = models.FloatField(**NULLABLE)
     travel = models.FloatField(**NULLABLE)
     fraud = models.FloatField(**NULLABLE)
+    ign_miss = models.FloatField(**NULLABLE)
+    travel_fraud_jumps = models.FloatField(**NULLABLE)
 
     class Meta:
         verbose_name = "Car Mileage Report"

@@ -23,12 +23,12 @@ class BaseFilteringService(ABC):
         pass
 
     @abstractmethod
-    def filtering_low_speed(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
+    def pick_low_speed(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по низкой скорости"""
         pass
 
     @abstractmethod
-    def filtering_spent_fuel_std(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
+    def pick_by_spent_fuel_std(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по стандартному отклонению расхода"""
         pass
 

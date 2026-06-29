@@ -112,6 +112,20 @@ def preprocess_basic_one(
     col_dtime_period = pl.col("timestamp").dt.truncate(f"{PRE_PRIOD_TIME}m")
     col_dtime_period = pl.col("timestamp").dt.truncate(f"60m")
 
+    # forward strategy for filling gaps
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
+    )
+
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level")
+        .diff()
+        .over(["auto"])
+        .fill_null(0)
+        .cast(pl.Float32)
+        .alias("spent_fuel_boundary"),
+    )
+
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
         .is_not_nan()
@@ -322,6 +336,7 @@ def preprocess_basic_one(
             pl.col("pos_s_m").mean(),
             pl.col("dtime_m").sum(),
             pl.col("es").sum(),
+            pl.sum("spent_fuel_boundary"),
         ]
     )
 

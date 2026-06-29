@@ -1,6 +1,6 @@
 from enum import Enum
 import logging
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Literal, Optional, Tuple
 from datetime import datetime
 
 import polars as pl
@@ -33,6 +33,7 @@ class MileageCalculationService:
             end_date: datetime = datetime.now(),
             is_save_bad_data: bool = True,
             parser: Optional[GlonassGeneralProvider] = None,
+            sensor_speed_chart: Literal["can"] | Literal["mileage"] = "mileage",
             force_chart = False
     ) -> Tuple[Dict[str, Any], int]:
         """
@@ -102,7 +103,7 @@ class MileageCalculationService:
                 if alg == MileageAlgorithms.compute:
                     result = mileage_test_compute(df, auto_record, agg, mode)
                 else:
-                    result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode, force_chart=force_chart )
+                    result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode, sensor_chart=sensor_speed_chart, force_chart=force_chart )
 
                 if result["msg_skip_big"] == 1:
                     try:

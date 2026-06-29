@@ -1355,6 +1355,46 @@ class CarBadDataDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
 
+class CarCarDataPreparedAPiView(APIView):
+    # TODO: admin only
+    
+    def post(self, request):
+        cars = list(Car.objects.all().select_related("carprimary").prefetch_related("consumptions").filter(
+            consumptions__isnull=False, carprimary__isnull=False
+        ))
+        result = None
+        result_primary = None
+        result_consumptions = None
+        for car in cars:
+            tmp = CarDataService.prepare_auto_data(car, return_dict=True)
+            if result is None:
+                
+                result = tmp
+            else:
+                result.extend(tmp)
+            if car.carprimary.primary:
+                if result_primary is None:
+                    result_primary = car.carprimary.primary
+                else:
+                    result_primary.extend(car.carprimary.primary)
+            if car.consumptions.first():
+                if result_consumptions is None:
+                    result_consumptions = [car.consumptions.first().json_data]
+                else:
+                    result_consumptions.append(car.consumptions.first().json_data)
+        result = pl.DataFrame(result)
+        result_primary = pl.DataFrame(result_primary)
+        result_consumptions = pl.DataFrame(result_consumptions)
+        if isinstance(result, pl.DataFrame):
+            result = result.with_columns(pl.col("grades").list.eval(pl.element().struct.json_encode()).list.join(", ").map_elements(lambda s: f"[{s}]").alias("grades"))
+            result = result.with_columns(pl.col("mileage_grading").list.eval(pl.element().struct.json_encode()).list.join(", ").alias("mileage_grading"))
+        
+            result.write_csv("/data/datasets/fuel/cars.csv")
+        if isinstance(result_primary, pl.DataFrame):
+            result_primary.write_csv("/data/datasets/fuel/cars_primary.csv")
+        if isinstance(result_consumptions, pl.DataFrame):
+            result_consumptions.write_csv("/data/datasets/fuel/cars_consumptions.csv")
+        return success_response({"ok": True}, 200)
 
 class CarBadDataDashboardAPIView(APIView):
     permission_classes = [IsOrgMember]

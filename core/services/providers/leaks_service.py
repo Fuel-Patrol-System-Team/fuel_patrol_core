@@ -271,6 +271,7 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("ign"),
                 pl.sum("ptime"),
                 pl.sum("es"),
+                pl.sum("spent_fuel_boundary"),
             ]
         )
         grouped_count = len(anti_bug)
@@ -324,7 +325,8 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("ptime"),
                 pl.first("fuel_first"),
                 pl.last("fuel_last"),
-                pl.sum("es")
+                pl.sum("es"),
+                pl.sum("spent_fuel_boundary"),
             ]
         )
         final_count = len(result)

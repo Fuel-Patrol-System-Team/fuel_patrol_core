@@ -969,6 +969,7 @@ def parse_cars_milleage_task(
         is_save_bad_data: bool = False,
         is_parse_mileage=False,
         start_date_manual=None,
+        last_date_manual=None,
         force=False
 ):
     try:
@@ -977,6 +978,7 @@ def parse_cars_milleage_task(
         tz = pytz.UTC
         start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = start_date + timedelta(days=1)
+        last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
         cars = provider.cars.select_related("parsingcar_stats").filter(
@@ -1016,14 +1018,16 @@ def parse_cars_milleage_task(
                 last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
                 if last_datetime is None or force:
                     last_datetime = start_date
+                if last_date_manual:
+                    end_date = last_date_manual
                 if is_sensor == 0:
                     parser._skip_car(car)
                     continue
-                is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
-                if is_no_need_to_parse > 0:
-                    parser._skip_car(car)
-                    continue
                 for i in range((end_date - last_datetime).days):
+                    is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
+                    if is_no_need_to_parse > 0:
+                        parser._skip_car(car)
+                        continue
                     current_date = last_datetime + timedelta(days=i)
                     tmp_end_date = min(current_date + timedelta(days=1), end_date)
                     result, status = MileageCalculationService.calculate_mileage(
@@ -1037,12 +1041,14 @@ def parse_cars_milleage_task(
                             anomalies += 1
                         mileage_report, _ = CarMileageReport.objects.update_or_create(
                             car_id_id=car.id,
-                            datetime=start_date,
+                            datetime=current_date,
                             defaults={
                                 "mileage_start": data["first_mileage"],
                                 "mileage_end": data["last_mileage"],
                                 "travel": data["travel"],
                                 "fraud": fraud_value,
+                                "travel_fraud_jumps": data["travel_fraud_jumps"],
+                                "ign_miss": data["ign_miss"]
                             }
                         )
                         logger.info(

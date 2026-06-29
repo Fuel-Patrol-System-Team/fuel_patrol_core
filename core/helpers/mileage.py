@@ -1,6 +1,6 @@
 import ast
 from enum import Enum
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List, Literal, cast
 import charset_normalizer
 import polars as pl
 import numpy as np
@@ -23,18 +23,46 @@ class MileageModes(str, Enum):
         else:
             return None
 
-def make_empty_mileage_result(mode: MileageModes):
+def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_skip_big: int, first_mileage: None | float, last_mileage: None | float,
+                        data: List[Any], travel_fraud_jumps: float, ign_miss: float | None, chart_data: List[Any] | None, chart_data_rpm: List[Any] | None, count: int,
+                        std: float | None, intercept: float | None, slope: float | None, mileage_suspicious: float | None
+                        ): 
     return {
-        "travel": None,
-        "travel_fraud": None,
-        "msg_skip_big": 0,
-        "first_mileage": None,
-        "last_mileage": None,
-        "data": [] if mode is not MileageModes.agg else None,
-        "chart_data": None,
-        "count": 0
+        "travel": travel,
+        "travel_fraud": travel_fraud,
+        "msg_skip_big": msg_skip_big,
+        "first_mileage": first_mileage,
+        "last_mileage": last_mileage,
+        "travel_fraud_jumps": travel_fraud_jumps,
+        "ign_miss": ign_miss,
+        "data": data,
+        "chart_data": chart_data,
+        "chart_data_rpm": chart_data_rpm,
+        "count": count,
     }
 
+def make_empty_mileage_result(mode: MileageModes):
+    return make_mileage_result(
+        travel=None,
+        travel_fraud=None,
+        msg_skip_big=0,
+        first_mileage=None,
+        last_mileage=None,
+        data=[],
+        travel_fraud_jumps=0,
+        ign_miss=0,
+        chart_data=[],
+        chart_data_rpm=[],
+        count=0,
+        intercept=0,
+        std=0,
+        slope=0,
+        mileage_suspicious=0
+    )
+
+
+
+    
 
 def mileage_test_compute(df: pl.DataFrame, auto_record: Dict[str, Any], AGG: int | None, regime: MileageModes = MileageModes("standart"), AGG_MINUTES_DEFAULT = 60):
     agg = AGG_MINUTES_DEFAULT if AGG is None else AGG
@@ -270,6 +298,7 @@ def mileage_test_fraud_new(
     auto_record: Dict[str, Any],
     AGG_PERIOD_MINUTES: int | None = 1,
     regime: MileageModes = MileageModes.standart,
+    sensor_chart: Literal["can"] | Literal["mileage"] = "can",
     force_chart = False,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
@@ -698,12 +727,14 @@ def mileage_test_fraud_new(
         "travel" if df_working["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
     )
     ign_miss = df_working["dmileage_missed"].sum()
-    travel_fraud = df_working["true_mileage_fraud"].sum() if False == True else ign_miss
+    travel_fraud = df_working.with_columns(pl.max_horizontal([pl.col("dmileage_missed"), pl.col("true_mileage_fraud")]))
+    travel_fraud = df_working["true_mileage_fraud"].sum()
     chart_data = None
     if travel_fraud > 0 or mileage_suspicious > 0 or force_chart:
         cdf = df.filter(pl.col("msg_skip").eq(0)).group_by_dynamic(index_column="timestamp", every="1m").agg(
             pl.col("mileage").first(),
             pl.col("pos_s").mean(),
+            pl.col("speed_gps").mean(),
             pl.col("du").mean().alias("du_mean"),
             pl.col("ign").max(),
             pl.col("dmileage").sum(),
@@ -717,10 +748,13 @@ def mileage_test_fraud_new(
             .dt.strftime("%Y-%m-%dT%H:%M:%SZ")
             .to_list(),
             "mileage": cdf["mileage"].to_list(),
-            "pos_s": cdf["pos_s"].to_list(),
-            "pos_s_sensor": cdf["du_mean"].to_list(),
+            "pos_s": cdf["speed_gps"].to_list(),
+            "pos_s_sensor": cdf["du_mean"].to_list() if sensor_chart == "mileage" else cdf["pos_s"],
             "ign": cdf["ign"].to_list(),
         }
+    df_working = df_working.with_columns(
+        pl.max_horizontal(pl.col("dmileage_missed_skip"), pl.col("true_mileage_fraud")).alias("travel_fraud")
+    )
     travel_skipped = df_working["dmileage_missed_skip"].sum()
     msg_skip_big = df_working["msg_skip_big"].max()
     ign_fraud_spent = df_working["ign_fraud_spent"].sum()
@@ -731,13 +765,37 @@ def mileage_test_fraud_new(
         mileage_suspicious = 0
     if ign_fraud_spent_false < 3:
         ign_fraud_spent_false = 0
+    travel_fraud = df_working["travel_fraud"].sum()
+    travel_fraud_jumps = df_working["true_mileage_fraud"].sum()
         
-
+    return make_mileage_result(
+        travel,
+        travel_fraud=travel_fraud,
+        msg_skip_big=msg_skip_big,
+        first_mileage=first_mileage,
+        last_mileage=last_mileage,
+        data=agg if regime is MileageModes.agg else None,
+        travel_fraud_jumps=travel_fraud_jumps,
+        ign_miss=ign_miss,
+        chart_data=chart_data,
+        chart_data_rpm=[],
+        count=1,
+        std=std,
+        slope=slope,
+        intercept=intercept,
+        mileage_suspicious=mileage_suspicious
+        
+        
+        
+        
+        
+    )
     
     return {
         "travel": travel,
         "travel_fraud": (
-            ign_miss
+            travel_fraud
+            
         ),
         "first_mileage": first_mileage,
         "last_mileage": last_mileage,
