@@ -48,7 +48,7 @@ from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_val
 from .mixins.calculation_logs_mixin import APICalculationLoggingMixin
 from .mixins.convert_utc_mixin import TimestampTimezoneConverterMixin
 from .mixins.swagger_mixin import SwaggerSafeQuerysetMixin
-from .models import ComputedData, Organization, ParsingCarStats, ReportQuery, OrgUser, Car, CarConsumption, CarReport, \
+from .models import CarMotohoursReport, ComputedData, Organization, ParsingCarStats, ReportQuery, OrgUser, Car, CarConsumption, CarReport, \
     Driver, DataProvider, \
     CarBadData, Language, CarUnit, SensorsValues, SensorsKeyLocalization, UserCarList, CarMileageReport, TelegramUser, \
     CarFuelReport, \
@@ -66,7 +66,7 @@ from core.helpers.rest import (
 from app.tasks import FuelReportService, sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
     APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer,
-    CarLeaksChartsRequestSerializer, CarSensorsSwitchSerializer,
+    CarLeaksChartsRequestSerializer, CarMotohoursReportOutputSerializer, CarSensorsSwitchSerializer,
     ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, SensorsValuesOutputSerializer, UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
@@ -774,6 +774,19 @@ class CarMileageReportListAPIView(ListAPIView):
         return CarMileageReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id').order_by('-datetime')
+
+class CarMotohoursReportListAPIView(ListAPIView):
+    serializer_class = CarMotohoursReportOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backend = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["car_id", 'datetime']
+    search_fields = ["car_id__name"]
+    def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarMotohoursReport.objects.none()
+        return CarMotohoursReport.objects.filter(
+            car_id__data_providers__org_id=self.request.user.org
+        ).select_related("car_id").order_by('-datetime')
 
 
 class CarMileageReportDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):

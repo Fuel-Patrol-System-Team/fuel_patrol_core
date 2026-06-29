@@ -46,6 +46,35 @@ def save_leak_alert(
         return None
 
 
+def save_fraud_motohours_alert(
+        car: Car,
+        organization: Organization,
+        fraud_km: float,
+        event_datetime: datetime,
+        source_motohours_report: Optional[CarMileageReport] = None,
+) -> Optional[Alert]:
+    try:
+        alert = Alert.objects.create(
+            organization=organization,
+            car=car,
+            alert_type=Alert.AlertType.FRAUD,
+            source_motohours_report=source_motohours_report,
+            payload={
+                "fraud_km": round(fraud_km, 2),
+                "event_dt": event_datetime.isoformat(),
+                "car_name": car.name,
+            },
+            event_datetime=event_datetime,
+        )
+        logger.info(
+            f"[FRAUD] Алерт сохранён: car={car.name}, fraud_km={fraud_km}км, "
+            f"org={organization.name}, alert_id={alert.id}"
+        )
+        return alert
+    except Exception as e:
+        logger.error(f"[FRAUD] Ошибка сохранения алерта: car={car.id}, error={e}")
+        return None
+
 def save_fraud_alert(
         car: Car,
         organization: Organization,

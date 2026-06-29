@@ -19,6 +19,7 @@ from core.models import (
     AlertSubscription,
     CarBadData,
     CarMileageReport,
+    CarMotohoursReport,
     ComputedData,
     ParsingCarStats,
     ReportQuery,
@@ -45,6 +46,7 @@ from core.services.providers.glonass.glonass_general_provider import GlonassGene
 from core.services.providers.glonass.glonassoft_terminal_messages_parser import GlonassSoftTerminalMessagesParser
 
 from core.services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
+from core.services.providers.motohours_calculation_service import MotohoursCalculationService
 from core.services.providers.norms_service import NormsService
 from core.services.providers.provider_factory import ProviderFactory
 from core.services.providers.report_service import ReportService
@@ -1087,6 +1089,136 @@ def parse_cars_milleage_task(
         self.update_state(state='FAILURE', meta={'error': str(e)})
         raise
 
+@shared_task(bind=True)
+def parse_cars_motohours_task(
+        self,
+        provider_name: str,
+        is_save_bad_data: bool = False,
+        is_parse_motohours=False,
+        start_date_manual=None,
+        last_date_manual=None,
+        force=False
+):
+    try:
+        if is_parse_motohours == False:
+            return
+        tz = pytz.UTC
+        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = start_date + timedelta(days=1)
+        last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
+
+        provider = DataProvider.objects.filter(name=provider_name).first()
+        cars = provider.cars.select_related("parsingcar_stats").filter(
+            Q(is_active=True) | Q(parsingcar_stats__is_parse_motohours=True)
+        )
+        if not force:
+            cars = cars.filter(
+                Q(parsingcar_stats__motohours_last_processed__isnull=True) | Q(parsingcar_stats__motohours_last_processed__lt=start_date)
+            )
+        cars = list(cars)
+
+        if len(cars) == 0:
+            logger.info("Нет машин для обработки моточасов")
+            self.update_state(
+                state='SUCCESS',
+                meta={
+                    'message': 'Нет машин для обработки моточасов',
+                    'provider_name': provider_name,
+                    'start_date': start_date.isoformat(),
+                    'end_date': end_date.isoformat(),
+                }
+            )
+            return
+
+        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date, "motohours")
+        anomalies = 0
+
+        for car in cars:
+            try:
+                logger.info(f"Обработка моточасов для машины {car.id}")
+                is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(Q(key__key="motohours") | Q(key__key="ign")))
+                is_already_computed = len(CarMotohoursReport.objects.filter(datetime=start_date, car_id__id=car.id))
+                if is_already_computed > 0:
+                    logger.info(f"Моточасы для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработаны, пропускаем")
+                    parser._skip_car(car)
+                    continue
+                last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().motohours_last_processed
+                if last_datetime is None or force:
+                    last_datetime = start_date
+                if last_date_manual:
+                    end_date = last_date_manual
+                if is_sensor == 0:
+                    parser._skip_car(car)
+                    continue
+                for i in range((end_date - last_datetime).days):
+                    is_no_need_to_parse = len(CarMotohoursReport.objects.filter(datetime=start_date, car_id__id=car.id))
+                    if is_no_need_to_parse > 0:
+                        continue
+                    current_date = last_datetime + timedelta(days=i)
+                    tmp_end_date = min(current_date + timedelta(days=1), end_date)
+                    result, status = MotohoursCalculationService.calculate_motohours(
+                        car.id, None, current_date, tmp_end_date,
+                        parser=parser, is_save_bad_data=is_save_bad_data
+                    )
+                    data = result["result"]
+                    if status == 200:
+                        fraud_value = data.get("motohours_fraud")
+                        if fraud_value is not None and abs(fraud_value) > 0:
+                            anomalies += 1
+                        motohours_report, _ = CarMotohoursReport.objects.update_or_create(
+                            car_id_id=car.id,
+                            datetime=current_date,
+                            defaults={
+                                "motohours_start": data["motohours_start"],
+                                "motohours_end": data["motohours_end"],
+                                "motohours": data["motohours"],
+                                "motohours_fraud": fraud_value,
+                                "motohours_idle": data["motohours_idle"],
+                                "motohours_active": data["motohours_active"],
+                                "rpm_same_cases": data["rpm_same_cases"],
+                                "rpm_same_cases_time": data["rpm_same_cases_time"],
+                                "unefficient_cases": data["unefficient_cases"],
+                                "unefficient_time": data["unefficient_time"],
+                                "sensor": data["sensor"],
+                                "sensor_check": data["sensor_check"]
+                            }
+                        )
+                        logger.info(
+                            f"Моточасы для машины {car.id} за {current_date.date().isoformat()} сохранены."
+                            f"Итого моточасов: {data['motohours']}, подозрительные моточасы: {fraud_value}"
+                        )
+
+                        if fraud_value is not None and abs(fraud_value) > 0:
+                            save_fraud_alert(
+                                car=car,
+                                organization=provider.org_id,
+                                fraud_km=fraud_value,
+                                event_datetime=current_date,
+                                source_mileage_report=motohours_report,
+                            )
+                    else:
+                        logger.error("Статус репорта не успешный")
+                ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"motohours_last_processed": start_date})
+            except Exception as err:
+                logger.error(f"Ошибка при обработке моточасов для машины {car.id}: {err}")
+                ReportService.create_bad_data_record(
+                    car, f"Ошибка при обработке моточасов: {err}", None,
+                    start_date, end_date,
+                    CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MOTOHOURS]
+                )
+                continue
+
+        save_system_alert(
+            organization=provider.org_id,
+            message=f"Отчёт по моточасам за {start_date.date().isoformat()} завершён. Накруток: {anomalies}",
+            event_datetime=datetime.utcnow(),
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинга motohours: {e}", exc_info=True)
+        self.update_state(state='FAILURE', meta={'error': str(e)})
+        raise
+
 
 @shared_task(bind=True)
 def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_save_bad_data: bool, ignore_last_processed=False):
@@ -1147,6 +1279,7 @@ def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_sa
             error_msg = f"Внутренняя ошибка {car.id}"
             ReportService.create_bad_data_record(car, error_msg, report_query, now, now)
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+            self.update_state(state='FAILURE', meta={'error': str(e)})
 
 
 @shared_task(bind=True)

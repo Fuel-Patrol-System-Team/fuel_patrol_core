@@ -358,6 +358,7 @@ class ParsingCarStats(models.Model):
     leaks_last_processed = models.DateTimeField(**NULLABLE)
     primary_last_processed = models.DateTimeField(**NULLABLE)
     mileage_last_processed = models.DateTimeField(blank=True, null=True)
+    motohours_last_processed = models.DateTimeField(blank=True, null=True)
     preffered_period_days = models.IntegerField(default=90)
     rpm_idle = models.IntegerField(null=True)
     is_parse_mileage = models.BooleanField(default=True)
@@ -466,6 +467,32 @@ class ComputedData(models.Model):
         return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
                 "fuel_first", "fuel_last", "count", "no_sat_data", "norma_rasx_per_travel"]
 
+class CarMotohoursReport(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="motohours_reports")
+    datetime = models.DateTimeField()
+    motohours_start = models.FloatField(**NULLABLE)
+    motohours_end = models.FloatField(**NULLABLE)
+    motohours = models.FloatField(**NULLABLE)
+    motohours_fraud = models.FloatField(**NULLABLE)
+    motohours_idle = models.FloatField(**NULLABLE)
+    motohours_active = models.FloatField(**NULLABLE)
+    rpm_same_cases = models.IntegerField(**NULLABLE)
+    rpm_same_cases_time = models.FloatField(**NULLABLE)
+    unefficient_cases = models.IntegerField(**NULLABLE)
+    unefficient_time = models.FloatField(**NULLABLE)
+    sensor = models.CharField(max_length=32)
+    sensor_check = models.CharField(max_length=32)
+
+    class Meta:
+        verbose_name = "Car Motohours Report"
+        verbose_name_plural = "Car Motohours Reports"
+        ordering = ["-datetime"]
+        indexes = [
+            models.Index(fields=['car_id', 'datetime'], name='motohours_car_dt_idx')
+        ]
+
+    
 
 class CarMileageReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1055,6 +1082,9 @@ class Alert(models.Model):
     )
     source_mileage_report = models.ForeignKey(
         CarMileageReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+    source_motohours_report = models.ForeignKey(
+        CarMotohoursReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
     )
     source_bad_data = models.ForeignKey(
         CarBadData, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"

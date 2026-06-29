@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import (
+    CarMotohoursReport,
     Organization,
     ParsingCarStats,
     ReportQuery,
@@ -372,6 +373,22 @@ class CarMileageReportOutputSerializer(serializers.ModelSerializer):
             'mileage_start',
             'mileage_end',
             'fraud',
+        ]
+        read_only_fields = ['id']
+class CarMotohoursReportOutputSerializer(serializers.ModelSerializer):
+    car_name = serializers.CharField(source='car_id.name', read_only=True)
+
+    class Meta:
+        model = CarMotohoursReport
+        fields = [
+            'id',
+            'car_id',
+            'car_name',
+            'datetime',
+            'motohours_start',
+            'motohours_end',
+            'motohours',
+            'motohours_fraud',
         ]
         read_only_fields = ['id']
 

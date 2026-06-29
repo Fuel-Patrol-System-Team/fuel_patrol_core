@@ -1,7 +1,7 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, CarSensorsSwitchView, CarSensorsValuesAPIView, FuelSpentCalculationService, OrganizationListAPIView, \
+from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarCarDataPreparedAPiView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, CarMotohoursReportListAPIView, CarSensorsSwitchView, CarSensorsValuesAPIView, FuelSpentCalculationService, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
     CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ParsingStatsUpdateRpm, ReportQueryListAPIView, \
     ReportQueryDetailAPIView, \
@@ -53,6 +53,7 @@ urlpatterns = [
     path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
     path('cars/bad-data/<uuid:pk>', CarBadDataDetailAPIView.as_view(), name="car-bad-data-detail"),
+    path('cars/dataframe', CarCarDataPreparedAPiView.as_view(), name='car-dataframe'),
     path("dashboard/bad-data", CarBadDataDashboardAPIView.as_view(), name="bad-data-dashboard"),
     path('car-consumptions', CarConsumptionListAPIView.as_view(), name='car-consumption-list'),
     path('car-consumptions/<uuid:pk>', CarConsumptionDetailAPIView.as_view(), name='car-consumption-detail'),
@@ -72,6 +73,10 @@ urlpatterns = [
 
     path('car-reports-mileage', CarMileageReportListAPIView.as_view(), name='car-report-mileage-list'),
     path('car-reports-mileage/<uuid:pk>', CarMileageReportDetailAPIView.as_view(), name='car-report-mileage-detail'),
+
+    path('car-reports-motohours', CarMotohoursReportListAPIView.as_view(), name='car-report-motohours-list'),
+    path('car-reports-motohours/<uuid:pk>', CarMotohoursReportListAPIView.as_view(), name='car-report-motohours-detail'),
+    
     path('staff/auto-data', AutoDataListAPIView.as_view(), name="staff-auto-data"),
     path('drivers', DriverListAPIView.as_view(), name='driver-list'),
     path('drivers/<uuid:pk>', DriverDetailAPIView.as_view(), name='driver-detail'),

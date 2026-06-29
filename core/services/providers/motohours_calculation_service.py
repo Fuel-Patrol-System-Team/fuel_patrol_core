@@ -23,6 +23,7 @@ class MotohoursCalculationService:
             agg: Optional[int] = None,
             start_date: datetime = datetime.now(),
             end_date: datetime = datetime.now(),
+            parser: GlonassGeneralProvider | None = None,
             is_save_bad_data: bool = True
     ) -> Tuple[Dict[str, Any], int]:
         """
@@ -47,7 +48,7 @@ class MotohoursCalculationService:
                 ReportService.complete_report_error(report_query, validation_error)
                 return {"error": validation_error}, 400
 
-            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "motohours")
+            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "motohours") if parser is None else parser
 
             try:
                 if not provider.authenticate():
@@ -60,7 +61,7 @@ class MotohoursCalculationService:
                 return {"error": error_msg}, 401
 
             try:
-                status, df = provider.parse_raw_data("motohours", return_df=True)
+                status, df = provider.parse_raw_data("motohours", True, car)
             except Exception as data_error:
                 error_msg = f"Не удалось получить данные от провайдера: {str(data_error)}"
                 logger.error(f"Ошибка получения данных от провайдера для car_id={car_id}: {data_error}", exc_info=True)
