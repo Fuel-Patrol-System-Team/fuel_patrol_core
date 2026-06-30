@@ -115,7 +115,7 @@ class LeaksService(BaseLeaksCalculator):
                     is_filter_bad_data=is_filter_bad_data,
                 )
 
-                reports = maintenance_fuel_level_check(result_df,)
+                reports = maintenance_fuel_level_check(result_df, reports)
 
                 logger.info(
                     f"✅ Машина {auto_id}: расчет утечек завершен, "

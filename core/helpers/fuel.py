@@ -114,7 +114,7 @@ def preprocess_basic_one(
             pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5)
         )
     
-    reports = maintenance_event_codes(df, reports)
+    # reports = maintenance_event_codes(df, reports)
 
     # STAGE: ОЧИСТКА
     col_dtime_half = pl.col("timestamp").dt.truncate("30m")
