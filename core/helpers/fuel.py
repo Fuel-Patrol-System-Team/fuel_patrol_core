@@ -7,7 +7,11 @@ from core.helpers.mileage import alg_piece_remove_skipped_messages
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
 def make_primary_fast(df: pl.DataFrame):
+    is_primary = True
     primary = {}
+    if df["calc_sensors_fuel_level"].is_null().all():
+        df = df.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"))
+        is_primary = False
     primary["norm_speed"] = df.with_columns(pl.col("pos_s").gt(0))["pos_s"].mean() 
     fuel = df["calc_sensors_fuel_level"].filter(df["calc_sensors_fuel_level"].is_between(0, 65000))
     max_fuel = fuel.max()
@@ -17,7 +21,7 @@ def make_primary_fast(df: pl.DataFrame):
     primary["is_special_car"] = True
     primary["ign_working"] = False
     
-    return primary
+    return is_primary, primary
 
 def make_fuel_spent(fuel_start: int, fuel_end: int, total_filling: int, agg: list[Any], fillings: list[Any]):
     return {
@@ -84,8 +88,11 @@ def preprocess_basic_one(
     REFUELING_LIMIT = 4000,
     PRE_PRIOD_TIME = 3,
     DTIME_LIMIT =5,
+    is_fuel_processing=False,
     reports: List[Any] = [],
 ):
+    if is_fuel_processing:
+        df = df.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"))
     if "rpm" not in df.columns:
         df = df.with_columns(pl.lit(65535).alias("rpm"))
     if "satellites" not in df.columns:
@@ -117,14 +124,7 @@ def preprocess_basic_one(
         pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
     )
 
-    df = df.with_columns(
-        pl.col("calc_sensors_fuel_level")
-        .diff()
-        .over(["auto"])
-        .fill_null(0)
-        .cast(pl.Float32)
-        .alias("spent_fuel_boundary"),
-    )
+    
 
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
@@ -146,6 +146,18 @@ def preprocess_basic_one(
             pl.col("calc_sensors_fuel_level").is_not_null(),
         ]
     )
+
+    if is_fuel_processing:
+        df = df.filter(
+            pl.col("satellites").gt(0)
+        )
+        df = df.with_columns(
+            pl.col("fuel_consumpt").diff().abs().alias("fuel_consumpt_spent"),
+        )
+    else:
+        df = df.with_columns(
+            pl.lit(0).alias("fuel_consumpt_spent")
+        )
 
     # if "flex_adc" in cars["fuel_sensor"]:
     #     df = df.filter(pl.col("pos_s").ge(12))
@@ -184,9 +196,19 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level").rolling_mean_by("timestamp", window_size="2m")
     )
-
-    df, lp, b, slope = tarify_car_by_sensor(df, cars)
+    if cars["grades"] is not None:
+        df, lp, b, slope = tarify_car_by_sensor(df, cars)
+        if df["calc_sensors_fuel_level"].gt(lp["input"]).any():
+            print("Car has problems")
     # clean для отсчения резких прыжков (с игнорированием записей)
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level")
+        .diff()
+        .over(["auto"])
+        .fill_null(0)
+        .cast(pl.Float32)
+        .alias("spent_fuel_boundary"),
+    )
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
         .diff()
@@ -197,11 +219,10 @@ def preprocess_basic_one(
     )
     df = df.with_columns((pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps"))
 
-    df = df.filter(pl.col("fps").gt(-1))
+    df = df.filter(pl.col("fps").gt(-1) | pl.col("satellites").lt(2))
 
 
-    if df["calc_sensors_fuel_level"].gt(lp["input"]).any():
-        print("Car has problems")
+    
     df = df.with_columns(
         [
             pl.max("calc_sensors_voltage")
@@ -234,7 +255,7 @@ def preprocess_basic_one(
         ]
     )
 
-    if "flex_adc" in cars["fuel_sensor"]:
+    if cars["fuel_sensor"] is not None and "flex_adc" in cars["fuel_sensor"]:
         df = df.with_columns(
             pl.col("calc_sensors_fuel_level").alias("fuel_level_standing")
         )
@@ -337,6 +358,10 @@ def preprocess_basic_one(
             pl.col("dtime_m").sum(),
             pl.col("es").sum(),
             pl.sum("spent_fuel_boundary"),
+            pl.sum("fuel_consumpt_spent"),
+            pl.first("fuel_consumpt").alias("fuel_consumpt_first"),
+            pl.last("fuel_consumpt").alias("fuel_consumpt_last")
+            
         ]
     )
 

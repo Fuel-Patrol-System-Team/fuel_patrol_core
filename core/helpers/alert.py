@@ -8,6 +8,7 @@ from core.models import (
     Car,
     CarBadData,
     CarMileageReport,
+    CarMotohoursReport,
     CarReport,
     Organization,
     TelegramUser,
@@ -81,6 +82,7 @@ def save_fraud_alert(
         fraud_km: float,
         event_datetime: datetime,
         source_mileage_report: Optional[CarMileageReport] = None,
+        source_motohours_report: Optional[CarMotohoursReport] = None,
 ) -> Optional[Alert]:
     try:
         alert = Alert.objects.create(
@@ -88,6 +90,7 @@ def save_fraud_alert(
             car=car,
             alert_type=Alert.AlertType.FRAUD,
             source_mileage_report=source_mileage_report,
+            source_motohours_report=source_motohours_report,
             payload={
                 "fraud_km": round(fraud_km, 2),
                 "event_dt": event_datetime.isoformat(),

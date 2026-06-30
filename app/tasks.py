@@ -1137,11 +1137,11 @@ def parse_cars_motohours_task(
             try:
                 logger.info(f"Обработка моточасов для машины {car.id}")
                 is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(Q(key__key="motohours") | Q(key__key="ign")))
-                is_already_computed = len(CarMotohoursReport.objects.filter(datetime=start_date, car_id__id=car.id))
-                if is_already_computed > 0:
-                    logger.info(f"Моточасы для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработаны, пропускаем")
-                    parser._skip_car(car)
-                    continue
+                # is_already_computed = len(CarMotohoursReport.objects.filter(datetime=start_date, car_id__id=car.id))
+                # if is_already_computed > 0:
+                #     logger.info(f"Моточасы для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработаны, пропускаем")
+                #     parser._skip_car(car)
+                #     continue
                 last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().motohours_last_processed
                 if last_datetime is None or force:
                     last_datetime = start_date
@@ -1151,14 +1151,14 @@ def parse_cars_motohours_task(
                     parser._skip_car(car)
                     continue
                 for i in range((end_date - last_datetime).days):
-                    is_no_need_to_parse = len(CarMotohoursReport.objects.filter(datetime=start_date, car_id__id=car.id))
+                    current_date = last_datetime + timedelta(days=i)
+                    is_no_need_to_parse = len(CarMotohoursReport.objects.filter(datetime=current_date, car_id__id=car.id))
                     if is_no_need_to_parse > 0:
                         continue
-                    current_date = last_datetime + timedelta(days=i)
                     tmp_end_date = min(current_date + timedelta(days=1), end_date)
                     result, status = MotohoursCalculationService.calculate_motohours(
                         car.id, None, current_date, tmp_end_date,
-                        parser=parser, is_save_bad_data=is_save_bad_data
+                        is_save_bad_data=is_save_bad_data
                     )
                     data = result["result"]
                     if status == 200:
@@ -1177,6 +1177,7 @@ def parse_cars_motohours_task(
                                 "motohours_active": data["motohours_active"],
                                 "rpm_same_cases": data["rpm_same_cases"],
                                 "rpm_same_cases_time": data["rpm_same_cases_time"],
+                                "motohours_fraud_by_sensor": data["motohours_fraud_by_sensor"],
                                 "unefficient_cases": data["unefficient_cases"],
                                 "unefficient_time": data["unefficient_time"],
                                 "sensor": data["sensor"],

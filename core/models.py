@@ -297,6 +297,7 @@ class ReportQuery(models.Model):
         VEHICLES = "vehicles", "Синхронизация транспортных средств"
         MILEAGE = "mileage", "Анализ пробега"
         MOTOHOURS = "motohours", "Анализ моточасов"
+        FUEL = "fuel", "Уровень топлива"
         LEAKS = "leaks", "Анализ утечек топлива"
         PRIMARY = "primary", "Расчет превичных данных"
         NORMS = "norms", "Расчет норм расхода"
@@ -475,6 +476,7 @@ class CarMotohoursReport(models.Model):
     motohours_end = models.FloatField(**NULLABLE)
     motohours = models.FloatField(**NULLABLE)
     motohours_fraud = models.FloatField(**NULLABLE)
+    motohours_fraud_by_sensor = models.FloatField(**NULLABLE)
     motohours_idle = models.FloatField(**NULLABLE)
     motohours_active = models.FloatField(**NULLABLE)
     rpm_same_cases = models.IntegerField(**NULLABLE)

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 import logging
-from typing import Optional, Tuple, Dict, Any
+from typing import Literal, Optional, Tuple, Dict, Any
 import polars as pl
 
 from core.admin import CarFuelReport
@@ -43,12 +43,25 @@ class FuelReportService:
         return result 
     
     @staticmethod
+    def _fuel_spent_agg(df: pl.DataFrame, refuel: float):
+        return df.group_by("auto").agg([
+                pl.first("fuel_first").alias("fuel_start"),
+                pl.last("fuel_last").alias("fuel_end"),
+                pl.col("fuel_spent").clip(upper_bound=0).abs().sum().alias("fuel_spent"),
+                pl.lit(refuel).alias("refuel")
+            ])
+    
+    @staticmethod
     def fuel_spent_calculate_instant(result: pl.DataFrame, fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
-        if result["calc_sensors_fuel_level"].is_not_null().any():
-            primary = make_primary_fast(result)
-            result, reports = preprocess_basic_one(result, cars, primary)
-        elif result["fuel_consumpt"].is_not_null().any():
-            result = result.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"), pl.col("fuel_consumpt").diff().mul(-1).alias("spent_fuel"))
+        is_primary, primary = make_primary_fast(result)
+        result, reports = preprocess_basic_one(result, cars, primary, is_fuel_processing=True)
+        if not is_primary:
+            result = result.with_columns(
+                pl.lit(0).alias("calc_sensors_fuel_level"),
+                pl.lit(0).alias("spent_fuel")
+            )
+        # elif result["fuel_consumpt"].is_not_null().any():
+        #    result_consumpt = result.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"), pl.col("fuel_consumpt").diff().mul(-1).alias("spent_fuel"))
         refuel = 0
         return_fillings = []
         if fillings is not None and fillings.shape[0] > 0:
@@ -62,39 +75,51 @@ class FuelReportService:
                 pl.col("calc_sensors_fuel_level").first().alias("fuel_start"),
                 pl.col("calc_sensors_fuel_level").last().alias("fuel_last"),
                 pl.col("spent_fuel").sum().clip(upper_bound=0).abs().alias("fuel_spent"),
+                pl.col("fuel_consumpt_spent").sum(),
             ).with_columns(pl.col("timestamp").dt.replace_time_zone("UTC")).to_dicts()
         result = result.group_by_dynamic(
             index_column="timestamp", group_by="auto", every="1h"
         ).agg(
             pl.col("calc_sensors_fuel_level").first().alias("fuel_first"),
-            pl.col("calc_sensors_fuel_level").first().alias("fuel_last"),
+            pl.col("calc_sensors_fuel_level").last().alias("fuel_last"),
+            pl.col("fuel_consumpt_spent").sum().alias("fuel_consumpt_spent"),
+            pl.col("fuel_consumpt_first").first(),
+            pl.col("fuel_consumpt_last").last(),
             pl.col("spent_fuel").sum().alias("fuel_spent")
-            
         )
-        
-
-        spent_result = result.group_by("auto").agg([
+        result_agg = result.group_by("auto").agg([
             pl.first("fuel_first").alias("fuel_start"),
             pl.last("fuel_last").alias("fuel_end"),
             pl.col("fuel_spent").clip(upper_bound=0).abs().sum().alias("fuel_spent"),
+            pl.col("fuel_consumpt_spent").sum().alias("fuel_consumpt_spent"),
+            pl.col("fuel_consumpt_first").first(),
+            pl.col("fuel_consumpt_last").last(),
             pl.lit(refuel).alias("refuel")
         ]).to_dicts()
-        if len(spent_result) == 0 or result.shape[0] == 0:
-            spent_result = {
-                "fuel_first": 0,
-                "fuel_last": 0,
+        if len(result_agg) == 0:
+            spent_result_calc = {
+                "fuel_start": 0,
+                "fuel_end": 0,
                 "fuel_spent": 0,
+                "fuel_consumpt_spent": 0,
+                "fuel_consumpt_start": 0,
+                "fuel_consumpt_end": 0,
                 "refuel": refuel,
                 "agg": [],
                 "fillings": [],
                 "count": 0,
             }
         else:
-            spent_result = spent_result[0]
+            spent_result_calc = result_agg[0]
+        if spent_result_calc["fuel_consumpt_spent"] > 0:
+            spent_result_calc["fuel_spent_final"] = spent_result_calc["fuel_consumpt_spent"]
+            spent_result_calc["fuel_spent_final_sensor"] = "fuel_consumpt"
+        else:
+            spent_result_calc["fuel_spent_final_sensor"] = "calc_sensors_fuel_level"
 
-
+        
         return {
-            **spent_result,
+            **spent_result_calc,
             "agg": spent_report,
             "fillings": return_fillings,
             "count": 1,
@@ -122,7 +147,7 @@ class FuelReportService:
 
             report_query, report_details = ReportService.create_report(
                 provider_id=str(provider_obj.id),
-                report_type=ReportQuery.ReportType.MILEAGE,
+                report_type=ReportQuery.ReportType.FUEL,
                 is_save_bad_data=is_save_bad_data
             )
 
