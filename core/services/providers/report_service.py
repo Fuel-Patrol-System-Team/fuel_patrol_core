@@ -276,6 +276,7 @@ class ReportService:
                         volume=int(record["leak"]),
                         speed=float(record["pos_s"]),
                         status=bool(record["is_leak"]),
+                        picked_by=record["picked_by"]
                     ))
                     if len(car_reports) >= 100:
                         CarReport.objects.bulk_create(car_reports)

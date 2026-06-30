@@ -406,6 +406,10 @@ class CarFuelReport(models.Model):
         return f"{self.car_id.name} Fuel Report"
 
 
+class LeakPicker(models.TextChoices):
+    BOUNDARY_FILTER = "boundary_spent_fuel", ""
+    SIGMA_FILTER = "fuel_spent_std", ""
+    LOW_SPEED_FILTER = "low_speed", ""
 # TODO: Переименовать в CarLeakReport
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -415,6 +419,10 @@ class CarReport(models.Model):
     speed = models.FloatField(null=True)
     volume = models.IntegerField()
     status = models.BooleanField()
+    
+    picked_by = models.CharField(max_length=64, default=LeakPicker.SIGMA_FILTER, choices=LeakPicker.choices)
+    
+        
 
     class Meta:
         verbose_name = "Car Report"

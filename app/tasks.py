@@ -10,6 +10,7 @@ from celery import chain, shared_task
 
 from app.celery import app as celery_app
 
+from app.settings import DEBUG
 from core.admin import CarPrimary, SensorsValues
 from core.helpers.alert import get_tg_user_for_org_user, get_unsent_alerts_by_org, build_digest_message, \
     save_bad_data_alerts_bulk
@@ -60,12 +61,13 @@ from core.helpers.alert import (
     save_leak_alerts_from_rows,
     save_fraud_alert,
 )
-
-sentry_sdk.init(
-    dsn="https://effe72e389d74952bc590b92f3bb5359@api.sherlog.noodev.ru/26",
-    integrations=[CeleryIntegration()],
-    send_default_pii=True
-)
+if not DEBUG:
+    sentry_sdk.init(
+        dsn="https://effe72e389d74952bc590b92f3bb5359@api.sherlog.noodev.ru/26",
+        integrations=[CeleryIntegration()],
+        send_default_pii=True,
+        
+    )
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(

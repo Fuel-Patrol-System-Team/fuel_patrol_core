@@ -53,7 +53,7 @@ class FilteringService(BaseFilteringService):
             
         )
         result_df = self._tool_pick_leak(result_df,
-            [(pl.col("pos_s").lt(LOW_SPEED_FACTOR) & pl.col("spent_fuel").gt(BARRIER_FUEL))], "low_speed" )
+            [(pl.col("pos_s").lt(LOW_SPEED_FACTOR) & pl.col("spent_fuel").gt(BARRIER_FUEL))], "low_speed")
 
         return result_df, result_df
 
