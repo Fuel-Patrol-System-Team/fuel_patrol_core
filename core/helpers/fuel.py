@@ -2,6 +2,7 @@ from typing import Any, List
 import polars as pl
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays
+from core.helpers.maintenance import maintenance_event_codes
 from core.helpers.mileage import alg_piece_remove_skipped_messages
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
@@ -91,7 +92,7 @@ def preprocess_basic_one(
     is_fuel_processing=False,
     reports: List[Any] = [],
 ):
-    if is_fuel_processing:
+    if is_fuel_processing and df["calc_sensors_fuel_level"].is_null().all():
         df = df.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"))
     if "rpm" not in df.columns:
         df = df.with_columns(pl.lit(65535).alias("rpm"))
@@ -112,6 +113,8 @@ def preprocess_basic_one(
         df = df.filter(
             pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5)
         )
+    
+    reports = maintenance_event_codes(df, reports)
 
     # STAGE: ОЧИСТКА
     col_dtime_half = pl.col("timestamp").dt.truncate("30m")
