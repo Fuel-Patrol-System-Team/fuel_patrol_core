@@ -70,6 +70,7 @@ def make_motohours_result(
     motohours: int,
     data: dict[str, Any],
     motohours_fraud: int,
+    motohours_fraud_by_sensor: int,
     sensor: str,
     sensor_check: str,
     idle_motohours,
@@ -87,6 +88,7 @@ def make_motohours_result(
         "motohours_end": motohours_end,
         "data": data,
         "motohours_fraud": motohours_fraud,  # because it can't be other way
+        "motohours_fraud_by_sensor": motohours_fraud_by_sensor,
         "motohours": motohours,
         "sensor_check": sensor_check,
         "sensor": sensor,
@@ -288,6 +290,7 @@ def _compute_motohours_by_motohours(
     return make_motohours_result(
         motohours_start=df["motohours"].first(),
         motohours_end=df["motohours"].last(),
+        motohours_fraud_by_sensor=df["motohours_fraud_by_sensor"].sum(),
         data=data,
         motohours_fraud=motohours_fraud,
         sensor_check=sensor_check,
@@ -311,8 +314,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     is_rpm_present = df["rpm"].is_not_null().any()
     df = alg_piece_remove_message_delays(df)
     if df.shape[0] == 0:
-        return make_motohours_response_empty(), 
-
+        return make_motohours_response_empty(), [] 
     sensor_check = "ign"
     if is_rpm_present:
         df = df.with_columns(pl.when(pl.col("ign").eq(1)).then(pl.col("rpm").fill_null(0)).otherwise(pl.col("rpm")).alias("rpm"))
@@ -368,6 +370,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
         motohours_end=motohours,
         motohours_fraud=0,
         motohours=motohours,
+        motohours_fraud_by_sensor=0,
         data=data,
         sensor="ign",
         sensor_check=sensor_check,

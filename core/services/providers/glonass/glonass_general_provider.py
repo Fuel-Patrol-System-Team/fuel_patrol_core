@@ -470,7 +470,7 @@ class GlonassGeneralProvider:
         parameters_count = {}
         expr_parser = GlonassExpresssionParser()
         variables = expr_parser.make_variables(sensors_mapping)
-        
+        # TODO: loop для предзаполнения колонок
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
             if param:
@@ -498,7 +498,29 @@ class GlonassGeneralProvider:
                     else:
                         if expr is not None:
                             result = expr_parser.parse_expression(param.label, path_to_param, expr, variables, result )
-
+        # TODO: loop для парсинга выражений
+        for col in required_columns:
+            param = GLOBAL_GLONASS_PARAMS.get(col)
+            if param:
+                path_to_params = [{"value": ""}]
+                msensor = False
+                if param.is_dynamic:
+                    path_to_params = sensors_mapping.get(col.value, [{"value": param.default_key}])
+                    path_to_params = [path_to_params] if isinstance(path_to_params, str) else path_to_params
+                else:
+                    if param.default_key in result.columns:
+                        path_to_params = [{"value": param.default_key}]
+                for index, sensor in enumerate(path_to_params):
+                    path_to_param = sensor["value"]
+                    expr = None
+                    
+                    if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
+                        expr = sensor["metadata"]["expr"]
+                    if expr is not None:
+                        result = expr_parser.parse_expression(param.label, path_to_param, expr, variables, result )
+                
+                
+        # TODO: loop для приведения сырых значений к параметрам из глонасс
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
             if param:
