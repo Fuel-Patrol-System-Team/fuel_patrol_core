@@ -114,13 +114,14 @@ def preprocess_basic_one(
             pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5)
         )
     
-    # reports = maintenance_event_codes(df, reports)
+    reports = maintenance_event_codes(df, reports)
 
     # STAGE: ОЧИСТКА
     col_dtime_half = pl.col("timestamp").dt.truncate("30m")
     col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
     col_dtime_period = pl.col("timestamp").dt.truncate(f"{PRE_PRIOD_TIME}m")
     col_dtime_period = pl.col("timestamp").dt.truncate(f"60m")
+    col_dtime_day = pl.col("timestamp").dt.truncate("1d")
 
     # forward strategy for filling gaps
     df = df.with_columns(
@@ -196,9 +197,9 @@ def preprocess_basic_one(
         .alias("dtime_m")
     )
 
-    df = df.with_columns(
-        pl.col("calc_sensors_fuel_level").rolling_mean_by("timestamp", window_size="2m")
-    )
+    # df = df.with_columns(
+    #     pl.col("calc_sensors_fuel_level").rolling_mean_by("timestamp", window_size="2m")
+    # )
     if cars["grades"] is not None:
         df, lp, b, slope = tarify_car_by_sensor(df, cars)
         if df["calc_sensors_fuel_level"].gt(lp["input"]).any():
@@ -212,6 +213,9 @@ def preprocess_basic_one(
         .cast(pl.Float32)
         .alias("spent_fuel_boundary"),
     )
+    # df = df.with_columns(
+        # pl.when(pl.col("spent_fuel_boundary").gt(0) & pl.col("pos_s").eq(0)).then(0).otherwise(pl.col("spent_fuel_boundary")).alias("spent_fuel_boundary")
+    # )
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
         .diff()
@@ -219,6 +223,12 @@ def preprocess_basic_one(
         .fill_null(0)
         .fill_null(0)
         .alias("spent_fuel_clean")
+    )
+    sum_fuel = df.group_by_dynamic(index_column="timestamp", every="1d").agg(
+        pl.col("spent_fuel_boundary").sum()
+    )["spent_fuel_boundary"].sum()
+    df = df.with_columns(
+        pl.lit(sum_fuel).alias("spent_fuel_t")
     )
     df = df.with_columns((pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps"))
 
@@ -363,7 +373,8 @@ def preprocess_basic_one(
             pl.sum("spent_fuel_boundary"),
             pl.sum("fuel_consumpt_spent"),
             pl.first("fuel_consumpt").alias("fuel_consumpt_first"),
-            pl.last("fuel_consumpt").alias("fuel_consumpt_last")
+            pl.last("fuel_consumpt").alias("fuel_consumpt_last"),
+            pl.first("spent_fuel_t"),
             
         ]
     )

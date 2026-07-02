@@ -8,6 +8,11 @@ logger = logging.getLogger(__name__)
 
 class FilteringService(BaseFilteringService):
     """Сервис для фильтрации результатов утечек"""
+    def final_filter(self, df: pl.DataFrame):
+        filtered_df = df.with_columns(
+            pl.col("is_picked_leak")
+        )
+        return filtered_df, df
 
     def apply_filters(self, df: pl.DataFrame) -> pl.DataFrame:
         """
@@ -36,12 +41,14 @@ class FilteringService(BaseFilteringService):
 
         # filtered_df, _ = self.filtering_certains_ids(filtered_df, ["example_id"])
 
+        filtered_df, _ = self.final_filter(df)
         logger.info(f"После фильтрации осталось {len(filtered_df)} записей")
+        
         return filtered_df
 
     def leak_picker(self, result_df: pl.DataFrame):
         result_df = result_df.with_columns(
-            pl.lit(False).alias("is_picked_leak"), pl.lit("").alias("picked_by")
+            [pl.lit(False).alias("is_picked_leak"), pl.lit("").alias("picked_by")]
         )
         return result_df, result_df
 
@@ -86,7 +93,7 @@ class FilteringService(BaseFilteringService):
             "boundary_spent_fuel",
         )
         return result_df, result_df
-
+    
     def _tool_pick_leak(
         self, result_df: pl.DataFrame, expr: Iterable[pl.Expr], picked_by_name: str
     ):
@@ -160,7 +167,7 @@ class FilteringService(BaseFilteringService):
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по количеству записей"""
         filtered_df = result_df.filter(
-            pl.col("is_leak") & (pl.col("count") > COUNT_VALUE)
+            (pl.col("count") > COUNT_VALUE)
         )
         return filtered_df, result_df
 

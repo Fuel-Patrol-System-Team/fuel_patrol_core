@@ -443,6 +443,7 @@ class ComputedData(models.Model):
     timestamp = models.DateTimeField()
     pos_s = models.FloatField()
     spent_fuel = models.FloatField()
+    spent_fuel_boundary = models.FloatField(default=0)
     z_values = models.FloatField()
     rpm_mean = models.FloatField()
     ign_spread = models.IntegerField()
@@ -474,7 +475,7 @@ class ComputedData(models.Model):
     @classmethod
     def get_required_columns(cls):
         return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
-                "fuel_first", "fuel_last", "count", "no_sat_data", "norma_rasx_per_travel"]
+                "fuel_first", "fuel_last", "count", "no_sat_data", "spent_fuel_boundary", "norma_rasx_per_travel"]
 
 class CarMotohoursReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -549,6 +550,7 @@ class CarBadData(models.Model):
         LEAKS = "leaks", "Сливы"
         FUEL = "fuel", "Топливо"
         MOTOHOURS = "motohours", "Моточасы"
+        MAINTENANCE = "maintenance", "Техобслуживание"
         SERVER = "server", "Сервер"
         PROVIDER = "provider", "Провайдер"
         MALFUNCTION = "malfunction", "Неисправность"

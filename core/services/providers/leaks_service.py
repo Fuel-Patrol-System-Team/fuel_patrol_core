@@ -445,7 +445,7 @@ class LeaksService(BaseLeaksCalculator):
             [
                 (pl.col("norma_rasx") * (pl.col("pos_s") / norma["speed_etalon"]))
                 .pow(2)
-                .clip(lower_bound=pl.col("norma_rasx"))
+                .clip(lower_bound=pl.col("norma_rasx").truediv(5))
                 .alias("norma_rasx_per_travel")
             ]
         )

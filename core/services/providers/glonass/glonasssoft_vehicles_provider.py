@@ -258,13 +258,31 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                             SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades}, 3, is_disabled)
                     )
 
-            elif sensor_type == "EngineRPM":
+            elif sensor_type == "EngineRPM" or sensor_name.startswith("Обороты"):
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
                         sensors_mapping.get("rpm", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
                     else:
                         sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+            elif "холост" in sensor_name.lower():
+                if parameter_name:
+                    if key_part.startswith("can_") and input_number:
+                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
+                    else:
+                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+            elif  "нагруз" in sensor_name.lower():
+                if parameter_name:
+                    if key_part.startswith("can_") and input_number:
+                        sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
+                    else:
+                        sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+            elif sensor_name.contains(""):
+                if parameter_name:
+                    if key_part.startswith("can_") and input_number:
+                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
+                    else:
+                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif (
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2 or sensor_name == "Датчик пробега"

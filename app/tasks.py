@@ -784,7 +784,6 @@ def calculate_leaks_cron_one(
         
     if car is not None:
 
-        # ✅ Skip if already processed today (same as cron)
         if (
             not ignore_last_processed and
             car.last_processed_date is not None and

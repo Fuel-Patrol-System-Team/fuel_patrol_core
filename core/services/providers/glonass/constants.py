@@ -45,6 +45,8 @@ class GL_PARAM_KEYS(Enum):
     satellites = "satellites"
     msg_number = "msg_number"
     fuel_consumpt = "fuel_consumpt"
+    rpm_idle = "rpm_idle"
+    rpm_active = "rpm_active"
     event_code = "event_code"
     
 class GL_ACTION_KEYS(Enum):
@@ -89,6 +91,8 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.msg_number: GlonassParameter(True, "parameters.msg_number", "msg_number", None, False, 999, 999),
     GL_PARAM_KEYS.event_code: GlonassParameter(True, "parameters.event_code", "event_code", None, False, None, None),
     GL_PARAM_KEYS.fuel_consumpt: GlonassParameter(True, "", "fuel_consumpt", None,  False, 0, 0),
+    GL_PARAM_KEYS.rpm_idle: GlonassParameter(True, "", "rpm_idle", None, False, 0, 0),
+    GL_PARAM_KEYS.rpm_active: GlonassParameter(True, "", "rpm_active", None, False, 0, 0),
     }
     
 

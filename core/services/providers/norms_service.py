@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from django.conf import settings
 
+from core.helpers.alg_utils import alg_piece_remove_message_delays, alg_piece_remove_skipped_messages
+from core.helpers.fuel import tarify_car_by_sensor
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,7 +104,9 @@ class NormsService:
         for row in primary_df.to_dicts():
             auto_id = row['auto']
             primary_dict[auto_id] = {
-                'max_fuel': float(row['max_fuel']) if row['max_fuel'] is not None else 100.0
+                'max_fuel': float(row['max_fuel']) if row['max_fuel'] is not None else 100.0,
+                'is_special_car': bool(row.get('is_special_car', True)),
+                'ign_working': bool(row.get('ign_working', False)),
             }
             logger.debug(f"Первичные показатели {auto_id}: max_fuel={primary_dict[auto_id]['max_fuel']}")
         return primary_dict
@@ -282,17 +287,47 @@ class NormsService:
             ANTI_BUG_TIME_SECONDS: int,
             REFUELING_LIMIT: int,
             PRE_PERIOD_TIME: int,
+            DTIME_LIMIT: int = 5,
     ) -> pl.DataFrame:
-        """Обрабатывает данные для одной машины"""
+        """Обрабатывает данные для одной машины (логика из preprocess_basic_one, fuel.py)"""
         try:
-            input_val = car_params['input']
-            output_val = car_params['output']
             max_fuel = primary_params['max_fuel']
+            is_special_car = primary_params.get('is_special_car', True)
+            ign_working = primary_params.get('ign_working', False)
 
-            logger.debug(f"Обработка машины: input={input_val}, output={output_val}, max_fuel={max_fuel}")
+            logger.debug(f"Обработка машины: max_fuel={max_fuel}, is_special_car={is_special_car}")
             logger.debug(f"Первые 5 значений timestamp: {car_df['timestamp'].head(5)}")
 
-            df_processed = car_df.with_columns(
+            df_processed = car_df
+
+            # Преобразование timestamp
+            timestamp_dtype = df_processed.schema['timestamp']
+            if isinstance(timestamp_dtype, pl.Datetime):
+                df_processed = df_processed.with_columns(
+                    pl.col("rpm").fill_null(0)
+                )
+            else:
+                try:
+                    df_processed = df_processed.with_columns(
+                        pl.col("timestamp").cast(pl.Datetime),
+                        pl.col("rpm").fill_null(0)
+                    )
+                except Exception as e1:
+                    logger.warning(f"Не удалось преобразовать timestamp с форматом пробела: {e1}")
+                    try:
+                        df_processed = df_processed.with_columns(
+                            pl.col("timestamp").cast(pl.Datetime),
+                            pl.col("rpm").fill_null(0)
+                        )
+                    except Exception as e2:
+                        logger.error(f"Не удалось преобразовать timestamp: {e2}")
+                        return pl.DataFrame()
+
+            # Убирает сообщения где есть задержка между клиентом и сервером
+            df_processed = alg_piece_remove_message_delays(df_processed)
+
+            # Топливо выше max_fuel -> null
+            df_processed = df_processed.with_columns(
                 pl.when(pl.col("calc_sensors_fuel_level") > max_fuel)
                 .then(None)
                 .otherwise(pl.col("calc_sensors_fuel_level"))
@@ -300,44 +335,22 @@ class NormsService:
                 .alias("calc_sensors_fuel_level"),
             )
 
-            logger.debug("Преобразование timestamp...")
-
-            timestamp_dtype = df_processed.schema['timestamp']
-            logger.debug(f"Тип timestamp: {timestamp_dtype}")
-
-            if isinstance(timestamp_dtype, pl.Datetime):
-                logger.debug("Timestamp уже в datetime формате")
-                df_processed = df_processed.with_columns(
-                    pl.col("rpm").fill_null(0)
+            # Фильтр по msg_number
+            if "msg_number" in df_processed.columns:
+                df_processed = df_processed.filter(
+                    pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5)
                 )
-            else:
-                try:
 
-                    df_processed = df_processed.with_columns(
-                        pl.col("timestamp").cast(pl.Datetime),
-                        pl.col("rpm").fill_null(0)
-                    )
-                    logger.debug("Успешно преобразован timestamp с форматом '%Y-%m-%d %H:%M:%S%.f'")
-                except Exception as e1:
-                    logger.warning(f"Не удалось преобразовать с форматом пробела: {e1}")
-                    try:
-                        df_processed = df_processed.with_columns(
-                            pl.col("timestamp").cast(pl.Datetime),
-                            pl.col("rpm").fill_null(0)
-                        )
-                        logger.debug("Успешно преобразован timestamp с форматом '%Y-%m-%dT %H:%M:%S%.fZ'")
-                    except Exception as e2:
-                        logger.error(f"Не удалось преобразовать timestamp: {e2}")
-                        return pl.DataFrame()
-
-
-            logger.debug(f"Тип timestamp после преобразования: {df_processed.schema['timestamp']}")
-            logger.debug(f"Первые 5 значений после преобразования: {df_processed['timestamp'].head(5)}")
-
+            # Forward strategy для заполнения пропусков
+            df_processed = df_processed.with_columns(
+                pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
+            )
 
             col_dtime_half = pl.col("timestamp").dt.truncate("30m")
             col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
+            col_dtime_period = pl.col("timestamp").dt.truncate("60m")
 
+            # fuel_level_nan за 30 минут
             df_processed = df_processed.with_columns(
                 pl.col("calc_sensors_fuel_level").is_not_nan()
                 .over(["auto", col_dtime_half])
@@ -345,92 +358,99 @@ class NormsService:
                 .alias("fuel_level_nan")
             )
 
-
-            initial_count = len(df_processed)
+            # Очистка
             df_processed = df_processed.filter(
-                pl.col("calc_sensors_fuel_level").is_not_nan()
+                [
+                    pl.col("calc_sensors_fuel_level").is_not_nan(),
+                    pl.col("calc_sensors_fuel_level").is_not_null(),
+                ]
             )
-            filtered_count = len(df_processed)
-            logger.debug(f"После фильтрации NaN: {filtered_count}/{initial_count} записей")
 
             if df_processed.is_empty():
-                logger.warning("Нет данных после фильтрации NaN")
+                logger.warning("Нет данных после фильтрации NaN/null")
                 return df_processed
 
-
+            # dtime за 1 час с клиппингом
             df_processed = df_processed.with_columns(
                 pl.col("timestamp")
                 .diff()
                 .dt.total_seconds()
                 .abs()
                 .cast(pl.Int16)
-                .over(["auto", pl.col("timestamp").dt.truncate("1h")])
-                .alias("dtime")
+                .over(["auto", col_dtime_period])
+                .fill_nan(1)
+                .fill_null(1)
+                .clip(upper_bound=DTIME_LIMIT * 60)
+                .alias("dtime"),
+                pl.col("rpm").fill_null(0),
             )
 
-            if "flex_adc" in car_params["fuel_sensor"]:
-                df_processed = df_processed.filter(pl.col("pos_s").ge(12))
+            # Убирает пропуски в сообщениях
+            df_processed = alg_piece_remove_skipped_messages(df_processed)
 
-            col_dtime_half = pl.col("timestamp").dt.truncate("30m")
-            col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
-            grades = car_params["grades"]
-            unique = list({tuple(sorted(d.items())): d for d in grades}.values())
-            fp_pos = len(unique) // 3
-            mp = unique[0]
-            fp = unique[fp_pos]
-            sp = unique[-1]
-            slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
-            b = fp["output"] - slope * fp["input"]
+            # Тарировка
+            if car_params.get("grades") is not None:
+                df_processed, lp, b, slope = tarify_car_by_sensor(df_processed, car_params)
 
-            df_processed = df_processed.filter(pl.col("calc_sensors_fuel_level").ge(mp["input"]))
+            # spent_fuel_clean + fps + фильтр прыжков
             df_processed = df_processed.with_columns(
-                [
-                    pl.max("calc_sensors_voltage").over(["auto", col_dtime_2hour]).alias("voltage_max"),
-                ]
+                pl.col("calc_sensors_fuel_level")
+                .diff()
+                .over("auto", col_dtime_2hour)
+                .fill_null(0)
+                .alias("spent_fuel_clean")
+            )
+            df_processed = df_processed.with_columns(
+                (pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps")
+            )
+            df_processed = df_processed.filter(
+                pl.col("fps").gt(-1) | pl.col("satellites").lt(2)
             )
 
+            if df_processed.is_empty():
+                logger.warning("Нет данных после фильтрации fps")
+                return df_processed
+
+            # voltage_max + фильтр по напряжению
+            df_processed = df_processed.with_columns(
+                pl.max("calc_sensors_voltage").over(["auto", col_dtime_2hour]).alias("voltage_max"),
+            )
 
             initial_count = len(df_processed)
             df_processed = df_processed.filter(
                 (pl.col("voltage_max") - pl.col("calc_sensors_voltage")) / pl.col("voltage_max")
                 < VOLTAGE_LIMIT
             )
-            filtered_count = len(df_processed)
-            logger.debug(f"После фильтрации по напряжению: {filtered_count}/{initial_count} записей")
+            logger.debug(f"После фильтрации по напряжению: {len(df_processed)}/{initial_count} записей")
 
             if df_processed.is_empty():
                 logger.warning("Нет данных после фильтрации по напряжению")
                 return df_processed
 
-
+            # spent_fuel
             df_processed = df_processed.with_columns(
-                [
-                    pl.col("calc_sensors_fuel_level")
-                    .diff()
-                    .over(["auto", col_dtime_2hour])
-                    .fill_null(0)
-                    .cast(pl.Float32)
-                    .alias("spent_fuel"),
-                    pl.col("pos_s").diff().over(["auto", col_dtime_2hour]).fill_null(0).cast(pl.Float32).alias("pos_a"),
-                ]
+                pl.col("calc_sensors_fuel_level")
+                .diff()
+                .over(["auto", col_dtime_2hour])
+                .fill_null(0)
+                .cast(pl.Float32)
+                .alias("spent_fuel"),
             )
 
-
+            # Производные колонки
             df_processed = df_processed.with_columns(
                 [
-                    pl.col("spent_fuel").abs().alias("spent_fuel_abs"),
-                    pl.when(pl.col("spent_fuel") > 0)
-                    .then(pl.col("spent_fuel"))
-                    .otherwise(0)
-                    .cast(pl.Float32)
-                    .alias("recover_fuel"),
-                    pl.when(pl.col("pos_a").is_null())
-                    .then(pl.col("pos_s"))
-                    .otherwise(pl.col("pos_a"))
-                    .alias("pos_a"),
                     pl.col("pos_s").rolling_max(window_size=4).alias("pos_s"),
-                    pl.when(pl.col("spent_fuel") < 0).then(1).otherwise(0).cast(pl.Int16).alias("fd"),
-                    pl.when((pl.col("satellites") == 0)).then(1).otherwise(0).cast(pl.Int16).alias("no_sat_data"),
+                    pl.when(pl.col("spent_fuel") <= 0)
+                    .then(1)
+                    .otherwise(0)
+                    .cast(pl.Int16)
+                    .alias("fd"),
+                    pl.when((pl.col("satellites") == 0))
+                    .then(1)
+                    .otherwise(0)
+                    .cast(pl.Int16)
+                    .alias("no_sat_data"),
                     pl.when(
                         pl.col("spent_fuel").abs() > max_fuel * FUEL_JUMP_BARRIER_PERC
                     )
@@ -441,28 +461,9 @@ class NormsService:
                 ]
             )
 
-
-            df_processed = df_processed.with_columns(
-                pl.when((pl.col("no_sat_data") == 1) & (pl.col("spent_fuel") != 0))
-                .then(0)
-                .otherwise(pl.col("spent_fuel"))
-                .alias("spent_fuel")
-            )
-
-
-            df_processed = df_processed.with_columns(
-                (pl.col("spent_fuel") / pl.col("dtime")).cast(pl.Float32).alias("fps")
-            )
-
-
-            df_processed = df_processed.with_columns(
-                pl.when(pl.col("fps") < -1).then(0).otherwise(pl.col("spent_fuel")).alias("spent_fuel")
-            )
-
-
             df_processed = df_processed.with_columns(pl.lit(1).alias("count"))
 
-
+            # Группировка по анти-баг интервалам
             logger.debug("Группировка по анти-баг интервалам...")
             initial_count = len(df_processed)
             df_processed = (
@@ -482,25 +483,35 @@ class NormsService:
                     pl.col("fuel_level_nan").sum(),
                     pl.col("no_sat_data").sum(),
                     pl.col("count").sum(),
-                    pl.col("recover_fuel").sum(),
-                    pl.col("ign").sum()
+                    pl.col("ign").sum(),
                 ])
             )
             logger.debug(f"После группировки: {len(df_processed)}/{initial_count} записей")
 
-
+            # Фильтр заправок (логика из preprocess_basic_one)
             df_processed = df_processed.with_columns(
                 pl.when(
-                    (pl.col("pos_s") == 0)
-                    & (pl.col("spent_fuel") > 0)
-                    & (pl.col("spent_fuel") < REFUELING_LIMIT)
+                    (
+                        ~pl.lit(is_special_car)
+                        & (pl.col("pos_s") == 0)
+                        & (pl.col("spent_fuel") > 0)
+                        & (pl.col("spent_fuel") < REFUELING_LIMIT)
+                    )
+                    | (
+                        pl.lit(is_special_car)
+                        & pl.lit(ign_working)
+                        & (pl.col("ign") == 0)
+                        & (pl.col("pos_s") == 0)
+                        & (pl.col("spent_fuel") > 0)
+                        & (pl.col("spent_fuel") < REFUELING_LIMIT)
+                    )
                 )
                 .then(0)
                 .otherwise(pl.col("spent_fuel"))
                 .alias("spent_fuel")
             )
 
-
+            # max_local_fuel_level (норм-специфичная, нужна _preprocess_norms)
             df_processed = df_processed.with_columns(
                 pl.max("calc_sensors_fuel_level")
                 .over(["auto", pl.col("timestamp").dt.truncate(f"{PRE_PERIOD_TIME}m")])

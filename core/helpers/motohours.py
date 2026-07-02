@@ -105,7 +105,22 @@ def make_motohours_result(
 
 def make_motohours_response_empty():
     return make_motohours_result(
-        0, 0, 0, [], 0, "none", "none", 0, 0, None, None, None
+        motohours_start=0,
+        motohours_end=0,
+        motohours=0,
+        data=[],
+        motohours_fraud=0,
+        motohours_fraud_by_sensor=0,
+        sensor="none",
+        sensor_check="none",
+        idle_motohours=0,
+        active_motohours=0,
+        rpm_idle=0,
+        unefficient_cases=0,
+        unefficient_time=0,
+        rpm_same_cases=0,
+        rpm_same_cases_time=0,
+        count=0
     )
 
 # def compute_motohours_total(df: pl.DataFrame, AGG_TIME: int | None):

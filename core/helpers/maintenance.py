@@ -30,9 +30,9 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports=[]):
 
 
 def maintenance_event_codes(df: pl.DataFrame, reports=[]):
-    is_event_codes_column = "event_codes" in df.columns
+    is_event_codes_column = "event_code" in df.columns
     if is_event_codes_column:
-        is_event_codes = df["event_codes"].is_not_null().any()
+        is_event_codes = df["event_code"].is_not_null().any()
         if is_event_codes:
             important_codes = [
                     (5989, "Зафиксирована остановка объекта.", None),
@@ -45,8 +45,8 @@ def maintenance_event_codes(df: pl.DataFrame, reports=[]):
                     (4883, "Бортовое питание восстановилось до рабочего уровня.", 2),
                     (4884, "Разряд встроенной резервной АКБ трекера.", 2),
                     (4885, "Встроенный аккумулятор заряжен.", 2),
-                    (5376, "Зажигание включено (триггер по изменению статуса линии зажигания).", 2),
-                    (5377, "Зажигание выключено.", 2),
+                    (5376, "Зажигание включено (триггер по изменению статуса линии зажигания).", None),
+                    (5377, "Зажигание выключено.", None),
                     (4113, "Сработал датчик вскрытия корпуса прибора (саботаж).", CarBadData.Severity.WARNING),
                     (4114, "Корпус устройства закрыт, датчик вернулся в норму.", CarBadData.Severity.INFO),
                     (5380, "Общая тревога (нажата физическая SOS-кнопка).", CarBadData.Severity.WARNING),
@@ -69,8 +69,8 @@ def maintenance_event_codes(df: pl.DataFrame, reports=[]):
             for code, description, urgency in important_codes:
                 if urgency is None:
                     continue
-                df = df.with_columns(pl.col("event_codes").is_in([code]).over(period).alias("is_code"))
-                code_df = df.filter(pl.col("code"))
+                df = df.with_columns(pl.col("event_code").is_in([code]).over(period).alias("is_code"))
+                code_df = df.filter(pl.col("is_code"))
                 for row in code_df.iter_rows(named=True):
                     timestamp = row["timestamp"]
                     reports.append(
@@ -78,7 +78,7 @@ def maintenance_event_codes(df: pl.DataFrame, reports=[]):
                             "event_date": timestamp,
                             "message": f"{description}",
                             "tags": [
-                                CarBadData.Category.MAINTENANCE,
+                                CarBadData.Tag.MAINTENANCE,
                             ],
                             "category": CarBadData.Category.DATA_QUALITY,
                             "severity": urgency

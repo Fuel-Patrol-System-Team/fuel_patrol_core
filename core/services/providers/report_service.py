@@ -146,9 +146,10 @@ class ReportService:
                 tags=valid_tags,
                 report_query=report_query,
             )
+            bad_data.save()
 
-            logger.error(
-                f"[{report["severity"].upper()}][{report["category"]}] tags={valid_tags} "
+            logger.info(
+                f"[{report["severity"]}][{report["category"]}] tags={valid_tags} "
                 f"CarBadData для {car.name}: {report["message"]}{period_info}"
             )
         if len(bad_reports) > 0:
