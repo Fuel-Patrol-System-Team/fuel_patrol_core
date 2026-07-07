@@ -16,6 +16,7 @@ class LeaksService(BaseLeaksCalculator):
         self,
         auto_df: pl.DataFrame,
         data_df: pl.DataFrame,
+        sensors: Dict[str, List[Dict[str, Any]]],
         primary_df: pl.DataFrame,
         norma_df: pl.DataFrame,
         initial_df: Optional[pl.DataFrame] = None,
@@ -91,7 +92,7 @@ class LeaksService(BaseLeaksCalculator):
 
                 logger.info(f"🔄 Машина {auto_id}: предобработка данных")
                 result_prep, inter_prep, _, reports = self._preprocess(
-                    data, auto_info, primary_info, initial_df=initial_df
+                    data, sensors,  auto_info, primary_info, initial_df=initial_df
                 )
 
                 logger.info(
@@ -203,13 +204,14 @@ class LeaksService(BaseLeaksCalculator):
     def _preprocess(
         self,
         df: pl.DataFrame,
+        sensors: Dict[str, List[Dict[str, Any]]],
         cars: Dict[str, Any],
         norms: Dict[str, Any],
         initial_df: Optional[pl.DataFrame] = None,
         reports: List[Any] = [],
         ANTI_BUG_TIME_SECONDS: int = 30,
         PRE_PERIOD_TIME: int = 3,
-        PERIOD_2_MIN: int = 60,
+        PERIOD_2_MIN: int = 30,
         VOLTAGE_LIMIT: float = 0.16,
         REFUELING_LIMIT: int = 4000,
         FUEL_JUMP_BARRIER_PERC: float = 0.05,
@@ -227,6 +229,7 @@ class LeaksService(BaseLeaksCalculator):
             anti_bug, reports = preprocess_basic_one(
                 df,
                 cars,
+                sensors,
                 norms,
                 VOLTAGE_LIMIT,
                 FUEL_JUMP_BARRIER_PERC,

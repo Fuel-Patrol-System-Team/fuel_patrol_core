@@ -142,6 +142,8 @@ class ReportService:
                 reason=f"{report["message"]}",
                 datetime=datetime.now().astimezone(),
                 severity=report["severity"],
+                description=f"{report["message"]}\n Дата события: {report["event_date"]}",
+                event_date=report["event_date"],
                 category=report["category"],
                 tags=valid_tags,
                 report_query=report_query,
@@ -199,6 +201,7 @@ class ReportService:
             datetime=datetime.now().astimezone(),
             severity=severity,
             category=category,
+            event_date=datetime.now().astimezone(),
             tags=valid_tags,
             report_query=report_query,
         )

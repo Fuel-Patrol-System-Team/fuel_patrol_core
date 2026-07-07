@@ -1,24 +1,30 @@
-from typing import Any, List
+import re
+from typing import Any, Dict, List
 import polars as pl
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays
-from core.helpers.maintenance import maintenance_event_codes
+from core.helpers.maintenance import maintenance_board_voltage_notify, maintenance_critical_raw_fuel_values, maintenance_event_codes, maintenance_fuel_consumpt_check
 from core.helpers.mileage import alg_piece_remove_skipped_messages
+from core.services.providers.glonass.constants import reconcile_multisensor
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
 def make_primary_fast(df: pl.DataFrame):
     is_primary = True
     primary = {}
-    if df["calc_sensors_fuel_level"].is_null().all():
-        df = df.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"))
-        is_primary = False
+    fuel_sensors = list(filter(lambda x: "calc_sensors_fuel_level" in x, df.columns))
+    for sensor in fuel_sensors:
+        if df[sensor].is_null().all():
+            df = df.with_columns(pl.lit(0).alias(sensor))
+            is_primary = False
     primary["norm_speed"] = df.with_columns(pl.col("pos_s").gt(0))["pos_s"].mean() 
-    fuel = df["calc_sensors_fuel_level"].filter(df["calc_sensors_fuel_level"].is_between(0, 65000))
-    max_fuel = fuel.max()
-    if max_fuel > 100 and max_fuel < 103:
-        max_fuel = 100
-    primary["max_fuel"] = max_fuel
+    for sensor in fuel_sensors:
+        postfix = _get_postfix(sensor)
+        fuel = df[sensor].filter(df[sensor].is_between(0, 65000))
+        max_fuel = fuel.max()
+        if max_fuel > 100 and max_fuel < 103:
+            max_fuel = 100
+        primary[f"max_fuel{postfix}"] = max_fuel
     primary["is_special_car"] = True
     primary["ign_working"] = False
     
@@ -78,10 +84,18 @@ def tarify_car_by_sensor(df: pl.DataFrame, cars: dict[str, Any], column = "calc_
         .otherwise(pl.col(column))
     )
     return df, lp, b, slope
+
+def _get_postfix(sensor_name: str):
+    match = re.search(r"(_\d)$", sensor_name)
+    if match:
+        affix = match.group(1)
+        return affix
+    return ""
     
 def preprocess_basic_one(
     df: pl.DataFrame,
     cars: dict[str, Any],
+    sensors: Dict[str, List[Dict[str, Any]]],
     primary: dict[str, Any],
     VOLTAGE_LIMIT = 0.16,
     FUEL_JUMP_BARRIER_PERC = 0.05,
@@ -92,21 +106,27 @@ def preprocess_basic_one(
     is_fuel_processing=False,
     reports: List[Any] = [],
 ):
-    if is_fuel_processing and df["calc_sensors_fuel_level"].is_null().all():
-        df = df.with_columns(pl.lit(0).alias("calc_sensors_fuel_level"))
+    calc_fuel_sensors = list(filter(lambda x: "calc_sensors_fuel" in x, df.columns))
+    for sensor in calc_fuel_sensors:
+        if is_fuel_processing and df[sensor].is_null().all():
+            df = df.with_columns(pl.lit(0).alias(sensor))
     if "rpm" not in df.columns:
         df = df.with_columns(pl.lit(65535).alias("rpm"))
     if "satellites" not in df.columns:
         df = df.with_columns(pl.lit(20).alias("satellites"))
     df = alg_piece_remove_message_delays(df)
+    reports = maintenance_critical_raw_fuel_values(df, sensors, reports)
+    
 
-    df = df.with_columns(
-        pl.when(pl.col("calc_sensors_fuel_level") > primary["max_fuel"])
-        .then(None)
-        .otherwise(pl.col("calc_sensors_fuel_level"))
-        .cast(pl.Float32)
-        .alias("calc_sensors_fuel_level"),
-    )
+    for sensor in calc_fuel_sensors:
+        postfix = _get_postfix(sensor)
+        df = df.with_columns(
+            pl.when(pl.col(sensor) > primary[f"max_fuel{postfix}"])
+            .then(None)
+            .otherwise(pl.col(sensor))
+            .cast(pl.Float32)
+            .alias(sensor),
+        )
     # fuel_level_nan per 30 minutes
 
     if "msg_number" in df.columns:
@@ -124,19 +144,20 @@ def preprocess_basic_one(
     col_dtime_day = pl.col("timestamp").dt.truncate("1d")
 
     # forward strategy for filling gaps
-    df = df.with_columns(
-        pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
-    )
+    for sensor in calc_fuel_sensors:
+        df = df.with_columns(
+            pl.col(sensor).fill_null(strategy="forward")
+        )
 
-    
-
-    df = df.with_columns(
-        pl.col("calc_sensors_fuel_level")
-        .is_not_nan()
-        .over(["auto", col_dtime_half])
-        .cast(pl.Int16)
-        .alias("fuel_level_nan")
-    )
+    for sensor in calc_fuel_sensors:
+        df = df.with_columns(
+            pl.col(sensor)
+            .is_not_nan()
+            .over(["auto", col_dtime_half])
+            .cast(pl.Int16)
+            .alias("fuel_level_nan")
+        )
+        break
 
     df = df.with_columns(
         pl.when(pl.col("pos_s").gt(0))
@@ -144,12 +165,13 @@ def preprocess_basic_one(
         .otherwise(None)
         .alias("pos_s_m")
     )
-    df = df.filter(
-        [
-            pl.col("calc_sensors_fuel_level").is_not_nan(),
-            pl.col("calc_sensors_fuel_level").is_not_null(),
-        ]
-    )
+    for sensor in calc_fuel_sensors:
+        df = df.filter(
+            [
+                pl.col(sensor).is_not_nan(),
+                pl.col(sensor).is_not_null(),
+            ]
+        )
 
     if is_fuel_processing:
         df = df.filter(
@@ -200,11 +222,19 @@ def preprocess_basic_one(
     # df = df.with_columns(
     #     pl.col("calc_sensors_fuel_level").rolling_mean_by("timestamp", window_size="2m")
     # )
-    if cars["grades"] is not None:
-        df, lp, b, slope = tarify_car_by_sensor(df, cars)
-        if df["calc_sensors_fuel_level"].gt(lp["input"]).any():
-            print("Car has problems")
-    # clean для отсчения резких прыжков (с игнорированием записей)
+    for sensor in calc_fuel_sensors:
+        postfix = _get_postfix(sensor)
+        # Для мультисенсоров используем grades_N, для одиночного — grades
+        sensor_grades = cars.get(f"grades{postfix}") if postfix else cars.get("grades")
+        if sensor_grades is None:
+            sensor_grades = cars.get("grades")
+        if sensor_grades is not None:
+            cars_for_sensor = {**cars, "grades": sensor_grades}
+            df, lp, b, slope = tarify_car_by_sensor(df, cars_for_sensor, sensor)
+            if df[sensor].gt(lp["input"]).any():
+                print("Car has problems")
+    df = reconcile_multisensor(df, cars["fuel_sensor_multi_type"])
+    
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
         .diff()
@@ -227,6 +257,8 @@ def preprocess_basic_one(
     sum_fuel = df.group_by_dynamic(index_column="timestamp", every="1d").agg(
         pl.col("spent_fuel_boundary").sum()
     )["spent_fuel_boundary"].sum()
+    reports = maintenance_fuel_consumpt_check(df, sensors, reports)
+    reports = maintenance_board_voltage_notify(df, sensors, reports)
     df = df.with_columns(
         pl.lit(sum_fuel).alias("spent_fuel_t")
     )
@@ -284,7 +316,9 @@ def preprocess_basic_one(
             .forward_fill()
             .alias("fuel_level_standing"),
         )
-
+    max_fuel_tmp = df["calc_sensors_fuel_level"].max() 
+    if max_fuel_tmp is None:
+        max_fuel_tmp = 0
     df = df.with_columns(
         [
             pl.col("spent_fuel").clip(upper_bound=0).alias("spent_fuel_2"),
@@ -310,9 +344,7 @@ def preprocess_basic_one(
             .cast(pl.Int16)
             .alias("no_sat_data"),
             pl.when(
-                pl.col("spent_fuel").abs()
-                > primary["max_fuel"] * FUEL_JUMP_BARRIER_PERC
-            )
+                pl.col("spent_fuel").abs().gt(max_fuel_tmp * FUEL_JUMP_BARRIER_PERC))
             .then(1)
             .otherwise(0)
             .cast(pl.Int16)

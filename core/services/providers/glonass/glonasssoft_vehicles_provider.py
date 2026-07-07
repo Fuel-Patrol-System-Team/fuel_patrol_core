@@ -6,7 +6,7 @@ import requests
 import orjson
 import pytz
 import textdistance
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Literal, Optional, List
 
 from core.models import CarUnit, DataProvider
 from core.services.providers.rate_limited_provider import (
@@ -25,6 +25,8 @@ class SensorType:
     priority: int # датчик с наивысшим приоритетом по группе выбирается
     is_active: bool # является ли активным
     is_picked: bool = False
+    is_multi: bool = False
+    multi_type: Literal["none"] | Literal["tank"] | Literal["can"] = "none"
 
 class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
     """Провайдер для работы с транспортными средствами GlonassSoft"""
@@ -144,7 +146,86 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             if grade_item["output"] != 0:
                 grade_for_choice = grade_item
         return grade_for_choice
+    
+    def _parse_children_fuel_sensors(self, children: List[dict[str, Any]], sensors_mapping, sensor_agg: Literal["SUM"] | Literal["AVG"] | None):
+        for sensor in children:
+            sensor_name = sensor.get("name", "")
+            sensor_kind = sensor.get("kind", "")
+            parameter_name = sensor.get("parameterName")
+            input_number = sensor.get("inputNumber")
+            input_type = sensor.get("inputType")
+            expr = sensor.get("expr", "")
+            is_disabled = sensor.get("disabled", False)
+            pseudonym = sensor.get("pseudonym", None)
+            metadata_postfix = {}
+            priority_default = 5
+
+            multi_type = "can"
+            if sensor_agg is None:
+                mulit_type = "tank" if "бак" in sensor_name else "can"
+            else:
+                multi_type =  "tank" if "SUM" == sensor_agg else "can"
+                    
+            if sensor.get("gradeType") == "GradeTable":
+
+                grades_tables = sensor.get("gradesTables", [{}])
+                if grades_tables and grades_tables[-1]:
+                    grades = grades_tables[-1].get("grades", [{}])
+                    sensor_grades = grades
+            
+                        
                 
+            if parameter_name:
+                key_part = parameter_name.split(";")[0]
+                
+
+                if key_part.startswith("can_fuel_volume"):
+                    sensors_mapping["calc_sensors_fuel_level"].append(
+                        SensorType(f"parameters.can_fuel_volume", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                    )
+                    continue
+                if key_part.startswith("can_fuel_level"):
+                    sensors_mapping["calc_sensors_fuel_level"].append(
+                        SensorType(f"parameters.can_fuel_level",{"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                    )
+                    continue
+
+                if key_part.startswith("can_") and input_number:
+                    sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                        SensorType(f"parameters.can{input_number}",{"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                    )
+                    continue
+                if  input_type == "Analog":
+                    match = re.search(r"\bflex_adc(\d+)\b", expr)
+                    analog_match = re.search(r"\banalog(\d+)\b", expr)
+                    if match is not None:
+                        sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                            SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        )
+                    if analog_match is not None:
+                        sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                            
+                            SensorType(f"paramaters.{analog_match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        )
+                else:
+
+                    sensors_mapping.get("calc_sensors_fuel_level", []).append (
+                        SensorType(f"parameters.{key_part}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                    )
+            elif input_number:
+                if input_type == "Analog":
+                    match = re.search(r"\bflex_adc(\d+)\b", expr)
+                    analog_match = re.search(r"\banalog(\d+)\b", expr)
+                    if match is not None:
+                        sensors_mapping.get("calc_sensors_fuel_level", []).append (
+                            
+                        SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        )
+                else:
+                    sensors_mapping.get("calc_sensors_fuel_level", []).append (
+                        SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                )
+        return sensors_mapping  
         
     def _enrich_with_sensors_mapping(
             self, vehicle_data: Dict[str, Any], provider: DataProvider | None = None
@@ -187,6 +268,9 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             expr = sensor.get("expr", None)
             is_disabled = sensor.get("disabled", False)
             pseudonym = sensor.get("pseudonym", None)
+            children = sensor.get("children", None)
+            sensor_agg = sensor.get("agrFunction", None)
+            id = sensor.get("id", "")
             metadata_postfix = {}
             if expr is not None:
                 metadata_postfix["expr"] = expr
@@ -199,6 +283,10 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 continue
             elif sensor_type == "FuelLvl":
                 sensor_grades = None
+
+                if children:
+                    sensors_mapping = self._parse_children_fuel_sensors(children, sensors_mapping, sensor_agg)
+                    continue
                 if sensor.get("gradeType") == "GradeTable":
 
                     grades_tables = sensor.get("gradesTables", [{}])
@@ -277,12 +365,6 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
                     else:
                         sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
-            elif sensor_name.contains(""):
-                if parameter_name:
-                    if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
-                    else:
-                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif (
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2 or sensor_name == "Датчик пробега"
@@ -366,7 +448,16 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
         for label, group in sensors_mapping.items():
             group.sort(key=lambda x: x.priority, reverse=True)
             if len(group) > 0:
-                group[0].is_picked = True
+                max_priority = group[0].priority
+                top_sensors = [s for s in group if s.priority == max_priority]
+                top_multi = [s for s in top_sensors if s.is_multi]
+                # Если в группе есть мультисенсоры (>=2) с наивысшим приоритетом,
+                # выбираем их все, иначе — один сенсор с наивысшим приоритетом.
+                if len(top_multi) >= 2:
+                    for sensor in top_multi:
+                        sensor.is_picked = True
+                else:
+                    top_sensors[0].is_picked = True
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
         vehicle_data["sensorsMapping"] = sensors_mapping

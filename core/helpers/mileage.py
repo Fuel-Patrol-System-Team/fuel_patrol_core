@@ -6,9 +6,9 @@ import polars as pl
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-from core.helpers.alg_pieces import rpm_unefficient_cases
 from core.helpers.alg_utils import alg_piece_remove_skipped_messages
 from core.helpers.fuel import alg_piece_remove_message_delays
+from core.helpers.maintenance import maintenance_mileage_sensor_check
 
 class MileageModes(str, Enum):
     standart = "standart"
@@ -25,7 +25,7 @@ class MileageModes(str, Enum):
 
 def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_skip_big: int, first_mileage: None | float, last_mileage: None | float,
                         data: List[Any], travel_fraud_jumps: float, ign_miss: float | None, chart_data: List[Any] | None, chart_data_rpm: List[Any] | None, count: int,
-                        std: float | None, intercept: float | None, slope: float | None, mileage_suspicious: float | None
+                        std: float | None, intercept: float | None, slope: float | None, mileage_suspicious: float | None, reports=[]
                         ): 
     return {
         "travel": travel,
@@ -39,6 +39,7 @@ def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_sk
         "chart_data": chart_data,
         "chart_data_rpm": chart_data_rpm,
         "count": count,
+        "reports": reports
     }
 
 def make_empty_mileage_result(mode: MileageModes):
@@ -121,6 +122,7 @@ def mileage_test_compute(df: pl.DataFrame, auto_record: Dict[str, Any], AGG: int
 def mileage_test_fraud(
     auto: str,
     df: pl.DataFrame,
+    sensors: Dict[str, List[Dict[str, Any]]],
     auto_record: Dict[str, Any],
     AGG: int | None,
     regime: MileageModes = MileageModes("standart"),
@@ -295,11 +297,13 @@ def mileage_test_fraud(
 def mileage_test_fraud_new(
     auto: str,
     df: pl.DataFrame,
+    sensors: Dict[str, List[Dict[str, Any]]],
     auto_record: Dict[str, Any],
     AGG_PERIOD_MINUTES: int | None = 1,
     regime: MileageModes = MileageModes.standart,
     sensor_chart: Literal["can"] | Literal["mileage"] = "can",
     force_chart = False,
+    reports = [],
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
 ):
@@ -327,6 +331,7 @@ def mileage_test_fraud_new(
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
     df = df.filter(pl.col("msg_number").gt(0))
     df = alg_piece_remove_message_delays(df)
+    reports = maintenance_mileage_sensor_check(df, sensors, reports)
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
     if auto_record["mileage_grading"] is not None:
@@ -783,31 +788,6 @@ def mileage_test_fraud_new(
         std=std,
         slope=slope,
         intercept=intercept,
-        mileage_suspicious=mileage_suspicious
-        
-        
-        
-        
-        
+        mileage_suspicious=mileage_suspicious,
+        reports=reports
     )
-    
-    return {
-        "travel": travel,
-        "travel_fraud": (
-            travel_fraud
-            
-        ),
-        "first_mileage": first_mileage,
-        "last_mileage": last_mileage,
-        "travel_skipped": travel_skipped,
-        "data": agg if regime is MileageModes.agg else None,
-        "msg_skip_big": msg_skip_big,
-        "chart_data": chart_data,
-        "chart_data_rpm": chart_data_rpm,
-        "slope": slope,
-        "intercept": intercept,
-        "std": std,
-        "mileage_suspicious": mileage_suspicious,
-        "ign_fraud_spent_false": ign_fraud_spent_false,
-        "count": 1
-    }

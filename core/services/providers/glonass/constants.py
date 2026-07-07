@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, TypedDict
+from typing import Any, Dict, Literal, TypedDict
 from attr import dataclass
 import polars as pl
 from typing import Protocol
@@ -74,7 +74,7 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
     GL_PARAM_KEYS.timestamp_server : GlonassParameter(False, "serverTime", "timestamp_server",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp_server").cast(pl.Datetime)),True, None, None),
     GL_PARAM_KEYS.speed: GlonassParameter(True, "speed", "pos_s", None, False, 0, None ),
-    GL_PARAM_KEYS.speed_gps: GlonassParameter(False, "pos_s", "speed_gps", None, False, 0, None ),
+    GL_PARAM_KEYS.speed_gps: GlonassParameter(False, "speed", "speed_gps", None, False, 0, None ),
     GL_PARAM_KEYS.fuel_level: GlonassParameter(True, "", "calc_sensors_fuel_level", None, False, None, None ),
     GL_PARAM_KEYS.mileage: GlonassParameter(True, "", "mileage", None, False, 0, None),
     GL_PARAM_KEYS.motohours: GlonassParameter(True, "", "motohours", None, False, None, None),
@@ -142,9 +142,20 @@ def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dic
         df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
     print(sensor_mapping)
     return df
-def _reconcile_multisensor(df: pl.DataFrame, sensors: list[str]):
+def reconcile_multisensor(df: pl.DataFrame, sensor_type: Literal["none"] | Literal["tank"] | Literal["can"]):
     # TODO: обсудить на встрече. Из-за того, что часто бывает только один датчик, неясно как лучше сделать 
-    pass
+    if sensor_type == "none":
+        return df
+    calc_sensor_sensors = list(filter(lambda x: "calc_sensors_fuel_level" in x, df.columns))
+    if sensor_type == "tank":
+        df = df.with_columns(
+            pl.sum_horizontal(calc_sensor_sensors).alias("calc_sensors_fuel_level")
+        )
+    if sensor_type == "can":
+        df = df.with_columns(
+            pl.mean_horizontal(calc_sensor_sensors).alias("calc_sensors_fuel_level")
+        )
+    return df
     
 
 def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):

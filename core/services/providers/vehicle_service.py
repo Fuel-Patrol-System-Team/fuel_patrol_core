@@ -18,15 +18,13 @@ class VehicleService:
     @staticmethod
     @transaction.atomic
     def save_vehicle_with_validation(
-            vehicle_data: Dict[str, Any],
-            provider: DataProvider
+        vehicle_data: Dict[str, Any], provider: DataProvider
     ) -> Tuple[Car, bool, List[str]]:
         """
         Сохраняет или обновляет данные об автомобиле с валидацией
         Возвращает (car, created, critical_errors)
         """
         critical_errors = []
-        
 
         try:
             car_unit_id = vehicle_data.get("car_unit_id")
@@ -35,9 +33,13 @@ class VehicleService:
             if car_unit_id:
                 try:
                     car_unit = CarUnit.objects.get(id=car_unit_id)
-                    logger.debug(f"Найден CarUnit по ID: {car_unit_id} ({car_unit.name})")
+                    logger.debug(
+                        f"Найден CarUnit по ID: {car_unit_id} ({car_unit.name})"
+                    )
                 except CarUnit.DoesNotExist:
-                    logger.warning(f"CarUnit с ID {car_unit_id} не найден, связь не установлена")
+                    logger.warning(
+                        f"CarUnit с ID {car_unit_id} не найден, связь не установлена"
+                    )
 
             custom_fields = {
                 field["name"]: field["value"]
@@ -62,9 +64,13 @@ class VehicleService:
                     "description": f"{vehicle_data.get('parentName', '')}, {vehicle_data.get('modelName', '')}, {vehicle_data.get('unitName', '')}",
                     "engine_type": engine_type,
                     "input": 0,
-                    "grades": vehicle_data.get("gradeMapping", {}).get("calc_sensors_fuel_level", None),
+                    "grades": vehicle_data.get("gradeMapping", {}).get(
+                        "calc_sensors_fuel_level", None
+                    ),
                     "output": 0,
-                    "is_tarrified": VehicleService._calculate_is_tarrified(vehicle_data),
+                    "is_tarrified": VehicleService._calculate_is_tarrified(
+                        vehicle_data
+                    ),
                     "is_active": len(critical_errors) == 0,
                 },
             )
@@ -96,17 +102,27 @@ class VehicleService:
 
         sensors_mapping = vehicle_data.get("sensorsMapping", {})
 
-
-        items = list(chain(*[ [ (label, value) for value in arr   ] for label, arr in sensors_mapping.items() ]))
+        items = list(
+            chain(
+                *[
+                    [(label, value) for value in arr]
+                    for label, arr in sensors_mapping.items()
+                ]
+            )
+        )
         duplicate_preparation = defaultdict(list)
         for label, value in items:
             duplicate_preparation[value.parameter].append(label)
-        
-        duplicates = {v: labels for v, labels in duplicate_preparation.items() if len(labels) > 1}
+
+        duplicates = {
+            v: labels for v, labels in duplicate_preparation.items() if len(labels) > 1
+        }
         for raw_param, params in duplicates.items():
             params = set(params)
             if len(params) > 1:
-                errors.append(f"Для датчиков ({' '.join(params)})  используется одинаковый параметр {raw_param}")
+                errors.append(
+                    f"Для датчиков ({' '.join(params)})  используется одинаковый параметр {raw_param}"
+                )
 
         is_active = vehicle_data.get("isActive", True)
         if not is_active:
@@ -125,33 +141,49 @@ class VehicleService:
             return True
         target_sensor = list(filter(lambda x: x.is_picked, fuel_sensors))
         if len(target_sensor) == 0:
-            logger.warning(f"Машина не имеет тарировки т.к. нет сенсора, который подходит системе")
+            logger.warning(
+                f"Машина не имеет тарировки т.к. нет сенсора, который подходит системе"
+            )
             return False
         target_sensor = target_sensor[0]
-        return target_sensor.metadata is not None and target_sensor.metadata.get("grades") is not None
-
+        return (
+            target_sensor.metadata is not None
+            and target_sensor.metadata.get("grades") is not None
+        )
 
     # TODO: придумать как избавить от is_first_parsing он не позволяет при появлении нового сенсора заменить текущий выбранный пользователем
     @staticmethod
-    def _save_sensors_mapping(car: Car, sensors_mapping: Dict[str, List[SensorType]], is_first_parsing = False) -> None:
+    def _save_sensors_mapping(
+        car: Car, sensors_mapping: Dict[str, List[SensorType]], is_first_parsing=False
+    ) -> None:
         """Сохраняет маппинг сенсоров в БД"""
         is_first_parsing_logical = is_first_parsing
         amount = SensorsValues.objects.filter(car_id=car).count()
         if amount == 0:
             is_first_parsing_logical = True
 
-            
         for category, mappings in sensors_mapping.items():
             try:
                 sensor_key, _ = SensorsKey.objects.get_or_create(key=category)
                 for mapping in mappings:
-                    grades = None if mapping.metadata is None else mapping.metadata.get("grades")
-                    
-                    new_sensor, is_created =  SensorsValues.objects.update_or_create(
+                    grades = (
+                        None
+                        if mapping.metadata is None
+                        else mapping.metadata.get("grades")
+                    )
+
+                    new_sensor, is_created = SensorsValues.objects.update_or_create(
                         car_id=car,
                         key=sensor_key,
                         value=str(mapping.parameter),
-                        defaults={ "grades": grades, "metadata": mapping.metadata, "created_at": datetime.datetime.now().astimezone(tz=utc), "is_system_pick": mapping.is_picked },
+                        defaults={
+                            "grades": grades,
+                            "metadata": mapping.metadata,
+                            "created_at": datetime.datetime.now().astimezone(tz=utc),
+                            "is_system_pick": mapping.is_picked,
+                            "multi": mapping.is_multi,
+                            "multi_type": mapping.multi_type
+                        },
                     )
                     if is_created and is_first_parsing_logical:
                         new_sensor.is_active = new_sensor.is_system_pick
@@ -163,9 +195,13 @@ class VehicleService:
 
     @staticmethod
     @transaction.atomic
-    def save_vehicle_to_db(vehicle_data: Dict[str, Any], provider: DataProvider) -> Tuple[Car, bool]:
+    def save_vehicle_to_db(
+        vehicle_data: Dict[str, Any], provider: DataProvider
+    ) -> Tuple[Car, bool]:
         """
         Старый метод для обратной совместимости
         """
-        car, created, _ = VehicleService.save_vehicle_with_validation(vehicle_data, provider)
+        car, created, _ = VehicleService.save_vehicle_with_validation(
+            vehicle_data, provider
+        )
         return car, created

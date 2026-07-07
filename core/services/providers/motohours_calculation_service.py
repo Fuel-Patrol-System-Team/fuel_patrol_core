@@ -61,7 +61,7 @@ class MotohoursCalculationService:
                 return {"error": error_msg}, 401
 
             try:
-                status, df = provider.parse_raw_data("motohours", True, car)
+                status, df, sensors = provider.parse_raw_data("motohours", True, car)
             except Exception as data_error:
                 error_msg = f"Не удалось получить данные от провайдера: {str(data_error)}"
                 logger.error(f"Ошибка получения данных от провайдера для car_id={car_id}: {data_error}", exc_info=True)

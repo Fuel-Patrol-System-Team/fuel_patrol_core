@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 import logging
-from typing import Literal, Optional, Tuple, Dict, Any
+from typing import List, Literal, Optional, Tuple, Dict, Any
 import polars as pl
 
 from core.admin import CarFuelReport
@@ -52,9 +52,10 @@ class FuelReportService:
             ])
     
     @staticmethod
-    def fuel_spent_calculate_instant(result: pl.DataFrame, fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
+    def fuel_spent_calculate_instant(result: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]],
+                                     fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
         is_primary, primary = make_primary_fast(result)
-        result, reports = preprocess_basic_one(result, cars, primary, is_fuel_processing=True)
+        result, reports = preprocess_basic_one(result, cars, sensors, primary, is_fuel_processing=True)
         if not is_primary:
             result = result.with_columns(
                 pl.lit(0).alias("calc_sensors_fuel_level"),
@@ -124,7 +125,7 @@ class FuelReportService:
             "agg": spent_report,
             "fillings": return_fillings,
             "count": 1,
-        }, []
+        }, reports
     @staticmethod
     def calculate_fuelspent(
             car_id: str,
@@ -166,7 +167,7 @@ class FuelReportService:
                 return {"error": error_msg}, 401
 
 
-            status, df = provider.parse_raw_data("fuel", True, car)
+            status, df, sensors = provider.parse_raw_data("fuel", True, car)
             fillings = provider.parse_refill_data_full(car, start_date, end_date)
             if df is None or df.is_empty() or not status:
 
@@ -198,12 +199,14 @@ class FuelReportService:
             if isinstance(df, pl.DataFrame):
                 auto = CarDataService.prepare_auto_data(car)
                 auto_record = auto.filter(pl.col("auto") == str(car_id)).to_dicts()[0]
-                result, reports = FuelReportService.fuel_spent_calculate_instant(df, fillings, auto_record, agg)
+                result, reports = FuelReportService.fuel_spent_calculate_instant(df, sensors, fillings, auto_record, agg)
                 report_data = {
                     "result": result,
                     "rows_processed": len(df),
                     "aggregation_period_minutes": agg
                 }
+                if reports and is_save_bad_data:
+                    ReportService.create_bad_data_record_from_list(car, reports, report_query)
 
 
                 ReportService.complete_report_success(

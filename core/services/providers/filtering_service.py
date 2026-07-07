@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 class FilteringService(BaseFilteringService):
     """Сервис для фильтрации результатов утечек"""
     def final_filter(self, df: pl.DataFrame):
-        filtered_df = df.with_columns(
-            pl.col("is_picked_leak")
+        filtered_df = df.filter(
+            pl.col("is_picked_leak").eq(True)
         )
         return filtered_df, df
 
@@ -41,7 +41,7 @@ class FilteringService(BaseFilteringService):
 
         # filtered_df, _ = self.filtering_certains_ids(filtered_df, ["example_id"])
 
-        filtered_df, _ = self.final_filter(df)
+        filtered_df, _ = self.final_filter(filtered_df)
         logger.info(f"После фильтрации осталось {len(filtered_df)} записей")
         
         return filtered_df

@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import polars as pl
 from typing import Optional, Tuple, Dict
 from datetime import datetime, timedelta
@@ -83,7 +84,9 @@ class NormsService:
 
     @staticmethod
     def _prepare_cars_dict(auto_df: pl.DataFrame) -> Dict[str, Dict[str, float]]:
-        """Подготавливает словарь с параметрами тарировки для каждой машины"""
+        """Подготавливает словарь с параметрами тарировки для каждой машины.
+        Извлекает grades_N для каждого датчика (мультисенсоры).
+        """
         cars_dict = {}
         for row in auto_df.to_dicts():
             auto_id = row['auto']
@@ -91,15 +94,22 @@ class NormsService:
                 'input': float(row['input']) if row['input'] is not None else 1.0,
                 'grades': row['grades'],
                 'fuel_sensor': row['fuel_sensor'],
-                'output': float(row['output']) if row['output'] is not None else 1.0
+                'output': float(row['output']) if row['output'] is not None else 1.0,
+                'fuel_sensor_multi_type': row.get('fuel_sensor_multi_type', 'none'),
             }
+            # Добавляем grades_N для каждого датчика (если есть)
+            for key, val in row.items():
+                if key.startswith("grades_") and val is not None:
+                    cars_dict[auto_id][key] = val
             logger.debug(
                 f"Машина {auto_id}: input={cars_dict[auto_id]['input']}, output={cars_dict[auto_id]['output']}")
         return cars_dict
 
     @staticmethod
     def _prepare_primary_dict(primary_df: pl.DataFrame) -> Dict[str, Dict[str, float]]:
-        """Подготавливает словарь с первичными показателями для каждой машины"""
+        """Подготавливает словарь с первичными показателями для каждой машины.
+        Извлекает max_fuel_N для каждого датчика (мультисенсоры).
+        """
         primary_dict = {}
         for row in primary_df.to_dicts():
             auto_id = row['auto']
@@ -108,6 +118,10 @@ class NormsService:
                 'is_special_car': bool(row.get('is_special_car', True)),
                 'ign_working': bool(row.get('ign_working', False)),
             }
+            # Добавляем max_fuel_N для каждого датчика (если есть)
+            for key, val in row.items():
+                if key.startswith("max_fuel_") and val is not None:
+                    primary_dict[auto_id][key] = float(val)
             logger.debug(f"Первичные показатели {auto_id}: max_fuel={primary_dict[auto_id]['max_fuel']}")
         return primary_dict
 
@@ -118,7 +132,7 @@ class NormsService:
             primary_dict: Dict[str, Dict[str, float]],
             ANTI_BUG_TIME_SECONDS: int = 10,
             PRE_PERIOD_TIME: int = 3,
-            PERIOD_2_MIN: int = 60, 
+            PERIOD_2_MIN: int = 30, 
             VOLTAGE_LIMIT: float = 0.16,
             REFUELING_LIMIT: int = 4000,
             FUEL_JUMP_BARRIER_PERC: float = 0.05,
@@ -326,14 +340,19 @@ class NormsService:
             # Убирает сообщения где есть задержка между клиентом и сервером
             df_processed = alg_piece_remove_message_delays(df_processed)
 
-            # Топливо выше max_fuel -> null
-            df_processed = df_processed.with_columns(
-                pl.when(pl.col("calc_sensors_fuel_level") > max_fuel)
-                .then(None)
-                .otherwise(pl.col("calc_sensors_fuel_level"))
-                .cast(pl.Float32)
-                .alias("calc_sensors_fuel_level"),
-            )
+            # Топливо выше max_fuel -> null для каждого датчика
+            fuel_cols = [c for c in df_processed.columns if c.startswith("calc_sensors_fuel_level")]
+            is_multi = len(fuel_cols) > 1
+            for index, col in enumerate(fuel_cols):
+                postfix = f"_{index}" if is_multi else ""
+                sensor_max_fuel = primary_params.get(f"max_fuel{postfix}", max_fuel)
+                df_processed = df_processed.with_columns(
+                    pl.when(pl.col(col) > sensor_max_fuel)
+                    .then(None)
+                    .otherwise(pl.col(col))
+                    .cast(pl.Float32)
+                    .alias(col),
+                )
 
             # Фильтр по msg_number
             if "msg_number" in df_processed.columns:
@@ -388,9 +407,19 @@ class NormsService:
             # Убирает пропуски в сообщениях
             df_processed = alg_piece_remove_skipped_messages(df_processed)
 
-            # Тарировка
-            if car_params.get("grades") is not None:
-                df_processed, lp, b, slope = tarify_car_by_sensor(df_processed, car_params)
+            # Тарировка для каждого датчика (мультисенсоры — per-sensor grades)
+            for col in fuel_cols:
+                if is_multi:
+                    match = re.search(r"_(\d)$", col)
+                    postfix = f"_{match.group(1)}" if match else ""
+                else:
+                    postfix = ""
+                sensor_grades = car_params.get(f"grades{postfix}") if postfix else car_params.get("grades")
+                if sensor_grades is None:
+                    sensor_grades = car_params.get("grades")
+                if sensor_grades is not None:
+                    car_params_for_sensor = {**car_params, "grades": sensor_grades}
+                    df_processed, lp, b, slope = tarify_car_by_sensor(df_processed, car_params_for_sensor, col)
 
             # spent_fuel_clean + fps + фильтр прыжков
             df_processed = df_processed.with_columns(

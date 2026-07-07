@@ -17,6 +17,10 @@ import polars
 
 NULLABLE = {"blank": True, "null": True}
 
+class MultiSensorChoices(models.TextChoices):
+    NONE = "none", "Нет"
+    TANK = "tank", "Бак"
+    CAN = "can", "КАН"
 
 class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -562,6 +566,8 @@ class CarBadData(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="bad_data")
     reason = models.TextField()
+    description = models.TextField(default="")
+    event_date = models.DateTimeField(default=None, blank=True, null=True)
     datetime = models.DateTimeField(default=timezone.now)
     # TODO: event time для защиты от двойного срабатывания
 
@@ -637,6 +643,7 @@ class SensorsKey(models.Model):
         return self.key
 
 
+
 class SensorsValues(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     key = models.ForeignKey(SensorsKey, on_delete=models.CASCADE, related_name="values")
@@ -648,6 +655,9 @@ class SensorsValues(models.Model):
     metadata = models.JSONField(null=True)
     created_at = models.DateTimeField(default=timezone.now)
     multi = models.BooleanField(default=False)
+    multi_type= models.CharField(default=MultiSensorChoices.NONE, choices=MultiSensorChoices.choices)
+    # TODO: реализовать если есть возможность, поддержка машин с двумя датчиками топлива
+    # ancestor = models.CharField(default=None, null=True, blank=True)
 
     class Meta:
         verbose_name = "SensorsValues"

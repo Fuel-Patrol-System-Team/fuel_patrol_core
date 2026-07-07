@@ -180,14 +180,14 @@ RPM_TEST_IDLE = 820
 def _compute_motohours_active_idle(df: pl.DataFrame, is_rpm_present: bool, rpm_idle: int | float, col_dtime_idle_checking_period: pl.Expr):
 
     if is_rpm_present:
+        # df = df.with_columns(
+        #     pl.col("rpm")
+        #     .mean()
+        #     .over(["auto", col_dtime_idle_checking_period])
+        #     .alias("rpm_direct")
+        # )
         df = df.with_columns(
-            pl.col("rpm")
-            .mean()
-            .over(["auto", col_dtime_idle_checking_period])
-            .alias("rpm_direct")
-        )
-        df = df.with_columns(
-            pl.col("rpm_direct").is_between(1, rpm_idle).cast(pl.Int8).alias("is_idle")
+            (pl.col("rpm").is_between(1, rpm_idle) & pl.col("rpm").is_not_null()).cast(pl.Int8).alias("is_idle")
         )
     else:
         df = df.with_columns(pl.lit(0).alias("is_idle"))
@@ -203,7 +203,7 @@ def _compute_motohours_by_motohours(
     df: pl.DataFrame, units: str, stats: dict[str, Any], AGG_PERIOD: int | None
 ):
     col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
-    col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("1m")
+    col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10s")
     is_rpm_present = "rpm" in df.columns
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
     sensor_check = "motohours"
@@ -295,7 +295,7 @@ def _compute_motohours_by_motohours(
         )
     idle_motohours = df["dtime_idle"].sum()
     motohours_fraud = (
-        df["motohours_fraud"].sum() + df["motohours_fraud_by_sensor"].sum()
+        df["motohours_fraud"].sum() + df["motohours_fraud_by_sensor"].abs().sum()
     )
 
     unefficient_cases = df["unefficient_cases_total"].sum()
@@ -325,7 +325,7 @@ def _compute_motohours_by_motohours(
 def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIOD: int | None):
 
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
-    col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10m")
+    col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("1m")
     is_rpm_present = df["rpm"].is_not_null().any()
     df = alg_piece_remove_message_delays(df)
     if df.shape[0] == 0:
@@ -373,6 +373,9 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
 
     motohours = df["engine_working"].sum()
     idle_motohours = df["dtime_idle"].sum()
+    # связанно с задержкой зажигания, менее 0.01 часа за день
+    if idle_motohours > motohours:
+        idle_motohours = motohours
     active_motohours = motohours - idle_motohours
     unefficient_cases = df["unefficient_cases_total"].max()
     unefficient_time = df["dtime_unefficient"].sum()

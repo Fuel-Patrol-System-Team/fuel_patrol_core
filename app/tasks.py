@@ -235,7 +235,7 @@ def process_single_car_data_task(
 
         logger.info(f"ЭТАП 1: Получение сырых данных для машины {car_id}...")
         parser = GlonassGeneralProvider(None, car, provider, start_dt, end_dt, "fuel")
-        status, raw_df = parser.parse_raw_data("fuel", return_df=True)
+        status, raw_df, sensors = parser.parse_raw_data("fuel", return_df=True)
 
         if not status:
             error_msg = f"Не удалось создать провайдер данных для машины {car_id}"
@@ -449,7 +449,7 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 if is_sensor == 0:
                     continue
                 auto_data = CarDataService.prepare_auto_data(car)
-                status, df = parser.parse_raw_data("fuel", True, car)
+                status, df, sensors = parser.parse_raw_data("fuel", True, car)
 
                 if status and isinstance(df, pl.DataFrame):
                     primary = CarDataService.calculate_primary_single(df, auto_data)
@@ -501,7 +501,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
             if is_sensor == 0:
                 return
             auto_data = CarDataService.prepare_auto_data(car)
-            status, df = parser.parse_raw_data("fuel", True, car)
+            status, df, sensors = parser.parse_raw_data("fuel", True, car)
 
             if status and isinstance(df, pl.DataFrame):
                 primary = CarDataService.calculate_primary_single(df, auto_data)
@@ -569,7 +569,7 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                 if is_sensor == 0:
                     continue
                 auto_data = CarDataService.prepare_auto_data(car)
-                status, df = parser.parse_raw_data("fuel", True, car)
+                status, df, sensors = parser.parse_raw_data("fuel", True, car)
 
                 if status and isinstance(df, pl.DataFrame):
                     primary = CarDataService.calculate_primary_single(df, auto_data)
@@ -635,7 +635,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
         for car in cars_norms:
             try:
                 auto_data = CarDataService.prepare_auto_data(car)
-                status, df = parser.parse_raw_data("fuel", True, car)
+                status, df, sensors = parser.parse_raw_data("fuel", True, car)
 
                 if status and isinstance(df, pl.DataFrame):
                     primary = pl.DataFrame(car.carprimary.primary)
@@ -709,7 +709,7 @@ def calculate_leaks_cron(
                     ReportQuery.ReportType.LEAKS,
                     is_save_bad_data=is_save_bad_data
                 )
-                status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
+                status, data_df, sensors = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
                 if status and isinstance(data_df, pl.DataFrame):
                     if data_df.is_empty():
                         result_msg = f"Нет данных за период {datetime_parsing} {last_date_for_processing} для {car.id}"
@@ -807,7 +807,7 @@ def calculate_leaks_cron_one(
                 is_save_bad_data=is_save_bad_data
             )
 
-            status, data_df = parser.parse_raw_data(
+            status, data_df, sensors = parser.parse_raw_data(
                 "fuel", True, car, datetime_parsing, now
             )
             is_fuel_report_made = False
@@ -816,7 +816,7 @@ def calculate_leaks_cron_one(
                 norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
                 auto_data = CarDataService.prepare_auto_data(car)
                 leak_service = leaks_service.LeaksService()
-                leaks_result, _, reports = leak_service.compute_leaks(auto_data, data_df, primary_df, norms_df)
+                leaks_result, _, reports = leak_service.compute_leaks(auto_data, data_df, sensors, primary_df, norms_df)
                 if is_save_bad_data:
                     ReportService.create_bad_data_record_from_list(car, reports, report_query)
                 # вычисления расхода ежедневного
@@ -1196,7 +1196,7 @@ def parse_cars_motohours_task(
                                 organization=provider.org_id,
                                 fraud_km=fraud_value,
                                 event_datetime=current_date,
-                                source_mileage_report=motohours_report,
+                                source_motohours_report=motohours_report,
                             )
                     else:
                         logger.error("Статус репорта не успешный")
@@ -1244,7 +1244,7 @@ def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_sa
                 ReportQuery.ReportType.LEAKS,
                 is_save_bad_data=is_save_bad_data
             )
-            status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
+            status, data_df, sensors = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
             if status and isinstance(data_df, pl.DataFrame):
                 primary_df = pl.DataFrame(car.carprimary.primary, schema_overrides={"auto": pl.Categorical})
                 norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
@@ -1309,7 +1309,7 @@ def parse_cars_computed_data_task(
                     str(provider_id),
                     ReportQuery.ReportType.COMPUTED_DATA
                 )
-                status, data_df = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
+                status, data_df, sensors = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
                 if status and isinstance(data_df, pl.DataFrame):
                     if data_df.is_empty():
                         result_msg = f"Нет данных за период {datetime_parsing} {last_date_for_processing}"

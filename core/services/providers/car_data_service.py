@@ -20,41 +20,76 @@ class CarDataService:
         """
         Вычисляет первичные показатели для одной машины
         Аналог функции calculate_primary из примера
+        Поддерживает мультисенсоры: для каждого датчика calc_sensors_fuel_level_N
+        вычисляется отдельный max_fuel_N, а также общий max_fuel.
         """
         try:
+            # Определяем все колонки топливных датчиков
+            fuel_cols = [c for c in df.columns if c.startswith("calc_sensors_fuel_level")]
+            is_multi = len(fuel_cols) > 1
 
-            df = df.with_columns(
-                pl.when(pl.col("calc_sensors_fuel_level") > 4096)
-                .then(None)
-                .otherwise(pl.col("calc_sensors_fuel_level"))
-                .alias("calc_sensors_fuel_level")
-            )
+            # Фильтр значений > 4096 для каждого датчика
+            for col in fuel_cols:
+                df = df.with_columns(
+                    pl.when(pl.col(col) > 4096)
+                    .then(None)
+                    .otherwise(pl.col(col))
+                    .alias(col)
+                )
 
             if "rpm" not in df.columns:
                 df = df.with_columns(pl.lit(65535).alias("rpm"))
 
-            df = df.drop_nulls("calc_sensors_fuel_level")
+            # drop_nulls по всем топливным колонкам
+            df = df.drop_nulls(fuel_cols)
 
             if df.is_empty():
                 logger.warning("Нет данных после удаления NaN")
                 return None
 
-            result = df.group_by("auto").agg([
-                pl.col("calc_sensors_fuel_level").max().alias("max_fuel"),
+            # Базовые агрегации
+            agg_exprs = [
                 pl.col("rpm").max().alias("rpm_max"),
                 pl.col("rpm").std().alias("rpm_std"),
                 pl.col("ign").max().alias("ign_functional"),
-            ])
+            ]
 
-            result = result.with_columns(
-                pl.when(pl.col("max_fuel").is_between(100, 120))
-                .then(99.9)
-                .otherwise(pl.col("max_fuel"))
-                .alias("max_fuel"),
-                pl.col("rpm_max").fill_null(0),
+            # Для каждого датчика — свой max_fuel_N
+            max_fuel_cols = []
+            for index, col in enumerate(fuel_cols):
+                postfix = f"_{index}" if is_multi else ""
+                alias = f"max_fuel{postfix}"
+                agg_exprs.append(pl.col(col).max().alias(alias))
+                max_fuel_cols.append(alias)
+
+            result = df.group_by("auto").agg(agg_exprs)
+
+            # Коррекция 100-120 → 99.9 для каждого max_fuel_N + общий max_fuel
+            correction_exprs = []
+            for alias in max_fuel_cols:
+                correction_exprs.append(
+                    pl.when(pl.col(alias).is_between(100, 120))
+                    .then(99.9)
+                    .otherwise(pl.col(alias))
+                    .alias(alias)
+                )
+
+            # Общий max_fuel = максимум по всем датчикам (для обратной совместимости)
+            correction_exprs.append(
+                pl.max_horizontal(max_fuel_cols).alias("max_fuel")
             )
+            correction_exprs.append(pl.col("rpm_max").fill_null(0))
+
+            result = result.with_columns(correction_exprs)
 
             reason = None
+
+            # Для мультисенсоров: создаём общую колонку calc_sensors_fuel_level
+            # (нужна для _calculate_primary_is_special и обратной совместимости)
+            if is_multi and "calc_sensors_fuel_level" not in df.columns:
+                df = df.with_columns(
+                    pl.sum_horizontal(fuel_cols).alias("calc_sensors_fuel_level")
+                )
 
             speed = CarDataService._calculate_primary_speed(df)
             if speed.is_empty() and reason is None:
@@ -152,32 +187,64 @@ class CarDataService:
 
     @staticmethod
     def prepare_auto_data(car, return_dict = False) -> pl.DataFrame:
-        """Подготавливает auto DataFrame для расчета норм"""
+        """Подготавливает auto DataFrame для расчета норм.
+        Извлекает grades для каждого топливного датчика (мультисенсоры):
+        grades — grades первого датчика (обратная совместимость),
+        grades_0, grades_1, ... — grades каждого датчика по порядку.
+        """
         try:
-            fuel_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).first()
-            fuel_sensors_amount= SensorsValues.objects.filter(car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True).count()
+            # Получаем все активные топливные датчики, упорядоченные по created_at
+            fuel_sensors = list(
+                SensorsValues.objects.filter(
+                    car_id__id=car.id, key__key="calc_sensors_fuel_level", is_active=True
+                ).order_by("created_at")
+            )
+            fuel_sensors_amount = len(fuel_sensors)
+            fuel_sensor = fuel_sensors[0] if fuel_sensors else None
+
+            fuel_sensor_multi_type = "none"
+            if fuel_sensor is not None:
+                fuel_sensor_multi_type = fuel_sensor.multi_type
+
             mileage_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="mileage", is_active=True).first()
+
+            # grades первого датчика (обратная совместимость)
             grades = None
             if fuel_sensor and fuel_sensor.metadata is not None:
                 grades = fuel_sensor.metadata.get("grades")
-                
-            auto_data = [{
+
+            # grades_list: grades для каждого датчика
+            grades_list = []
+            for sensor in fuel_sensors:
+                sensor_grades = None
+                if sensor.metadata is not None:
+                    sensor_grades = sensor.metadata.get("grades")
+                grades_list.append(sensor_grades)
+
+            auto_data = {
                 "id": str(car.id),
                 "auto": str(car.id),
                 "input": float(car.input) if car.input else 1.0,
                 "output": float(car.output) if car.output else 1.0,
                 "grades": grades,
+                "grades_list": grades_list,
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,
                 "is_tarrified": car.is_tarrified,
                 "fuel_sensor": fuel_sensor if fuel_sensor is None else fuel_sensor.value,
                 "fuel_sensors_amount": fuel_sensors_amount,
                 "mileage_grading": mileage_sensor.grades if mileage_sensor else None,
-            }]
-            if return_dict:
-                return auto_data
+                "fuel_sensor_multi_type": fuel_sensor_multi_type,
+            }
 
-            auto_df = pl.DataFrame(auto_data).with_columns([
+            # Добавляем grades_N для каждого датчика (мультисенсорная поддержка)
+            for index, sensor_grades in enumerate(grades_list):
+                auto_data[f"grades_{index}"] = sensor_grades
+
+            if return_dict:
+                return [auto_data]
+
+            auto_df = pl.DataFrame([auto_data]).with_columns([
                 pl.col("id").cast(pl.Categorical),
                 pl.col("auto").cast(pl.Categorical),
                 pl.col("input").cast(pl.Float32),

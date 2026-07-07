@@ -464,6 +464,7 @@ class CarBadDataSerializer(serializers.ModelSerializer):
             "car_id",
             "car_id_display",
             "car_name",
+            "event_date",
             "reason",
             "tags",
             "category",

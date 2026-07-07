@@ -67,7 +67,7 @@ class MileageCalculationService:
                 return {"error": error_msg}, 401
 
 
-            status, df = provider.parse_raw_data("mileage", True, car)
+            status, df, sensors = provider.parse_raw_data("mileage", True, car)
             if df is None or df.is_empty() or not status:
 
                 mode = MileageModes.standart if agg is None else MileageModes.agg
@@ -103,7 +103,7 @@ class MileageCalculationService:
                 if alg == MileageAlgorithms.compute:
                     result = mileage_test_compute(df, auto_record, agg, mode)
                 else:
-                    result = mileage_test_fraud_new(car_id, df, auto_record, agg, mode, sensor_chart=sensor_speed_chart, force_chart=force_chart )
+                    result = mileage_test_fraud_new(car_id, df, sensors, auto_record, agg, mode, sensor_chart=sensor_speed_chart, force_chart=force_chart )
 
                 if result["msg_skip_big"] == 1:
                     try:
@@ -118,6 +118,8 @@ class MileageCalculationService:
                     "alg": alg.name,
                     "aggregation_period_minutes": agg
                 }
+                if result["reports"] and is_save_bad_data:
+                    ReportService.create_bad_data_record_from_list(car, result["reports"], report_query)
 
 
                 ReportService.complete_report_success(

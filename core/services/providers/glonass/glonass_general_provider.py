@@ -15,6 +15,7 @@ import requests
 from django.utils import timezone
 
 from core.models import Car, DataProvider, SensorsValues
+from core.services.providers.glonass.auth_token_store import glonass_auth_token_store
 from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol, SensorMappingParserType
 from core.services.providers.glonass.glonass_expression_parser import GlonassExpresssionParser
 from core.services.providers.rate_limiter import global_rate_limiter
@@ -29,8 +30,7 @@ class GlonassGeneralProvider:
     mode: str
     old_car_id: UUID | None
     i = 0
-    last_auth: datetime 
-    
+
     def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage", default_period_days=90):
         if cars is None and car is not None:
             self.cars = list([car])
@@ -45,16 +45,21 @@ class GlonassGeneralProvider:
         self.provider = provider
         self.old_car_id = None
         self.metadata = self.provider.metadata or {}
+        # Логин используется как ключ для общего хранилища X-Auth токенов:
+        # GlonassSoft выдаёт AuthId на аккаунт (логин), поэтому один токен
+        # валиден для всех машин/провайдеров с этим же логином.
+        self._login: str | None = self.metadata.get("login")
 
         self.base_url = "https://hosting.glonasssoft.ru/api/v3"
-        self.auth_token = None
+        # Сразу пытаемся переиспользовать токен из процесс-уровневого кэша,
+        # если он был получен другим экземпляром в этом же воркере.
+        self.auth_token = glonass_auth_token_store.get_token(self._login) if self._login else None
         self.default_period_days = default_period_days
         self.base_path = Path(settings.MEDIA_ROOT) / "raw_data" / f"raw_data_{self.start_date.strftime("%Y%m%d")}_{self.end_date.strftime("%Y%m%d")}"
         if not self.base_path.exists():
             self.base_path.mkdir(parents=True)
         self.mode = mode
         self.sensors_mapping_cache = {}
-        self.last_auth = datetime(1999, 1, 1, 0, 0, 0, 0)
 
         self.total_messages = 0
         self.processed_messages = 0
@@ -89,35 +94,52 @@ class GlonassGeneralProvider:
         return self.sensors_mapping_cache
 
     def authenticate(self) -> bool:
-        """Аутентификация в GlonassSoft API"""
-        now = datetime.now()
-        if (now - self.last_auth).total_seconds() > 60 * 15:
-            self._enforce_rate_limit()
+        """Аутентификация в GlonassSoft API.
 
-            url = f"{self.base_url}/auth/login"
-            payload = {
-                "login": self.metadata.get("login"),
-                "password": self.metadata.get("password"),
-            }
+        Использует процесс-уровневый кэш токенов (см. ``auth_token_store``),
+        поэтому повторные вызовы из разных экземпляров провайдера с одним и
+        тем же логином не приводят к лишним запросам ``/auth/login``.
+        """
+        if not self._login:
+            logger.error("Не указан логин в metadata провайдера")
+            return False
 
-            try:
-                response = requests.post(url, json=payload, timeout=(10, 120))
-                response.raise_for_status()
-                data = orjson.loads(response.content)
-                self.auth_token = data.get("AuthId")
+        # Сначала проверяем кэш — возможно токен уже валиден и его только что
+        # обновил другой экземпляр в этом же воркере.
+        cached = glonass_auth_token_store.get_token(self._login)
+        if cached:
+            self.auth_token = cached
+            return True
 
-                if not self.auth_token:
-                    logger.error("AuthId не найден в ответе")
-                    return False
-                self.last_auth = datetime.now()
+        self._enforce_rate_limit()
 
-                logger.info("Аутентификация успешна")
-                return True
+        url = f"{self.base_url}/auth/login"
+        payload = {
+            "login": self._login,
+            "password": self.metadata.get("password"),
+        }
 
-            except requests.exceptions.RequestException as e:
-                logger.error(f"Ошибка аутентификации: {e}")
+        try:
+            response = requests.post(url, json=payload, timeout=(10, 120))
+            response.raise_for_status()
+            data = orjson.loads(response.content)
+            token = data.get("AuthId")
+
+            if not token:
+                logger.error("AuthId не найден в ответе")
                 return False
-        return True
+
+            # Сохраняем токен в общий кэш, чтобы другие экземпляры могли его
+            # переиспользовать, пока он не протухнет (TTL 15 минут).
+            glonass_auth_token_store.set_token(self._login, token)
+            self.auth_token = token
+
+            logger.info("Аутентификация успешна")
+            return True
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Ошибка аутентификации: {e}")
+            return False
         
     def parse_raw_data_all(self, return_df=False ):
         if self.cars is None:
@@ -147,7 +169,7 @@ class GlonassGeneralProvider:
             for car in self.cars:
                 try:
                     self._enforce_rate_limit()
-                    status, result = self.parse_raw_data(self.mode, return_df=return_df, car=car)
+                    status, result, sensors = self.parse_raw_data(self.mode, return_df=return_df, car=car)
                     if status:
                         self.processed_cars += 1
                     else:
@@ -202,14 +224,33 @@ class GlonassGeneralProvider:
             "to": end_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
             "timezone": 0
         }
-        headers = {"X-Auth": self.auth_token}
+
+        # Локальная обёртка, чтобы не дублировать логику инвалидации токена.
+        def _do_request(current_token: str | None):
+            response = requests.post(
+                url,
+                json=payload,
+                headers={"X-Auth": current_token or ""},
+                timeout=(10, 180),
+                stream=True,
+            )
+            response.raise_for_status()
+            return orjson.loads(response.content)
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=(10, 180), stream=True)
-            response.raise_for_status()
+            try:
+                data = _do_request(self.auth_token)
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 401 and self._login:
+                    logger.warning("401 при запросе заправок — инвалидация токена и повторная попытка")
+                    glonass_auth_token_store.invalidate(self._login)
+                    if not self.authenticate():
+                        logger.error("Не удалось переаутентифицироваться после 401")
+                        return None
+                    data = _do_request(self.auth_token)
+                else:
+                    raise
 
-            data = orjson.loads(response.content)
-            
             if not isinstance(data, list):
                 logger.error(f"Некорректный формат ответа для {car.id_in_provider_system}")
                 return None
@@ -247,14 +288,14 @@ class GlonassGeneralProvider:
 
 
 
-    def parse_raw_data(self, mode: str, return_df=False, car : Car | None = None, start_date: datetime | None = None, end_date: datetime | None = None) -> tuple[ bool, pl.DataFrame | List[Dict[str, Any]] | None]:
+    def parse_raw_data(self, mode: str, return_df=False, car : Car | None = None, start_date: datetime | None = None, end_date: datetime | None = None) -> tuple[ bool, pl.DataFrame | List[Dict[str, Any]] | None, Dict[str, List[Any]]]:
         """Основной метод парсинга данных"""
         car_to_use = car if car is not None else self._pick_car()
         sensors_mapping = self._get_sensors_mapping(car_to_use)
         if not self.authenticate():
-            return (False, [{"error": "Auth Error"}])
+            return (False, [{"error": "Auth Error"}], sensors_mapping)
         if mode not in ["mileage", "fuel", "fuel_charts", "motohours", "raw", "raw_mapped"]:
-            return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}])
+            return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}], sensors_mapping)
         
 
         
@@ -264,7 +305,7 @@ class GlonassGeneralProvider:
 
         if not all_messages:
             logger.warning(f"Нет данных для машины {car_to_use.id_in_provider_system}")
-            return True, pl.DataFrame() if return_df else []
+            return True, pl.DataFrame() if return_df else [], sensors_mapping
 
         if mode == "mileage":
             result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.speed_gps,GP.mileage, GP.satellites, GP.fuel_consumpt, GP.rpm, GP.ignition, GP.msg_number],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
@@ -286,7 +327,7 @@ class GlonassGeneralProvider:
                 self._archive_csv_file(path)
 
         logger.info(f"Обработано {self.processed_messages} сообщений из {self.total_messages} для режима {mode}")
-        return (True, result)
+        return (True, result, sensors_mapping)
     def _get_all_messages_for_period(self, start_time: datetime | None, end_time: datetime | None, car: Car, default_days=90) -> List[Dict[str, Any]]:
         """Получает все сообщения за период с адаптивными запросами"""
         all_messages = []
@@ -346,13 +387,31 @@ class GlonassGeneralProvider:
             "from": start_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
             "to": end_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
         }
-        headers = {"X-Auth": self.auth_token}
+
+        def _do_request(current_token: str | None):
+            response = requests.post(
+                url,
+                json=payload,
+                headers={"X-Auth": current_token or ""},
+                timeout=(10, 180),
+            )
+            response.raise_for_status()
+            return orjson.loads(response.content)
 
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=(10, 180) )
-            response.raise_for_status()
+            try:
+                data = _do_request(self.auth_token)
+            except requests.exceptions.HTTPError as e:
+                if e.response is not None and e.response.status_code == 401 and self._login:
+                    logger.warning("401 при запросе сообщений — инвалидация токена и повторная попытка")
+                    glonass_auth_token_store.invalidate(self._login)
+                    if not self.authenticate():
+                        logger.error("Не удалось переаутентифицироваться после 401")
+                        return None
+                    data = _do_request(self.auth_token)
+                else:
+                    raise
 
-            data = orjson.loads(response.content)
             messages = data.get("messages", [])
 
             if not isinstance(messages, list):
@@ -486,7 +545,6 @@ class GlonassGeneralProvider:
                     if param.default_key in result.columns:
                         path_to_params = [{"value": param.default_key}]
                 for index, sensor in enumerate(path_to_params):
-                    
                     path_to_param = sensor["value"]
                     expr = None
                     
