@@ -578,11 +578,12 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 20000
 # ======================
 
 
-sentry_sdk.init(
-    dsn="https://a075e62d45db4eeea8c76643c9628328@api.sherlog.noodev.ru/25",
-    send_default_pii=True,
-    traces_sample_rate=1.0,
-    profile_session_sample_rate=1.0,
-    profile_lifecycle="trace",
-    enable_logs=True,
-)
+if not DEBUG:
+    sentry_sdk.init(
+        dsn="https://a075e62d45db4eeea8c76643c9628328@api.sherlog.noodev.ru/25",
+        send_default_pii=True,
+        traces_sample_rate=1.0,
+        profile_session_sample_rate=1.0,
+        profile_lifecycle="trace",
+        enable_logs=True,
+    )
