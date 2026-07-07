@@ -459,6 +459,11 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
 
         if start_date and (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
+        if start_date > datetime.now().astimezone(target_timezone).__add__(timedelta(hours=12)):
+            return error_response("Начало периода выше текущей даты", status.HTTP_400_BAD_REQUEST)
+        if end_date > datetime.now().astimezone(target_timezone) + timedelta(days=1):
+            end_date = datetime.now().astimezone(target_timezone) + timedelta(days=1)
+        
 
         try:
             result, status_code = MileageCalculationService.calculate_mileage(
@@ -530,6 +535,10 @@ class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
 
         if start_date and (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
+        if start_date > datetime.now().astimezone(target_timezone).__add__(timedelta(hours=12)):
+            return error_response("Начало периода выше текущей даты", status.HTTP_400_BAD_REQUEST)
+        if end_date > datetime.now().astimezone(target_timezone) + timedelta(days=1):
+            end_date = datetime.now().astimezone(target_timezone) + timedelta(days=1)
 
         try:
             result, status_code = FuelReportService.calculate_fuelspent(
@@ -586,10 +595,18 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
                 end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
-
+        user = request.user
+        if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
+            target_timezone = ZoneInfo(user.timezone)
+        else:
+            target_timezone = ZoneInfo("UTC")
         if start_date and end_date and (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
-
+        if start_date > datetime.now().__add__(timedelta(hours=12)):
+            return error_response("Начало периода выше текущей даты", status.HTTP_400_BAD_REQUEST)
+        if end_date > datetime.now() + timedelta(days=1):
+            end_date = datetime.now().astimezone(target_timezone) + timedelta(days=1)
+        
         try:
             result, status_code = MotohoursCalculationService.calculate_motohours(
                 car_id=car_id, agg=agg,
