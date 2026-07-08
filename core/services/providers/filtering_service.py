@@ -53,14 +53,14 @@ class FilteringService(BaseFilteringService):
         return result_df, result_df
 
     def pick_low_speed(
-        self, result_df: pl.DataFrame, LOW_SPEED_FACTOR: int = 3, BARRIER_FUEL = 10
+        self, result_df: pl.DataFrame, LOW_SPEED_FACTOR: int = 6, BARRIER_FUEL = 10
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по низкой скорости"""
         result_df = result_df.with_columns(
             
         )
         result_df = self._tool_pick_leak(result_df,
-            [(pl.col("pos_s").lt(LOW_SPEED_FACTOR) & pl.col("spent_fuel").gt(BARRIER_FUEL))], "low_speed")
+            [(pl.col("pos_s").lt(pl.col("norm_speed").truediv(LOW_SPEED_FACTOR)) & pl.col("spent_fuel").gt(BARRIER_FUEL))], "low_speed")
 
         return result_df, result_df
 

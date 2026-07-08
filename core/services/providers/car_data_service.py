@@ -73,11 +73,13 @@ class CarDataService:
                     .otherwise(pl.col(alias))
                     .alias(alias)
                 )
-
-            # Общий max_fuel = максимум по всем датчикам (для обратной совместимости)
-            correction_exprs.append(
-                pl.max_horizontal(max_fuel_cols).alias("max_fuel")
-            )
+            # TODO: сделать тарифированный max_fuel и raw_max_fuel для датчиков и детектирования аномалий/прыжков(надо ли?)
+            # Общий max_fuel = максимум по всем датчикам (только для мультисенсоров)
+            # Для одиночного датчика max_fuel уже создан в цикле выше
+            if is_multi:
+                correction_exprs.append(
+                    pl.max_horizontal(max_fuel_cols).alias("max_fuel")
+                )
             correction_exprs.append(pl.col("rpm_max").fill_null(0))
 
             result = result.with_columns(correction_exprs)

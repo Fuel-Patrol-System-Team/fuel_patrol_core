@@ -1,14 +1,26 @@
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Literal
 import polars as pl
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays
 from core.helpers.maintenance import maintenance_board_voltage_notify, maintenance_critical_raw_fuel_values, maintenance_event_codes, maintenance_fuel_consumpt_check
 from core.helpers.mileage import alg_piece_remove_skipped_messages
-from core.services.providers.glonass.constants import reconcile_multisensor
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
-
+def reconcile_multisensor(df: pl.DataFrame, sensor_type: Literal["none"] | Literal["tank"] | Literal["can"]):
+    # TODO: обсудить на встрече. Из-за того, что часто бывает только один датчик, неясно как лучше сделать 
+    if sensor_type == "none":
+        return df
+    calc_sensor_sensors = list(filter(lambda x: "calc_sensors_fuel_level" in x, df.columns))
+    if sensor_type == "tank":
+        df = df.with_columns(
+            pl.sum_horizontal(calc_sensor_sensors).alias("calc_sensors_fuel_level")
+        )
+    if sensor_type == "can":
+        df = df.with_columns(
+            pl.mean_horizontal(calc_sensor_sensors).alias("calc_sensors_fuel_level")
+        )
+    return df
 def make_primary_fast(df: pl.DataFrame):
     is_primary = True
     primary = {}

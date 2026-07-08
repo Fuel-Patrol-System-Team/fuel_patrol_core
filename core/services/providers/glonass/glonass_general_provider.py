@@ -83,7 +83,7 @@ class GlonassGeneralProvider:
                 sensors_mapping = {sv.key.key: [] for sv in sensors}
                 for sv in sensors:
                     if sv.key.key in sensors_mapping:
-                        sensors_mapping[sv.key.key].append({"value": sv.value, "metadata": sv.metadata})
+                        sensors_mapping[sv.key.key].append({"value": sv.value, "metadata": sv.metadata, "is_multi": sv.multi, "multi_type": sv.multi_type})
 
                 self.sensors_mapping_cache = sensors_mapping
                 logger.debug(f"Загружен маппинг для {car.name}: {len(sensors_mapping)} сенсоров")
@@ -224,6 +224,7 @@ class GlonassGeneralProvider:
             "to": end_date.strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-3],
             "timezone": 0
         }
+        # TODO: time limit больше 93 = краш, собирать по частям
 
         # Локальная обёртка, чтобы не дублировать логику инвалидации токена.
         def _do_request(current_token: str | None):

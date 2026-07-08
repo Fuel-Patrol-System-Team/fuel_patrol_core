@@ -8,7 +8,8 @@ from pathlib import Path
 from django.conf import settings
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays, alg_piece_remove_skipped_messages
-from core.helpers.fuel import tarify_car_by_sensor
+from core.helpers.fuel import tarify_car_by_sensor, _get_postfix
+from core.services.providers.glonass.constants import reconcile_multisensor
 
 logger = logging.getLogger(__name__)
 
@@ -343,8 +344,8 @@ class NormsService:
             # Топливо выше max_fuel -> null для каждого датчика
             fuel_cols = [c for c in df_processed.columns if c.startswith("calc_sensors_fuel_level")]
             is_multi = len(fuel_cols) > 1
-            for index, col in enumerate(fuel_cols):
-                postfix = f"_{index}" if is_multi else ""
+            for col in fuel_cols:
+                postfix = _get_postfix(col)
                 sensor_max_fuel = primary_params.get(f"max_fuel{postfix}", max_fuel)
                 df_processed = df_processed.with_columns(
                     pl.when(pl.col(col) > sensor_max_fuel)
@@ -360,30 +361,32 @@ class NormsService:
                     pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5)
                 )
 
-            # Forward strategy для заполнения пропусков
-            df_processed = df_processed.with_columns(
-                pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
-            )
+            # Forward strategy для заполнения пропусков (по каждому датчику)
+            for col in fuel_cols:
+                df_processed = df_processed.with_columns(
+                    pl.col(col).fill_null(strategy="forward")
+                )
 
             col_dtime_half = pl.col("timestamp").dt.truncate("30m")
             col_dtime_2hour = pl.col("timestamp").dt.truncate("2h")
             col_dtime_period = pl.col("timestamp").dt.truncate("60m")
 
-            # fuel_level_nan за 30 минут
+            # fuel_level_nan за 30 минут (по первому датчику, как в fuel.py)
             df_processed = df_processed.with_columns(
-                pl.col("calc_sensors_fuel_level").is_not_nan()
+                pl.col(fuel_cols[0]).is_not_nan()
                 .over(["auto", col_dtime_half])
                 .cast(pl.Int16)
                 .alias("fuel_level_nan")
             )
 
-            # Очистка
-            df_processed = df_processed.filter(
-                [
-                    pl.col("calc_sensors_fuel_level").is_not_nan(),
-                    pl.col("calc_sensors_fuel_level").is_not_null(),
-                ]
-            )
+            # Очистка (по каждому датчику, как в fuel.py)
+            for col in fuel_cols:
+                df_processed = df_processed.filter(
+                    [
+                        pl.col(col).is_not_nan(),
+                        pl.col(col).is_not_null(),
+                    ]
+                )
 
             if df_processed.is_empty():
                 logger.warning("Нет данных после фильтрации NaN/null")
@@ -409,17 +412,19 @@ class NormsService:
 
             # Тарировка для каждого датчика (мультисенсоры — per-sensor grades)
             for col in fuel_cols:
-                if is_multi:
-                    match = re.search(r"_(\d)$", col)
-                    postfix = f"_{match.group(1)}" if match else ""
-                else:
-                    postfix = ""
+                postfix = _get_postfix(col)
+                # Для мультисенсоров используем grades_N, для одиночного — grades
                 sensor_grades = car_params.get(f"grades{postfix}") if postfix else car_params.get("grades")
                 if sensor_grades is None:
                     sensor_grades = car_params.get("grades")
                 if sensor_grades is not None:
                     car_params_for_sensor = {**car_params, "grades": sensor_grades}
                     df_processed, lp, b, slope = tarify_car_by_sensor(df_processed, car_params_for_sensor, col)
+
+            # Для мультисенсоров: создаём общую колонку calc_sensors_fuel_level
+            # (multi_type: Literal["none", "tank", "can"] — runtime guarantee from DB)
+            multi_type = car_params.get("fuel_sensor_multi_type", "none")
+            df_processed = reconcile_multisensor(df_processed, multi_type)  # type: ignore[arg-type]
 
             # spent_fuel_clean + fps + фильтр прыжков
             df_processed = df_processed.with_columns(

@@ -4,10 +4,13 @@ from attr import dataclass
 import polars as pl
 from typing import Protocol
 
+from core.helpers.fuel import reconcile_multisensor, tarify_car_by_sensor
 from core.models import Car 
 
 class SensorMappingParserType(TypedDict):
     value: str
+    multi: bool
+    multi_type: Literal["can"] | Literal["tank"] | Literal["none"]
     metadata: Dict[str, Any]
 class GlonassCastProtocol(Protocol): 
     def __call__(self, df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]]) -> pl.DataFrame:
@@ -117,8 +120,9 @@ def _tarify_car(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: 
     sensors = filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns)
 
 
-    for sensor in sensors:
-        grades = sensor_mapping[sensor][0].get("metadata", {}).get("grades", None)
+
+    for i, sensor in enumerate(sensors):
+        grades = sensor_mapping["calc_sensors_fuel_level"][i].get("metadata", {}).get("grades", None)
         unique = list({tuple(sorted(d.items())): d for d in grades}.values())
         pairs = list(zip(unique, unique[1:]))
         mp = unique[0]
@@ -142,20 +146,7 @@ def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dic
         df = df.filter(~pl.col("calc_sensors_fuel_level").is_in([9, 4]))
     print(sensor_mapping)
     return df
-def reconcile_multisensor(df: pl.DataFrame, sensor_type: Literal["none"] | Literal["tank"] | Literal["can"]):
-    # TODO: обсудить на встрече. Из-за того, что часто бывает только один датчик, неясно как лучше сделать 
-    if sensor_type == "none":
-        return df
-    calc_sensor_sensors = list(filter(lambda x: "calc_sensors_fuel_level" in x, df.columns))
-    if sensor_type == "tank":
-        df = df.with_columns(
-            pl.sum_horizontal(calc_sensor_sensors).alias("calc_sensors_fuel_level")
-        )
-    if sensor_type == "can":
-        df = df.with_columns(
-            pl.mean_horizontal(calc_sensor_sensors).alias("calc_sensors_fuel_level")
-        )
-    return df
+
     
 
 def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
@@ -164,13 +155,13 @@ def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_map
     if "msg_number" in df.columns:
         df = df.filter(pl.col("msg_number").diff().abs().fill_null(0).fill_nan(0).lt(5))
 
-    for sensor in sensors:
+    for i, sensor in enumerate(sensors):
         df = df.filter(pl.col(sensor).gt(0))
-        if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
-            df = df.filter(~pl.col(sensor).is_in([9, 4]))
-    df = _tarify_car(df, car, mapping, sensor_mapping)
-    if len(sensors) > 1:
-        df = df.with_columns(pl.col(sensors[0]).add(pl.col(sensors[1])).alias("calc_sensors_fuel_level"))
+        # if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
+        #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
+        df, lp, b, slop  = tarify_car_by_sensor(df, {"grades": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"]["grades"] }, sensor)
+    df = reconcile_multisensor(df, sensor_mapping["calc_sensors_fuel_level"][-1]["multi_type"])
+    mapping.append("calc_sensors_fuel_level")
     return df
     
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {
