@@ -30,6 +30,39 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports=[]):
     #     )
     return reports
 
+def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=[]):
+    if "mileage" in df.columns and df["mileage"].is_not_null().any():
+        dtime_period = pl.col("timestamp").dt.truncate("1h")
+        tdf = df.with_columns(
+            pl.col("calc_sensors_voltage").diff().abs().mean().over(dtime_period).alias("voltage_diff"),
+            pl.col("mileage").diff().abs().mean().over(dtime_period).alias("mileage_diff")
+        )
+        tdf = tdf.with_columns(
+            (pl.col("voltage_diff").lt(300) & pl.col("mileage_diff").gt(10)).cast(pl.Int32).alias("anomaly")
+        )
+        report_data = (
+            tdf.with_columns(pl.col("timestamp").diff().dt.total_hours().alias("mdtime"))
+            .group_by_dynamic(index_column="timestamp", every="1d")
+            .agg(
+                [
+                    pl.col("mileage").diff().sum(),
+                    pl.col("calc_sensors_voltage").diff().abs().mean(),
+                    pl.col("anomaly").sum()
+                ]
+            )
+        )
+        for report in report_data.rows(named=True):
+            reports.append(
+                {
+                    "event_date": report["timestamp"],
+                    "message": f"Не типично стабильное напряжение бортовой цепи кол-во аномалий {report["anomaly"]}",
+                    "tags": [CarBadData.Tag.MILEAGE],
+                    "category": CarBadData.Category.MAINTENANCE,
+                    "severity": CarBadData.Severity.ERROR,
+                }
+            )
+    return reports
+
 
 def maintenance_fuel_consumpt_check(
     df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]
@@ -42,7 +75,7 @@ def maintenance_fuel_consumpt_check(
             .group_by_dynamic(index_column="timestamp", every="1d")
             .agg(
                 [
-                    pl.col("timestamp").diff().dt.total_hours().sum().alias("dtime"),
+                    pl.col("mdtime").sum().alias("dtime"),
                     pl.col("fuel_consumpt").diff().sum(),
                     pl.col("pos_s").mean(),
                 ]
