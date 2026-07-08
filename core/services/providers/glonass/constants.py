@@ -161,7 +161,8 @@ def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_map
         #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
         df, lp, b, slop  = tarify_car_by_sensor(df, {"grades": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"]["grades"] }, sensor)
     df = reconcile_multisensor(df, sensor_mapping["calc_sensors_fuel_level"][-1]["multi_type"])
-    mapping.append("calc_sensors_fuel_level")
+    if "calc_sensors_fuel_level" not in mapping:
+        mapping.append("calc_sensors_fuel_level")
     return df
     
 GLOBAL_GLONASS_ACTIONS: dict[GL_ACTION_KEYS, GlonassAfterParsingProtocol] = {
