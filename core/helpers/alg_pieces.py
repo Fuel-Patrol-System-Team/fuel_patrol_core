@@ -54,7 +54,7 @@ def rpm_almost_same_rpm(
             pl.col("rpm").diff().abs().mean().over(["auto", col_dtime_for_case]).alias("rpm_diff")
         )
         df = df.with_columns(
-            (pl.col("rpm_diff").lt(25) & pl.col("rpm").is_not_null() & pl.col("rpm_mean").gt(RPM_IDLE)).cast(pl.Int8).alias("rpm_same_cases")
+            (pl.col("rpm_diff").lt(1) & pl.col("rpm").is_not_null() & pl.col("rpm_mean").gt(RPM_IDLE)).cast(pl.Int8).alias("rpm_same_cases")
         )
         df = df.with_columns(
             pl.col("rpm_same_cases").mul(pl.col("dtime")).alias("rpm_same_cases_time")
