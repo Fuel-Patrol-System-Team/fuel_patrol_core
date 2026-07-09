@@ -822,3 +822,53 @@ TELEGRAM_REGISTER_SCHEMA = {
         404: 'Organization not found',
     }
 }
+ANALYSIS_SCHEMA = {
+    'operation_summary': "Запуск анализа через ML-сервис",
+    'operation_description': (
+        "Отправляет данные в микросервис для анализа. Для топлива требуется передать car_report_id, "
+        "для пробегов и моточасов — массив data."
+    ),
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['service'],
+        properties={
+            'service': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                enum=['fuel', 'mileage', 'motohours'],
+                description='Тип анализа'
+            ),
+            'car_report_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                description='UUID записи CarReport (только для service=fuel)'
+            ),
+            'data': openapi.Schema(
+                type=openapi.TYPE_ARRAY,
+                items=openapi.Schema(
+                    type=openapi.TYPE_OBJECT,
+                    description='Массив записей для анализа (только для mileage и motohours)'
+                )
+            )
+        }
+    ),
+    'responses': {
+        200: openapi.Response(
+            description='Успешный анализ',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'data': openapi.Schema(
+                        type=openapi.TYPE_OBJECT,
+                        properties={
+                            'service': openapi.Schema(type=openapi.TYPE_STRING),
+                            'processed': openapi.Schema(type=openapi.TYPE_INTEGER),
+                            'result': openapi.Schema(type=openapi.TYPE_OBJECT),
+                        }
+                    )
+                }
+            )
+        ),
+        400: openapi.Response(description='Ошибка валидации'),
+        503: openapi.Response(description='Сервис недоступен')
+    }
+}

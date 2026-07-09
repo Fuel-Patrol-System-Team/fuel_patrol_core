@@ -22,6 +22,10 @@ class MultiSensorChoices(models.TextChoices):
     TANK = "tank", "Бак"
     CAN = "can", "КАН"
 
+class AIResponseStatus(models.TextChoices):
+    OK = "ok", "OK"
+    ERROR = "error", "Error"
+
 class Organization(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=100)
@@ -414,6 +418,7 @@ class LeakPicker(models.TextChoices):
     BOUNDARY_FILTER = "boundary_spent_fuel", ""
     SIGMA_FILTER = "fuel_spent_std", ""
     LOW_SPEED_FILTER = "low_speed", ""
+
 # TODO: Переименовать в CarLeakReport
 class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -423,9 +428,14 @@ class CarReport(models.Model):
     speed = models.FloatField(null=True)
     volume = models.IntegerField()
     status = models.BooleanField()
-    
     picked_by = models.CharField(max_length=64, default=LeakPicker.SIGMA_FILTER, choices=LeakPicker.choices)
-    
+    ai_response = models.JSONField(**NULLABLE)
+    ai_response_status = models.CharField(
+        max_length=10,
+        choices=AIResponseStatus.choices,
+        **NULLABLE,
+        db_index=True
+    )
         
 
     class Meta:
@@ -498,6 +508,13 @@ class CarMotohoursReport(models.Model):
     unefficient_time = models.FloatField(**NULLABLE)
     sensor = models.CharField(max_length=32)
     sensor_check = models.CharField(max_length=32)
+    ai_response = models.JSONField(**NULLABLE)
+    ai_response_status = models.CharField(
+        max_length=10,
+        choices=AIResponseStatus.choices,
+        **NULLABLE,
+        db_index=True
+    )
 
     class Meta:
         verbose_name = "Car Motohours Report"
@@ -519,6 +536,13 @@ class CarMileageReport(models.Model):
     fraud = models.FloatField(**NULLABLE)
     ign_miss = models.FloatField(**NULLABLE)
     travel_fraud_jumps = models.FloatField(**NULLABLE)
+    ai_response = models.JSONField(**NULLABLE)
+    ai_response_status = models.CharField(
+        max_length=10,
+        choices=AIResponseStatus.choices,
+        **NULLABLE,
+        db_index=True
+    )
 
     class Meta:
         verbose_name = "Car Mileage Report"

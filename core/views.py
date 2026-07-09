@@ -1,4 +1,3 @@
-import json
 import uuid
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -43,6 +42,7 @@ from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
 from .helpers.data_provider import validate_provider_cars, \
     create_data_provider
+from .helpers.ml_reasoning import update_ai_response, prepare_motohours_data, prepare_mileage_data, prepare_fuel_data
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
 from .mixins.calculation_logs_mixin import APICalculationLoggingMixin
@@ -55,19 +55,22 @@ from .models import CarMotohoursReport, ComputedData, Organization, ParsingCarSt
     APICalculationLog
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, FUELREPORT_REQUEST_SCHEMA, LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
+    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, FUELREPORT_REQUEST_SCHEMA,
+    LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
     MOTOHOURS_REQUEST_SCHEMA, PARSING_STATS_RPM_SCHEMA, PARSING_STATS_SWITCH_SCHEMA, VEHICLE_SYNC_SCHEMA,
     CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
-    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA
+    CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA,
+    ANALYSIS_SCHEMA
 )
 from app.tasks import FuelReportService, sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
     APICalculationRetrieveLogOutputSerializer, AutoDataOutputSerializer, CarByGroupSensorsValuesOutputSerializer,
     CarLeaksChartsRequestSerializer, CarMotohoursReportOutputSerializer, CarSensorsSwitchSerializer,
-    ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, SensorsValuesOutputSerializer, UserRegistrationSerializer,
+    ParsingStatsSwitchSerializer, ParsingStatsUpdateRpmSerializer, SensorsValuesOutputSerializer,
+    UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
     CarOutputSerializer,
@@ -79,13 +82,14 @@ from .serializers import (
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
     TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
     APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer,
-    AlertSubscriptionPatchSerializer
+    AlertSubscriptionPatchSerializer, AnalysisRequestSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
     success_response
 from core.helpers.permissions import IsOrgMember
 from core.demo_auth.permissions import IsNotDemoUser, IsDemoUser
+from .services.ml_reasoning_service import MLReasoningService
 from .services.providers.car_data_service import CarDataService
 from .services.providers.mileage_calculation_service import MileageAlgorithms, MileageCalculationService
 from .services.providers.motohours_calculation_service import MotohoursCalculationService
@@ -1804,6 +1808,20 @@ class AlertSubscriptionAPIView(APIView):
         serializer = AlertSubscriptionPatchSerializer(subscription)
         return success_response(serializer.data, status.HTTP_200_OK)
 
+
+
+class MLReasoningView(APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
+    @swagger_auto_schema(**ANALYSIS_SCHEMA)
+    def post(self, request):
+        service = MLReasoningService(request.data)
+        result = service.process()
+
+        if result.get('success'):
+            return success_response(result['data'], status.HTTP_200_OK)
+        else:
+            return error_response(result.get('error', 'Unknown error'), status.HTTP_400_BAD_REQUEST)
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {'api_description_url': '/api/v1/swagger.json'})

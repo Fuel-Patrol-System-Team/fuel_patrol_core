@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from rest_framework import serializers
 from .models import (
     CarMotohoursReport,
@@ -733,4 +735,51 @@ class AlertSubscriptionPatchSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
 
+        return attrs
+
+
+class FuelAnalysisSerializer(serializers.Serializer):
+    service = serializers.CharField(default='fuel')
+    car_report_id = serializers.UUIDField()
+
+    def validate_service(self, value):
+        if value != 'fuel':
+            raise serializers.ValidationError("Service must be 'fuel'")
+        return value
+
+class MileageAnalysisSerializer(serializers.Serializer):
+    service = serializers.CharField(default='mileage')
+    data = serializers.ListField(child=serializers.DictField())
+
+    def validate_service(self, value):
+        if value != 'mileage':
+            raise serializers.ValidationError("Service must be 'mileage'")
+        return value
+
+class MotohoursAnalysisSerializer(serializers.Serializer):
+    service = serializers.CharField(default='motohours')
+    data = serializers.ListField(child=serializers.DictField())
+
+    def validate_service(self, value):
+        if value != 'motohours':
+            raise serializers.ValidationError("Service must be 'motohours'")
+        return value
+
+class AnalysisRequestSerializer(serializers.Serializer):
+    service = serializers.ChoiceField(choices=['fuel', 'mileage', 'motohours'])
+
+    def validate(self, attrs):
+        service = attrs.get('service')
+        if service == 'fuel':
+            if 'car_report_id' not in self.initial_data:
+                raise serializers.ValidationError({"car_report_id": "This field is required for fuel service."})
+            try:
+                UUID(self.initial_data['car_report_id'])
+            except ValueError:
+                raise serializers.ValidationError({"car_report_id": "Invalid UUID format."})
+        elif service in ('mileage', 'motohours'):
+            if 'data' not in self.initial_data:
+                raise serializers.ValidationError({"data": "This field is required for mileage/motohours service."})
+            if not isinstance(self.initial_data['data'], list):
+                raise serializers.ValidationError({"data": "Must be a list of objects."})
         return attrs
