@@ -332,6 +332,10 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("spent_fuel_boundary"),
             ]
         )
+        result = result.filter(pl.col("fuel_level_nan").ne(pl.col("count")))
+        result = result.with_columns(
+            pl.col("timestamp").shift(1).alias("prev_period")
+        )
         final_count = len(result)
         logger.debug(
             f"Финальная группировка {PERIOD_2_MIN}м: {initial_count} -> {final_count} записей"

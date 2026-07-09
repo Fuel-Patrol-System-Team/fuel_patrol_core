@@ -5,6 +5,7 @@ from django.db import transaction
 from datetime import timedelta, datetime, timezone
 import polars as pl
 import pytz
+from pytz import tzinfo
 
 from core.models import (
     ReportQuery,
@@ -262,7 +263,7 @@ class ReportService:
             return 0
 
         try:
-            leaks_records = leaks_df.filter(pl.col("is_leak") == True).to_dicts()
+            leaks_records = leaks_df.filter(pl.col("is_picked_leak") == True).to_dicts()
 
             if not leaks_records:
                 logger.warning("Нет записей с is_leak=True для сохранения")
@@ -273,10 +274,14 @@ class ReportService:
 
             for record in leaks_records:
                 try:
+                    realdate = record["timestamp"].replace(tzinfo=timezone.utc)
+                    if record["picked_by"] == "boundary_spent_fuel":
+                        realdate = record["prev_period"].replace(tzinfo=timezone.utc)
+                    
                     car = Car.objects.get(id=record["auto"])
                     car_reports.append(CarReport(
                         car_id=car,
-                        datetime=record["timestamp"].replace(tzinfo=timezone.utc),
+                        datetime=realdate,
                         volume=int(record["leak"]),
                         speed=float(record["pos_s"]),
                         status=bool(record["is_leak"]),

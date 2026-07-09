@@ -155,16 +155,15 @@ def preprocess_basic_one(
     col_dtime_period = pl.col("timestamp").dt.truncate(f"60m")
     col_dtime_day = pl.col("timestamp").dt.truncate("1d")
 
-    # forward strategy for filling gaps
-    for sensor in calc_fuel_sensors:
-        df = df.with_columns(
-            pl.col(sensor).fill_null(strategy="forward")
-        )
+    # for sensor in calc_fuel_sensors:
+    #     df = df.with_columns(
+    #         pl.col(sensor).fill_null(strategy="forward")
+    #     )
 
     for sensor in calc_fuel_sensors:
         df = df.with_columns(
-            pl.col(sensor)
-            .is_not_nan()
+            (pl.col(sensor)
+            .is_not_nan() | pl.col(sensor).is_not_null())
             .over(["auto", col_dtime_half])
             .cast(pl.Int16)
             .alias("fuel_level_nan")
@@ -246,15 +245,10 @@ def preprocess_basic_one(
             if df[sensor].gt(lp["input"]).any():
                 print("Car has problems")
     df = reconcile_multisensor(df, cars["fuel_sensor_multi_type"])
+    if not is_fuel_processing:
+        df = df.filter(pl.col("calc_sensors_fuel_level").is_not_null())
     
-    df = df.with_columns(
-        pl.col("calc_sensors_fuel_level")
-        .diff()
-        .over(["auto"])
-        .fill_null(0)
-        .cast(pl.Float32)
-        .alias("spent_fuel_boundary"),
-    )
+
     # df = df.with_columns(
         # pl.when(pl.col("spent_fuel_boundary").gt(0) & pl.col("pos_s").eq(0)).then(0).otherwise(pl.col("spent_fuel_boundary")).alias("spent_fuel_boundary")
     # )
@@ -266,33 +260,42 @@ def preprocess_basic_one(
         .fill_null(0)
         .alias("spent_fuel_clean")
     )
-    sum_fuel = df.group_by_dynamic(index_column="timestamp", every="1d").agg(
-        pl.col("spent_fuel_boundary").sum()
-    )["spent_fuel_boundary"].sum()
+    
     reports = maintenance_fuel_consumpt_check(df, sensors, reports)
     reports = maintenance_board_voltage_notify(df, sensors, reports)
-    df = df.with_columns(
-        pl.lit(sum_fuel).alias("spent_fuel_t")
-    )
+    
     df = df.with_columns((pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps"))
 
     df = df.filter(pl.col("fps").gt(-1) | pl.col("satellites").lt(2))
-
-
-    
     df = df.with_columns(
-        [
-            pl.max("calc_sensors_voltage")
-            .over(["auto", col_dtime_2hour])
-            .alias("voltage_max"),
-        ]
-    )
+            [
+                pl.max("calc_sensors_voltage")
+                .over(["auto", col_dtime_2hour])
+                .alias("voltage_max"),
+            ]
+        )
 
-    # filter by voltage limit
+        # filter by voltage limit
     df = df.filter(
         (pl.col("voltage_max") - pl.col("calc_sensors_voltage")) / pl.col("voltage_max")
         < VOLTAGE_LIMIT,
     )
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level")
+        .diff()
+        .over(["auto"])
+        .fill_null(0)
+        .cast(pl.Float32)
+        .alias("spent_fuel_boundary"),
+    )
+
+    sum_fuel = df.group_by_dynamic(index_column="timestamp", every="1d").agg(
+        pl.col("spent_fuel_boundary").sum()
+    )["spent_fuel_boundary"].sum()
+    df = df.with_columns(
+        pl.lit(sum_fuel).alias("spent_fuel_t")
+    )
+    
 
     # spent fuel / pos_a
     df = df.with_columns(
@@ -501,5 +504,4 @@ def preprocess_basic_one(
         .over([col_dtime_half])
         .alias("refuel")
     )
-
     return df, reports
