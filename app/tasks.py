@@ -981,7 +981,8 @@ def parse_cars_milleage_task(
         tz = pytz.UTC
         start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = start_date + timedelta(days=1)
-        last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
+        if last_date_manual:
+            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
         cars = provider.cars.select_related("parsingcar_stats").filter(
