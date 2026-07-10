@@ -419,6 +419,7 @@ class CarReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     car_id = models.ForeignKey(Car, on_delete=models.CASCADE, related_name="reports")
     datetime = models.DateTimeField()
+    datetime_end = models.DateTimeField(default=None, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     speed = models.FloatField(null=True)
     volume = models.IntegerField()

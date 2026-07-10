@@ -58,6 +58,9 @@ class GL_ACTION_KEYS(Enum):
     amtr_merge = "amtr_merge"
     chart_preprocess = "chart_preprocess"
 
+class FuelFilters(Enum):
+    BOUNDARY = "boundary_spent_fuel"
+    SIGMA = "spent_fuel_std"
 
 def _cast_ign(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]]):
     if "ign" in df.columns:
@@ -151,14 +154,18 @@ def _default(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dic
 
 def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
     sensors = list(filter(lambda c: c.startswith("calc_sensors_fuel_level"), df.columns))
-
-    if "msg_number" in df.columns:
-        df = df.filter(pl.col("msg_number").diff().abs().fill_null(0).fill_nan(0).lt(5))
+    if len(sensors) == 0:
+        return df
+    
+    if df.shape[0] == 0:
+        return df
 
     for i, sensor in enumerate(sensors):
         df = df.filter(pl.col(sensor).gt(0))
         # if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
         #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
+        if df.shape[0] == 0:
+            return df
         df, lp, b, slop  = tarify_car_by_sensor(df, {"grades": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"]["grades"] }, sensor)
     df = reconcile_multisensor(df, sensor_mapping["calc_sensors_fuel_level"][-1]["multi_type"])
     if "calc_sensors_fuel_level" not in mapping:

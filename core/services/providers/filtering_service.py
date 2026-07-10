@@ -1,7 +1,9 @@
+from enum import Enum
 import logging
 import polars as pl
 from typing import Iterable, Tuple, List
 from core.services.providers.filtering_base import BaseFilteringService
+from core.services.providers.glonass.constants import FuelFilters
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +15,9 @@ class FilteringService(BaseFilteringService):
             pl.col("is_picked_leak").eq(True)
         )
         return filtered_df, df
+    
+    
+
 
     def apply_filters(self, df: pl.DataFrame) -> pl.DataFrame:
         """
@@ -48,7 +53,7 @@ class FilteringService(BaseFilteringService):
 
     def leak_picker(self, result_df: pl.DataFrame):
         result_df = result_df.with_columns(
-            [pl.lit(False).alias("is_picked_leak"), pl.lit("").alias("picked_by")]
+            [pl.lit(False).alias("is_picked_leak"), pl.lit("").alias("picked_by"), pl.col("timestamp").shift(-1).alias("leak_end")]
         )
         return result_df, result_df
 
@@ -56,9 +61,6 @@ class FilteringService(BaseFilteringService):
         self, result_df: pl.DataFrame, LOW_SPEED_FACTOR: int = 6, BARRIER_FUEL = 10
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по низкой скорости"""
-        result_df = result_df.with_columns(
-            
-        )
         result_df = self._tool_pick_leak(result_df,
             [(pl.col("pos_s").lt(pl.col("norm_speed").truediv(LOW_SPEED_FACTOR)) & pl.col("spent_fuel").gt(BARRIER_FUEL))], "low_speed")
 
@@ -90,8 +92,19 @@ class FilteringService(BaseFilteringService):
                 .sub(pl.col("spent_fuel"))
                 .gt(HARD_LOSS_IN_BOUNDARY)
             ],
-            "boundary_spent_fuel",
+            FuelFilters.BOUNDARY.value,
         )
+        result_df = result_df.with_columns(
+            [
+            pl.when(pl.col("picked_by").eq(FuelFilters.BOUNDARY.value)).then(
+                pl.col("spent_fuel_boundary")
+                .clip(upper_bound=0)
+                .abs()
+                .sub(pl.col("spent_fuel"))
+            ).otherwise(pl.col("leak")).alias("leak"),
+            ])
+            
+            
         return result_df, result_df
     
     def _tool_pick_leak(
@@ -129,7 +142,7 @@ class FilteringService(BaseFilteringService):
                 ).alias("z_values"),
             ]
         )
-        result_df = self._tool_pick_leak(result_df, [pl.col("is_leak_sigma")], "spent_fuel_std") 
+        result_df = self._tool_pick_leak(result_df, [pl.col("is_leak_sigma")], FuelFilters.SIGMA.value) 
         return result_df, result_df
 
     def filtering_standing_hard(
