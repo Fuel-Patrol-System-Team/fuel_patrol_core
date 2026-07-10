@@ -1,9 +1,12 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarCarDataPreparedAPiView, CarLeaksChartsAPIView, CarListBySensorGroupAPIView, CarMotohoursReportListAPIView, CarSensorsSwitchView, CarSensorsValuesAPIView, FuelSpentCalculationService, OrganizationListAPIView, \
+from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, CarCarDataPreparedAPiView, \
+    CarLeaksChartsAPIView, CarListBySensorGroupAPIView, CarMotohoursReportListAPIView, CarSensorsSwitchView, \
+    CarSensorsValuesAPIView, FuelSpentCalculationService, OrganizationListAPIView, \
     OrganizationDetailAPIView, OrgUserListAPIView, OrgUserDetailAPIView, CarListAPIView, CarDetailAPIView, \
-    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ParsingStatsUpdateRpm, ReportQueryListAPIView, \
+    CarConsumptionListAPIView, CarConsumptionDetailAPIView, ParsingStatsParsingSwitch, ParsingStatsUpdateRpm, \
+    ReportQueryListAPIView, \
     ReportQueryDetailAPIView, \
     CarReportListAPIView, CarReportDetailAPIView, DriverListAPIView, \
     DriverDetailAPIView, UserRegistrationAPIView, UserInfoAPIView, \
@@ -16,7 +19,7 @@ from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, Ca
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
     CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView, \
-    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView
+    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView, MLReasoningView
 
 urlpatterns = [
 
@@ -48,7 +51,6 @@ urlpatterns = [
     path("cars/bySensorGroup", CarListBySensorGroupAPIView.as_view(), name="car-sensor-list"),
     path('cars', CarListAPIView.as_view(), name='car-list'),
 
-
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),
     path('cars/bad-data', CarBadDataAPIView.as_view(), name='car-bad-data'),
@@ -66,7 +68,6 @@ urlpatterns = [
     path('report-queries/<uuid:pk>', ReportQueryDetailAPIView.as_view(), name='report-query-detail'),
     path('car-reports', CarReportListAPIView.as_view(), name='car-report-list'),
     path('car-reports/<uuid:pk>', CarReportDetailAPIView.as_view(), name='car-report-detail'),
-    
 
     path('car-fuel-reports', CarFuelReportListAPIView.as_view(), name='fuel-report-list'),
     path('car-fuel-reports/<uuid:pk>', CarFuelReportDetailAPIView.as_view(), name='fuel-report-detail'),
@@ -75,8 +76,9 @@ urlpatterns = [
     path('car-reports-mileage/<uuid:pk>', CarMileageReportDetailAPIView.as_view(), name='car-report-mileage-detail'),
 
     path('car-reports-motohours', CarMotohoursReportListAPIView.as_view(), name='car-report-motohours-list'),
-    path('car-reports-motohours/<uuid:pk>', CarMotohoursReportListAPIView.as_view(), name='car-report-motohours-detail'),
-    
+    path('car-reports-motohours/<uuid:pk>', CarMotohoursReportListAPIView.as_view(),
+         name='car-report-motohours-detail'),
+
     path('staff/auto-data', AutoDataListAPIView.as_view(), name="staff-auto-data"),
     path('drivers', DriverListAPIView.as_view(), name='driver-list'),
     path('drivers/<uuid:pk>', DriverDetailAPIView.as_view(), name='driver-detail'),
@@ -85,12 +87,12 @@ urlpatterns = [
     path('dataprovider/create', DataProviderCreateAPIView.as_view(), name='data-provider-create'),
 
     path('car-active-status', CarActiveStatusAPIView.as_view(), name='car-active-status'),
-    path('sensors/values/<uuid:car_id>', CarSensorsValuesAPIView.as_view(), name='sensors'), ##TODO: Переписать
+    path('sensors/values/<uuid:car_id>', CarSensorsValuesAPIView.as_view(), name='sensors'),  ##TODO: Переписать
     path('parsing-stats/switch', ParsingStatsParsingSwitch.as_view(), name='parsing-stats-switch'),
-    path("parsing-stats/rpm", ParsingStatsUpdateRpm.as_view(), name='parsing-stats-rpm'), 
+    path("parsing-stats/rpm", ParsingStatsUpdateRpm.as_view(), name='parsing-stats-rpm'),
 
     path('sensors/keys', SensorsKeyListAPIView.as_view(), name='sensors-keys-list'),
-    path('sensors/switch', CarSensorsSwitchView.as_view() , name='car-sensors-switch'),
+    path('sensors/switch', CarSensorsSwitchView.as_view(), name='car-sensors-switch'),
 
     path('parsing/mileage', MileageCalculationAPIView.as_view(), name='mileage-test'),
 
@@ -100,7 +102,7 @@ urlpatterns = [
 
     path('parsing/logs', APICalculationLogListAPIView.as_view(), name='calculations-logs'),
 
-    path('parsing/logs/<pk>', APICalculationLogRetrieveAPIView.as_view(), name='calculations-logs-retrieve'), 
+    path('parsing/logs/<pk>', APICalculationLogRetrieveAPIView.as_view(), name='calculations-logs-retrieve'),
 
     path('parsing/cars', VehicleSyncAPIView.as_view(), name='parsing-cars'),
 
@@ -114,5 +116,6 @@ urlpatterns = [
         name='parse_terminal_messages'
     ),
 
+    path('ml/reasoning', MLReasoningView.as_view(), name='ml-reasoning'),
     path('languages', LanguageListAPIView.as_view(), name='languages-list')
 ]

@@ -573,6 +573,9 @@ BASE_URL = os.getenv('BASE_URL', 'http://127.0.0.1:8000')
 
 DATA_UPLOAD_MAX_NUMBER_FIELDS = 20000
 
+ML_SERVICE_URL = os.environ.get('ML_SERVICE_URL', 'http://localhost:8050')
+ML_SERVICE_TOKEN = os.environ.get('ML_SERVICE_TOKEN', '')
+
 # ======================
 # NOOTRACKING
 # ======================
