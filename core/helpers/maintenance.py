@@ -1,3 +1,4 @@
+from ast import alias
 from typing import Any, Dict, List
 
 import polars as pl
@@ -5,6 +6,7 @@ from polars.exceptions import ColumnNotFoundError
 
 from core.models import CarBadData
 
+DAILY_MESSAGES = 288
 
 def maintenance_analysis(df: pl.DataFrame):
     issues = []
@@ -36,10 +38,10 @@ def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=[]):
         dtime_period = pl.col("timestamp").dt.truncate("1h")
         tdf = df.with_columns(
             pl.col("calc_sensors_voltage").diff().abs().mean().over(dtime_period).alias("voltage_diff"),
-            pl.col("mileage").diff().abs().mean().over(dtime_period).alias("mileage_diff")
+            pl.col("mileage").diff().abs().sum().over(dtime_period).alias("mileage_diff")
         )
         tdf = tdf.with_columns(
-            (pl.col("voltage_diff").lt(300) & pl.col("mileage_diff").gt(10)).cast(pl.Int32).alias("anomaly")
+            (pl.col("voltage_diff").lt(15) & pl.col("mileage_diff").gt(10)).cast(pl.Int32).alias("anomaly")
         )
         report_data = (
             tdf.with_columns(pl.col("timestamp").diff().dt.total_hours().alias("mdtime"))
@@ -48,16 +50,17 @@ def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=[]):
                 [
                     pl.col("mileage").diff().sum(),
                     pl.col("calc_sensors_voltage").diff().abs().mean(),
-                    pl.col("anomaly").sum()
+                    pl.col("anomaly").sum(),
+                    pl.count("anomaly").alias("count")
                 ]
             )
         )
-        report_data = report_data.filter(pl.col("anomaly").gt(1))
+        report_data = report_data.filter(pl.col("count").gt(DAILY_MESSAGES) & pl.col("anomaly").truediv(pl.col("count")).gt(0.1))
         for report in report_data.rows(named=True):
             reports.append(
                 {
                     "event_date": report["timestamp"],
-                    "message": f"Не типично стабильное напряжение бортовой цепи кол-во аномалий {report["anomaly"]}",
+                    "message": f"Не типично стабильное напряжение бортовой цепи кол-во аномалий {report["anomaly"]}, доля {report["anomaly"] / report["count"]:.2f}",
                     "tags": [CarBadData.Tag.MILEAGE],
                     "category": CarBadData.Category.MAINTENANCE,
                     "severity": CarBadData.Severity.ERROR,
@@ -103,7 +106,7 @@ def maintenance_fuel_consumpt_check(
 
 def maintenace_check_missing_sensors(df: pl.DataFrame, columns: List[str], sensors: Dict[str, List[Dict[str, Any]]], reports = []):
     for column in columns:
-        if column not in columns:
+        if column not in sensors:
             continue
         try:
             agg = df.group_by_dynamic(
@@ -290,7 +293,7 @@ def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=[]):
                 ]
             )
             voltage_report = voltage_reports.filter(
-                pl.col("voltage_jumps").ge(1)
+                pl.col("voltage_jumps").ge(1) & pl.col("voltage_diff").gt(9000)
             )
             for voltage_report in voltage_reports.iter_rows(named=True):
                 reports.append(

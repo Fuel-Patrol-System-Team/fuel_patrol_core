@@ -331,7 +331,7 @@ def mileage_test_fraud_new(
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
     df = df.filter(pl.col("msg_number").gt(0))
     df = alg_piece_remove_message_delays(df)
-    # reports = maintenace_check_missing_sensors(df, ["rpm", "mileage"], sensors)
+    reports = maintenace_check_missing_sensors(df, ["rpm", "mileage"], sensors)
     reports = maintenance_mileage_sensor_check(df, sensors, reports)
     reports = maintenance_cross_validate_mileage_voltage(df, reports)
     if df.shape[0] != 0:
