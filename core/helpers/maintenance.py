@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 
 import polars as pl
+from polars.exceptions import ColumnNotFoundError
 
 from core.models import CarBadData
 
@@ -100,6 +101,33 @@ def maintenance_fuel_consumpt_check(
                 )
     return reports
 
+def maintenace_check_missing_sensors(df: pl.DataFrame, columns: List[str], sensors: Dict[str, List[Dict[str, Any]]], reports = []):
+    for column in columns:
+        if column not in columns:
+            continue
+        try:
+            agg = df.group_by_dynamic(
+                index_column="timestamp", every="1d"
+            ).agg(
+                [
+                    pl.count("timestamp").alias("count"),
+                    pl.count(column).alias("working_count")
+                ]
+            )
+            agg = agg.filter(pl.col("count").gt(100) & pl.col("working_count").truediv(pl.col("count")).lt(0.05))
+            for ag in agg.rows(named=True):
+                reports.append(
+                    {
+                        "event_date": ag["timestamp"],
+                        "message": f"Потенциальная неисправность датчика {column} (параметр {sensors[column][-1]})",
+                        "tags": [CarBadData.Tag.SENSOR],
+                        "category": CarBadData.Category.MAINTENANCE,
+                        "severity": CarBadData.Severity.ERROR,
+                    }
+                )
+        except ColumnNotFoundError:
+            return reports
+    return reports
 
 def maintenance_mileage_sensor_check(
     df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]

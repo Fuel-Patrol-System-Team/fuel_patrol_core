@@ -275,20 +275,23 @@ class ReportService:
 
             for record in leaks_records:
                 try:
-                    realdate = record["timestamp"].replace(tzinfo=timezone.utc)
+                    real_date = record["timestamp"].replace(tzinfo=timezone.utc)
+                    real_last = record["leak_end"]
+                    if real_last is None:
+                        real_last = record["leak_end"].replace(tzinfo=timezone.utc)
                     leak = record["leak"]
                     if record["picked_by"] == FuelFilters.BOUNDARY.value:
-                        realdate = record["prev_period"].replace(tzinfo=timezone.utc)
+                        real_date = record["prev_period"].replace(tzinfo=timezone.utc)
                         # + т.к. spent_fuel_boundary отрицательный
                     
 
                     car = Car.objects.get(id=record["auto"])
                     car_reports.append(CarReport(
                         car_id=car,
-                        datetime=realdate,
+                        datetime=real_date,
                         volume=int(leak),
                         speed=float(record["pos_s"]),
-                        datetime_end=record["leak_end"],
+                        datetime_end=real_last,
                         status=True,
                         picked_by=record["picked_by"]
                     ))
