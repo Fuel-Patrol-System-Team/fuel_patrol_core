@@ -103,6 +103,31 @@ def _get_postfix(sensor_name: str):
         affix = match.group(1)
         return affix
     return ""
+
+def compute_data_standing(df: pl.DataFrame):
+    speed = df.with_columns(
+        pl.col("pos_s").rolling_mean_by("timestamp", window_size='15s', closed="both").alias("pos_s_rolling")
+    )
+    speed = speed.with_columns(
+        pl.col("pos_s_rolling").lt(0.9).cast(pl.Int32).alias("is_standing")
+    )
+    speed = speed.with_columns(
+        pl.col("is_standing").diff().abs().cum_sum().alias("speed_group")
+    )
+    speed = speed.filter(
+        pl.col("is_standing").eq(1) 
+    )
+    speed = speed.group_by(by="speed_group"
+    ).agg(
+        [
+            pl.sum("dtime"),
+            pl.first("speed_group"),
+            pl.col("spent_fuel").clip(upper_bound=0).abs().sum(),
+            pl.col("ign").mul(pl.col("dtime")).alias("engine_time"),
+        ]
+    )
+    return speed
+
     
 def preprocess_basic_one(
     df: pl.DataFrame,
@@ -266,7 +291,8 @@ def preprocess_basic_one(
     
     df = df.with_columns((pl.col("spent_fuel_clean") / pl.col("dtime")).alias("fps"))
 
-    df = df.filter(pl.col("fps").gt(-1) | pl.col("satellites").lt(2))
+    # TODO: передумать этот фильтр
+    # df = df.filter(pl.col("fps").gt(-1) | pl.col("satellites").lt(2))
     df = df.with_columns(
             [
                 pl.max("calc_sensors_voltage")

@@ -15,6 +15,7 @@ from core.models import (
     CarReport,
     CarConsumption,
 )
+from core.services.providers.glonass.constants import FuelFilters
 from core.services.providers.json_serializer import serialize_for_json
 
 logger = logging.getLogger(__name__)
@@ -275,16 +276,20 @@ class ReportService:
             for record in leaks_records:
                 try:
                     realdate = record["timestamp"].replace(tzinfo=timezone.utc)
-                    if record["picked_by"] == "boundary_spent_fuel":
+                    leak = record["leak"]
+                    if record["picked_by"] == FuelFilters.BOUNDARY.value:
                         realdate = record["prev_period"].replace(tzinfo=timezone.utc)
+                        # + т.к. spent_fuel_boundary отрицательный
                     
+
                     car = Car.objects.get(id=record["auto"])
                     car_reports.append(CarReport(
                         car_id=car,
                         datetime=realdate,
-                        volume=int(record["leak"]),
+                        volume=int(leak),
                         speed=float(record["pos_s"]),
-                        status=bool(record["is_leak"]),
+                        datetime_end=record["leak_end"],
+                        status=True,
                         picked_by=record["picked_by"]
                     ))
                     if len(car_reports) >= 100:
