@@ -553,6 +553,11 @@ class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
                 is_save_bad_data=is_save_bad_data,
                 force_chart=force_chart
             )
+
+            leaks_sum, leaks_data = FuelReportService._get_leaks_data(car_id, start_date, end_date)
+            result['leaks_sum'] = leaks_sum
+            result['leaks_data'] = leaks_data
+
             if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
                 status_code = 404
         except (ObjectDoesNotExist, ValidationError):

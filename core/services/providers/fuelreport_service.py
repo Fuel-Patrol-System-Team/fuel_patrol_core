@@ -9,7 +9,8 @@ from core.models import Car, DataProvider, ReportQuery
 from core.services.providers.car_data_service import CarDataService
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.report_service import ReportService
-
+from core.models import CarReport
+from django.db.models import Sum
 
 logger = logging.getLogger(__name__)
 class FuelReportService:
@@ -126,6 +127,38 @@ class FuelReportService:
             "fillings": return_fillings,
             "count": 1,
         }, reports
+
+    @staticmethod
+    def _get_leaks_data(car_id: str, start_date: datetime, end_date: datetime) -> Tuple[float, List[Dict[str, Any]]]:
+        start_date_begin = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        now = datetime.now()
+        if end_date.date() == now.date():
+            end_date_end = now
+        else:
+            end_date_end = end_date.replace(hour=23, minute=59, second=59, microsecond=999999)
+
+        leaks_queryset = CarReport.objects.filter(
+            car_id_id=car_id,
+            datetime__gte=start_date_begin,
+            datetime__lte=end_date_end,
+            volume__gt=0
+        ).values('datetime', 'volume')
+
+        leaks_list = [
+            {
+                'datetime': leak['datetime'].isoformat(),
+                'volume': leak['volume']
+            }
+            for leak in leaks_queryset
+        ]
+
+        leaks_sum = leaks_queryset.aggregate(
+            total=Sum('volume')
+        )['total'] or 0
+
+        return leaks_sum, leaks_list
+
     @staticmethod
     def calculate_fuelspent(
             car_id: str,
