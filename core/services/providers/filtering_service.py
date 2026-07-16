@@ -43,6 +43,7 @@ class FilteringService(BaseFilteringService):
         filtered_df, _ = self.pick_by_spent_fuel_std(filtered_df, SIGMAS=2.5)
         filtered_df, _ = self.pick_low_speed(filtered_df)
         filtered_df, _ = self.pick_boundary_spent_fuel(filtered_df)
+        filtered_df, _ = self.pick_by_rpm_model(filtered_df)
 
         # filtered_df, _ = self.filtering_certains_ids(filtered_df, ["example_id"])
 
@@ -144,6 +145,19 @@ class FilteringService(BaseFilteringService):
         )
         result_df = self._tool_pick_leak(result_df, [pl.col("is_leak_sigma")], FuelFilters.SIGMA.value) 
         return result_df, result_df
+    
+    def pick_by_rpm_model(
+        self, result_df: pl.DataFrame, SIGMAS: float = 2.5
+    ) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        result_df = result_df.with_columns(
+            pl.col("spent_fuel").gt(pl.col("rpm_model_predicted").add(pl.col("rpm_model_std").mul(SIGMAS))).alias("is_leak_model_rpm"),
+            pl.col("spent_fuel").sub(pl.col("rpm_model_predicted")).truediv(pl.col("rpm_model_std")).alias("z_values_rpm_model")
+        )
+        result_df = self._tool_pick_leak(result_df, [pl.col("is_leak_model_rpm")], FuelFilters.RPM_MODEL.value)
+
+
+        return result_df, result_df
+
 
     def filtering_standing_hard(
         self, result_df: pl.DataFrame, HARD_FUEL_FILTER: int = 10

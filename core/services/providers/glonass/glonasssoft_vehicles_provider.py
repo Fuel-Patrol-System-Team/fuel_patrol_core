@@ -271,11 +271,18 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             children = sensor.get("children", None)
             sensor_agg = sensor.get("agrFunction", None)
             id = sensor.get("id", "")
+            median_degree = sensor.get("medianDegree", None)
             metadata_postfix = {}
+
+
             if expr is not None:
                 metadata_postfix["expr"] = expr
             if pseudonym is not None:
                 metadata_postfix["pseudonym"] = pseudonym
+            if median_degree is not None:
+                metadata_postfix["median_degree"] = median_degree
+            
+
             is_affix = metadata_postfix != {}
 
             if "Скорость" in sensor_name or parameter_name == "can_speed":
@@ -283,6 +290,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 continue
             elif sensor_type == "FuelLvl":
                 sensor_grades = None
+
 
                 if children:
                     sensors_mapping = self._parse_children_fuel_sensors(children, sensors_mapping, sensor_agg)

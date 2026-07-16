@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -101,6 +102,22 @@ _ANON_GUARD = lambda self: (
     not getattr(self.request, 'user', None) or
     not self.request.user.is_authenticated
 )
+
+
+def _flatten_nested_for_csv(df: pl.DataFrame) -> pl.DataFrame:
+    """Serialize all nested (List/Struct/Array/Object) columns to JSON strings so the DataFrame can be written as CSV."""
+    nested_types = tuple(t for t in (pl.List, pl.Struct, pl.Array, pl.Object) if isinstance(t, type))
+    if not nested_types:
+        return df
+    nested_exprs = []
+    for col_name, dtype in zip(df.columns, df.dtypes):
+        if isinstance(dtype, nested_types):
+            nested_exprs.append(
+                pl.col(col_name).map_elements(lambda x: json.dumps(x, default=str), return_dtype=pl.Utf8).alias(col_name)
+            )
+    if nested_exprs:
+        df = df.with_columns(nested_exprs)
+    return df
 
 
 def _car_prefetch(language_code: str, prefix: str = ''):
@@ -1420,13 +1437,13 @@ class CarCarDataPreparedAPiView(APIView):
         result_primary = pl.DataFrame(result_primary)
         result_consumptions = pl.DataFrame(result_consumptions)
         if isinstance(result, pl.DataFrame):
-            result = result.with_columns(pl.col("grades").list.eval(pl.element().struct.json_encode()).list.join(", ").map_elements(lambda s: f"[{s}]").alias("grades"))
-            result = result.with_columns(pl.col("mileage_grading").list.eval(pl.element().struct.json_encode()).list.join(", ").alias("mileage_grading"))
-        
+            result = _flatten_nested_for_csv(result)
             result.write_csv("/data/datasets/fuel/cars.csv")
         if isinstance(result_primary, pl.DataFrame):
+            result_primary = _flatten_nested_for_csv(result_primary)
             result_primary.write_csv("/data/datasets/fuel/cars_primary.csv")
         if isinstance(result_consumptions, pl.DataFrame):
+            result_consumptions = _flatten_nested_for_csv(result_consumptions)
             result_consumptions.write_csv("/data/datasets/fuel/cars_consumptions.csv")
         return success_response({"ok": True}, 200)
 

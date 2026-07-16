@@ -222,6 +222,12 @@ class CarDataService:
                 if sensor.metadata is not None:
                     sensor_grades = sensor.metadata.get("grades")
                 grades_list.append(sensor_grades)
+            degrees_list = []
+            for sensor in fuel_sensors:
+                median_degrees = None
+                if sensor.metadata is not None:
+                    median_degrees = sensor.metadata.get("median_degree")
+                degrees_list.append(median_degrees)
 
             auto_data = {
                 "id": str(car.id),
@@ -229,6 +235,7 @@ class CarDataService:
                 "input": float(car.input) if car.input else 1.0,
                 "output": float(car.output) if car.output else 1.0,
                 "grades": grades,
+                "median_degrees": degrees_list,
                 "grades_list": grades_list,
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,

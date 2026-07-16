@@ -27,7 +27,7 @@ def alg_piece_remove_skipped_messages(df: pl.DataFrame, msg_skip_time_small=2, m
     df = df.filter(pl.col("msg_skip_critical").eq(0))
     return df
     
-def alg_piece_remove_message_delays(df: pl.DataFrame, acts_on=["mileage"]):
+def alg_piece_remove_message_delays(df: pl.DataFrame):
     """
         dtime, timestamp, 
         Убирает сообщения где есть задержка между клиентом и сервером

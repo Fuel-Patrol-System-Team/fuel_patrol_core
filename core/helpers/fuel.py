@@ -261,14 +261,21 @@ def preprocess_basic_one(
     for sensor in calc_fuel_sensors:
         postfix = _get_postfix(sensor)
         # Для мультисенсоров используем grades_N, для одиночного — grades
-        sensor_grades = cars.get(f"grades{postfix}") if postfix else cars.get("grades")
-        if sensor_grades is None:
-            sensor_grades = cars.get("grades")
-        if sensor_grades is not None:
-            cars_for_sensor = {**cars, "grades": sensor_grades}
+        degrees = cars.get(f"grades{postfix}") if postfix else cars.get("grades")
+        if degrees is None:
+            degrees = cars.get("grades")
+        if degrees is not None:
+            cars_for_sensor = {**cars, "grades": degrees}
             df, lp, b, slope = tarify_car_by_sensor(df, cars_for_sensor, sensor)
             if df[sensor].gt(lp["input"]).any():
                 print("Car has problems")
+    for i, sensor in enumerate(calc_fuel_sensors):
+        degrees = cars.get("median_degrees")
+        if  degrees is not None and degrees[i] is not None:
+            df = df.with_columns(
+                pl.col(sensor).rolling_median(window_size=degrees[i])
+            )
+
     df = reconcile_multisensor(df, cars["fuel_sensor_multi_type"])
     if not is_fuel_processing:
         df = df.filter(pl.col("calc_sensors_fuel_level").is_not_null())
@@ -416,6 +423,8 @@ def preprocess_basic_one(
     )
 
     df = df.with_columns(pl.col("dtime").mul(pl.col("ign")).alias("es"))
+    df = df.with_columns(pl.col("rpm").mul(pl.col("dtime")).alias("rpm_total"))
+    df = df.with_columns(pl.col("pos_s").mul(pl.col("dtime")).alias("energy"))
     df = df.group_by_dynamic(
         index_column="timestamp", every=f"{ANTI_BUG_TIME_SECONDS}s", group_by="auto"
     ).agg(
@@ -442,6 +451,8 @@ def preprocess_basic_one(
             pl.col("spent_fuel_m").sum(),
             pl.col("pos_s_m").mean(),
             pl.col("dtime_m").sum(),
+            pl.col("rpm_total").sum(),
+            pl.col("energy").sum(),
             pl.col("es").sum(),
             pl.sum("spent_fuel_boundary"),
             pl.sum("fuel_consumpt_spent"),

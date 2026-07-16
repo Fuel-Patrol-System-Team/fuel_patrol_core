@@ -6,6 +6,7 @@ from typing import Optional, Tuple, Dict
 from datetime import datetime, timedelta
 from pathlib import Path
 from django.conf import settings
+from sklearn.linear_model import Lasso
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays, alg_piece_remove_skipped_messages
 from core.helpers.fuel import tarify_car_by_sensor, _get_postfix
@@ -177,6 +178,8 @@ class NormsService:
                     pl.col("jumps").sum(),
                     pl.col("max_local_fuel_level").max(),
                     pl.col("amtr").sum(),
+                    pl.sum("energy"),
+                    pl.sum("rpm_total"),
                     pl.col("rpm_mean").mean(),
                     pl.col("fd").sum(),
                     pl.col("fuel_level_nan").max(),
@@ -210,6 +213,8 @@ class NormsService:
                     pl.col("amtr").sum(),
                     pl.col("jumps").sum(),
                     pl.col("rpm_mean").mean(),
+                    pl.sum("energy"),
+                    pl.sum("rpm_total"),
                     pl.col("fd").sum(),
                     pl.col("fuel_level_nan").max(),
                     pl.col("no_sat_data").sum(),
@@ -496,6 +501,10 @@ class NormsService:
             )
 
             df_processed = df_processed.with_columns(pl.lit(1).alias("count"))
+            df_processed = df_processed.with_columns(
+                pl.col("dtime").mul(pl.col("pos_s")).alias("energy"),
+                pl.col("dtime").mul(pl.col("rpm")).alias("rpm_total"),
+            )
 
             # Группировка по анти-баг интервалам
             logger.debug("Группировка по анти-баг интервалам...")
@@ -509,6 +518,8 @@ class NormsService:
                     pl.col("calc_sensors_fuel_level").mean(),
                     pl.col("pos_s").mean(),
                     pl.col("spent_fuel").sum(),
+                    pl.sum("energy"),
+                    pl.sum("rpm_total"),
                     pl.col("dtime").sum(),
                     pl.col("jumps").sum(),
                     pl.col("amtr").sum(),
@@ -623,6 +634,7 @@ class NormsService:
             logger.warning("Нет данных для расчета норм")
             return pl.DataFrame()
 
+        
 
         logger.info("Статистика по данным:")
         try:
@@ -646,6 +658,7 @@ class NormsService:
                 logger.warning(f"Группа {i} пустая")
                 continue
 
+            
             auto = group["auto"][0]
             logger.info(f"Обработка машины {auto}: {group.shape} записей")
 
@@ -656,6 +669,15 @@ class NormsService:
             else:
                 logger.info(f"Машина {auto}: средний расход = {spent_fuel:.2f}")
 
+            arr = df.select(["rpm_total", "energy", "spent_fuel"]).to_numpy()
+            x_rpm = arr[:, 0].reshape(-1, 1)
+            x_energy =  arr[:, 1].reshape(-1, 1)
+            y = arr[:, 2].reshape(-1, 1)
+
+            model_rpm = Lasso(alpha=0.1)
+            model_rpm = model_rpm.fit(X=x_rpm, y=y)
+            diff = model_rpm.predict(group.select("rpm_total").to_numpy())
+            std_model_rpm = float(diff.std())
             std = group["spent_fuel"].std()
             if std is None:
                 std = 0
@@ -692,6 +714,9 @@ class NormsService:
                     "norma_std": std,
                     "speed_etalon": float(min(max_speed, 60)),
                     "norma_rpm_mean": rpm_mean,
+                    "rpm_model_coef": model_rpm.coef_[0],
+                    "rpm_model_intercept": model_rpm.intercept_[0],
+                    "rpm_model_std": std_model_rpm,
                     "norma_rpm_std": rpm_std,
                     "norma_rpm_max": rpm_max,
                     "period": datetime.now() + timedelta(days=365),
@@ -719,6 +744,9 @@ class NormsService:
             "norma_rpm_mean": pl.Float32,
             "norma_rpm_std": pl.Float32,
             "norma_rpm_max": pl.Float32,
+            "rpm_model_coef": pl.Float32,
+            "rpm_model_intercept": pl.Float32,
+            "rpm_model_std": pl.Float32,
             "period": pl.Datetime,
             "is_special_car": pl.Boolean
         }

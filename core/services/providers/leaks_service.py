@@ -269,6 +269,8 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("no_sat_data").alias("no_sat_data"),
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
+                pl.col("rpm_total").sum(),
+                pl.col("energy").sum(),
                 pl.first("calc_sensors_fuel_level").alias("fuel_first"),
                 pl.last("calc_sensors_fuel_level").alias("fuel_last"),
                 pl.sum("ign"),
@@ -329,6 +331,8 @@ class LeaksService(BaseLeaksCalculator):
                 pl.first("fuel_first"),
                 pl.last("fuel_last"),
                 pl.sum("es"),
+                pl.col("energy").sum(),
+                pl.col("rpm_total").sum(),
                 pl.sum("spent_fuel_boundary"),
             ]
         )
@@ -456,6 +460,16 @@ class LeaksService(BaseLeaksCalculator):
                 .alias("norma_rasx_per_travel")
             ]
         )
+        if df_values["rpm_total"].is_not_null().any() or norma.get("rpm_model_coef") is None:
+            df_values = df_values.with_columns(
+                pl.col("rpm_total").mul(norma.get("rpm_model_coef", 0), ).add(norma.get("rpm_model_intercept", 0)).alias("rpm_model_predicted"),
+                pl.lit(norma.get("rpm_model_std")).cast(pl.Float32).alias("rpm_model_std")
+            )
+        else:
+            df_values = df_values.with_columns(
+                pl.lit(None).cast(pl.Float32).alias("rpm_model_predicted"),
+                pl.lit(None).cast(pl.Float32).alias("rpm_model_std"),
+            )
         logger.debug("Рассчитана норма на пройденное расстояние")
 
         df_values = df_values.with_columns(

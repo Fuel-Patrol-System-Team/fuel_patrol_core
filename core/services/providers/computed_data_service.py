@@ -7,6 +7,8 @@ class ComputedDataService:
 
     
     def save_preprocessed_data(self, df: pl.DataFrame):
+        if df is None:
+            return 0, [] 
         select = ComputedData.get_required_columns()
         tmp = df.select(select)
         tmp = tmp.with_columns(pl.col("timestamp").dt.replace_time_zone("Etc/Universal"))
