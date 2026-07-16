@@ -292,7 +292,7 @@ def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=[]):
                     pl.col("calc_sensors_voltage").count().alias("count"),
                 ]
             )
-            voltage_report = voltage_reports.filter(
+            voltage_reports = voltage_reports.filter(
                 pl.col("voltage_jumps").ge(1) & pl.col("voltage_diff").gt(9000)
             )
             for voltage_report in voltage_reports.iter_rows(named=True):
