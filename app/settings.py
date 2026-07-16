@@ -405,12 +405,12 @@ UNFOLD = {
                         "link": reverse_lazy("admin:core_reportquerydetails_changelist"),
                     },
                     {
-                        "title": "Отчёты автомобилей",
-                        "icon": "summarize",
+                        "title": "Отчёты об утечках",
+                        "icon": "leak_add",
                         "link": reverse_lazy("admin:core_carreport_changelist"),
                     },
                     {
-                        "title": "Отчёты по топливу/заправке",
+                        "title": "Отчёты по топливу",
                         "icon": "local_gas_station",
                         "link": reverse_lazy("admin:core_carfuelreport_changelist"),
                     },
@@ -418,6 +418,11 @@ UNFOLD = {
                         "title": "Отчёты по пробегам",
                         "icon": "route",
                         "link": reverse_lazy("admin:core_carmileagereport_changelist"),
+                    },
+                    {
+                        "title": "Отчёты по моточасам",
+                        "icon": "timer",
+                        "link": reverse_lazy("admin:core_carmotohoursreport_changelist"),
                     },
                     {
                         "title": "Предобработанные данные",
@@ -437,7 +442,7 @@ UNFOLD = {
                 ],
             },
             {
-                "title": "Уведомления",
+                "title": "Уведомления и алерты",
                 "collapsible": True,
                 "items": [
                     {
@@ -467,7 +472,7 @@ UNFOLD = {
                         "link": reverse_lazy("admin:core_sensorsvalues_changelist"),
                     },
                     {
-                        "title": "Локализации",
+                        "title": "Локализации датчиков",
                         "icon": "translate",
                         "link": reverse_lazy("admin:core_sensorskeylocalization_changelist"),
                     },
@@ -485,7 +490,7 @@ UNFOLD = {
                 ],
             },
             {
-                "title": "Задачи Celery",
+                "title": "Celery Beat",
                 "collapsible": True,
                 "items": [
                     {
@@ -495,7 +500,7 @@ UNFOLD = {
                     },
                     {
                         "title": "Cron-графики",
-                        "icon": "update",
+                        "icon": "schedule",
                         "link": reverse_lazy("admin:django_celery_beat_crontabschedule_changelist"),
                     },
                     {
@@ -520,7 +525,7 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {
-                        "title": "Службы Systemd",
+                        "title": "Unit Service (Systemd)",
                         "icon": "terminal",
                         "link": reverse_lazy("admin:core_unitservice_changelist"),
                     },
