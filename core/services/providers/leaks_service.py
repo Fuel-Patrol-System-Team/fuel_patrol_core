@@ -334,7 +334,7 @@ class LeaksService(BaseLeaksCalculator):
         )
         result = result.filter(pl.col("fuel_level_nan").ne(pl.col("count")))
         result = result.with_columns(
-            pl.col("timestamp").shift(1).alias("prev_period")
+            pl.col("timestamp").shift(-1).alias("next_period")
         )
         final_count = len(result)
         logger.debug(
