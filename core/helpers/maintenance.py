@@ -8,6 +8,7 @@ from core.models import CarBadData
 
 DAILY_MESSAGES = 288
 
+
 def maintenance_analysis(df: pl.DataFrame):
     issues = []
     if "ign" in df.columns:
@@ -33,29 +34,47 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports=[]):
     #     )
     return reports
 
+
 def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=[]):
     if "mileage" in df.columns and df["mileage"].is_not_null().any():
         dtime_period = pl.col("timestamp").dt.truncate("1h")
         tdf = df.with_columns(
-            pl.col("calc_sensors_voltage").diff().abs().mean().over(dtime_period).alias("voltage_diff"),
-            pl.col("mileage").diff().abs().sum().over(dtime_period).alias("mileage_diff")
+            pl.col("calc_sensors_voltage")
+            .diff()
+            .abs()
+            .mean()
+            .over(dtime_period)
+            .alias("voltage_diff"),
+            pl.col("mileage")
+            .diff()
+            .abs()
+            .sum()
+            .over(dtime_period)
+            .alias("mileage_diff"),
         )
         tdf = tdf.with_columns(
-            (pl.col("voltage_diff").lt(15) & pl.col("mileage_diff").gt(10)).cast(pl.Int32).alias("anomaly")
+            (pl.col("voltage_diff").lt(15) & pl.col("mileage_diff").gt(10))
+            .cast(pl.Int32)
+            .alias("anomaly")
         )
         report_data = (
-            tdf.with_columns(pl.col("timestamp").diff().dt.total_hours().alias("mdtime"))
+            tdf.with_columns(
+                pl.col("timestamp").diff().dt.total_hours().alias("mdtime")
+            )
             .group_by_dynamic(index_column="timestamp", every="1d")
             .agg(
                 [
                     pl.col("mileage").diff().sum(),
                     pl.col("calc_sensors_voltage").diff().abs().mean(),
                     pl.col("anomaly").sum(),
-                    pl.count("anomaly").alias("count")
+                    pl.count("anomaly").alias("count"),
                 ]
             )
         )
-        report_data = report_data.filter(pl.col("count").gt(DAILY_MESSAGES) & pl.col("anomaly").truediv(pl.col("count")).gt(0.1))
+        report_data = report_data.filter(
+            pl.col("count").gt(DAILY_MESSAGES)
+            & pl.col("anomaly").truediv(pl.col("count")).gt(0.1)
+        )
         for report in report_data.rows(named=True):
             reports.append(
                 {
@@ -104,20 +123,27 @@ def maintenance_fuel_consumpt_check(
                 )
     return reports
 
-def maintenace_check_missing_sensors(df: pl.DataFrame, columns: List[str], sensors: Dict[str, List[Dict[str, Any]]], reports = []):
+
+def maintenace_check_missing_sensors(
+    df: pl.DataFrame,
+    columns: List[str],
+    sensors: Dict[str, List[Dict[str, Any]]],
+    reports=[],
+):
     for column in columns:
         if column not in sensors:
             continue
         try:
-            agg = df.group_by_dynamic(
-                index_column="timestamp", every="1d"
-            ).agg(
+            agg = df.group_by_dynamic(index_column="timestamp", every="1d").agg(
                 [
                     pl.count("timestamp").alias("count"),
-                    pl.count(column).alias("working_count")
+                    pl.count(column).alias("working_count"),
                 ]
             )
-            agg = agg.filter(pl.col("count").gt(100) & pl.col("working_count").truediv(pl.col("count")).lt(0.05))
+            agg = agg.filter(
+                pl.col("count").gt(100)
+                & pl.col("working_count").truediv(pl.col("count")).lt(0.05)
+            )
             for ag in agg.rows(named=True):
                 reports.append(
                     {
@@ -131,6 +157,7 @@ def maintenace_check_missing_sensors(df: pl.DataFrame, columns: List[str], senso
         except ColumnNotFoundError:
             return reports
     return reports
+
 
 def maintenance_mileage_sensor_check(
     df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]
@@ -269,18 +296,25 @@ def maintenance_event_codes(df: pl.DataFrame, reports=[]):
 def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=[]):
     if "calc_sensors_voltage" in df.columns:
         if df["calc_sensors_voltage"].is_not_null().any():
-            pvf = df.with_columns(
-                pl.col("calc_sensors_voltage")
-                .mean()
-                .over([pl.col("timestamp").dt.truncate("1d")])
-                .alias("voltage_mean")
-            ).with_columns(
-                pl.col("calc_sensors_voltage")
-                .sub(pl.col("voltage_mean"))
-                .abs()
-                .alias("voltage_diff")
-            ).with_columns(
-                pl.col("voltage_diff").gt(9000).cast(pl.Int32).alias("voltage_jumps")
+            pvf = (
+                df.with_columns(
+                    pl.col("calc_sensors_voltage")
+                    .mean()
+                    .over([pl.col("timestamp").dt.truncate("1d")])
+                    .alias("voltage_mean")
+                )
+                .with_columns(
+                    pl.col("calc_sensors_voltage")
+                    .sub(pl.col("voltage_mean"))
+                    .abs()
+                    .alias("voltage_diff")
+                )
+                .with_columns(
+                    pl.col("voltage_diff")
+                    .gt(9000)
+                    .cast(pl.Int32)
+                    .alias("voltage_jumps")
+                )
             )
 
             voltage_reports = pvf.group_by_dynamic(
@@ -311,7 +345,9 @@ def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=[]):
     return reports
 
 
-def maintenance_critical_raw_fuel_values(df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]],  reports=[]):
+def maintenance_critical_raw_fuel_values(
+    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]
+):
     # 7000 - crash
     # 65530, 65532, 65535
     if "calc_sensors_fuel_level" not in sensors:
@@ -320,15 +356,10 @@ def maintenance_critical_raw_fuel_values(df: pl.DataFrame, sensors: Dict[str, Li
     if len(fuel_sensors) == 0:
         return reports
     fuel_sensors_names = sensors["calc_sensors_fuel_level"]
-    for i, sensor in  enumerate(fuel_sensors):
+    for i, sensor in enumerate(fuel_sensors):
         critical_values = [65530, 65531, 65532, 65533, 65535]
         critical_fuel = df.with_columns(
-            [
-                pl.col(sensor)
-                .is_in(critical_values)
-                .cast(pl.Int32)
-                .alias("critical")
-            ]
+            [pl.col(sensor).is_in(critical_values).cast(pl.Int32).alias("critical")]
         )
         critical_fuel = critical_fuel.with_columns(
             pl.when(pl.col("critical").eq(1))
