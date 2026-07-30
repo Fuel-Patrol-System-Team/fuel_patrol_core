@@ -48,7 +48,7 @@ class MotohoursCalculationService:
                 ReportService.complete_report_error(report_query, validation_error)
                 return {"error": validation_error}, 400
 
-            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "motohours") if parser is None else parser
+            provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date,                                         "motohours") if parser is None else parser
 
             try:
                 if not provider.authenticate():
@@ -84,7 +84,7 @@ class MotohoursCalculationService:
                     CarBadData.Severity.INFO,
                     CarBadData.Category.PROVIDER_ERROR,
                     [CarBadData.Tag.MOTOHOURS, CarBadData.Tag.PROVIDER]
-                    
+
                 )
 
                 report_data = {
@@ -107,13 +107,19 @@ class MotohoursCalculationService:
                 if isinstance(df, polars.DataFrame):
                     stats = ParsingCarStats.objects.filter(car_id=car.id).first()
                     if stats is None:
-                        raise BaseException("No parsing stats for this car")
-                    result, reports = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle,})
-                    ReportService.create_bad_data_record_from_list(car, reports, report_query)
-            except Exception as calc_error:
+                        raise ValueError("No parsing stats for this car")
+                    result, reports = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle, })
+                    if reports:
+                        ReportService.create_bad_data_record_from_list(car, reports, report_query, is_save_bad_data)
+
+            except (SystemExit, KeyboardInterrupt, GeneratorExit):
+                raise
+            except BaseException as calc_error:
                 error_msg = f"Ошибка при расчете моточасов: {str(calc_error)}"
                 logger.error(f"Ошибка расчета моточасов для car_id={car_id}: {calc_error}", exc_info=True)
-                ReportService.complete_report_error(report_query, error_msg)
+                ReportService.complete_report_error(
+                    report_query, error_msg, calc_error if isinstance(calc_error, Exception) else None
+                )
                 return {"error": error_msg}, 400
 
             if isinstance(result, dict) and 'data' in result and hasattr(result['data'], 'to_dicts'):

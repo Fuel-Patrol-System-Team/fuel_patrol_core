@@ -13,16 +13,20 @@ from core.models import CarReport
 from django.db.models import Sum
 
 logger = logging.getLogger(__name__)
+
+
 class FuelReportService:
-    
+
     @staticmethod
     def build_right_history(df: pl.DataFrame, fillings: pl.DataFrame):
-        df = df.join( fillings, on="timestamp", how="left")
+        df = df.join(fillings, on="timestamp", how="left")
         return df
+
     @staticmethod
     def build_right_history_no_refuel(df: pl.DataFrame):
         df = df.with_columns(pl.lit(0).alias("refill"))
         return df
+
     @staticmethod
     def make_reports_from_df(df: pl.DataFrame):
         slice = df.select(["timestamp", "fuel_start", "fuel_end", "auto", "refill"])
@@ -37,21 +41,21 @@ class FuelReportService:
             reports
         )
         return len(reports)
-    
+
     # TODO: написать для fuel_consumpt с dtime, убранными сообщениями и прочим
     @staticmethod
     def fuel_spent_calculate_by_consumpt(result: pl.DataFrame):
-        return result 
-    
+        return result
+
     @staticmethod
     def _fuel_spent_agg(df: pl.DataFrame, refuel: float):
         return df.group_by("auto").agg([
-                pl.first("fuel_first").alias("fuel_start"),
-                pl.last("fuel_last").alias("fuel_end"),
-                pl.col("fuel_spent").clip(upper_bound=0).abs().sum().alias("fuel_spent"),
-                pl.lit(refuel).alias("refuel")
-            ])
-    
+            pl.first("fuel_first").alias("fuel_start"),
+            pl.last("fuel_last").alias("fuel_end"),
+            pl.col("fuel_spent").clip(upper_bound=0).abs().sum().alias("fuel_spent"),
+            pl.lit(refuel).alias("refuel")
+        ])
+
     @staticmethod
     def fuel_spent_calculate_instant(result: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]],
                                      fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
@@ -69,7 +73,7 @@ class FuelReportService:
         if fillings is not None and fillings.shape[0] > 0:
             refuel = fillings["refill"].sum()
             return_fillings = fillings.with_columns(pl.col("timestamp").dt.to_string("iso:strict")).to_dicts()
-        spent_report = [] 
+        spent_report = []
         if agg is not None:
             spent_report = result.group_by_dynamic(
                 index_column="timestamp", group_by="auto", every=f"{agg}m"
@@ -120,7 +124,6 @@ class FuelReportService:
             spent_result_calc["fuel_spent_final"] = spent_result_calc["fuel_spent"]
             spent_result_calc["fuel_spent_final_sensor"] = "calc_sensors_fuel_level"
 
-        
         return {
             **spent_result_calc,
             "agg": spent_report,
@@ -167,7 +170,7 @@ class FuelReportService:
             end_date: datetime = datetime.now(),
             is_save_bad_data: bool = True,
             parser: Optional[GlonassGeneralProvider] = None,
-            force_chart = False
+            force_chart=False
     ) -> Tuple[Dict[str, Any], int]:
         """
         Выполняет расчет пробега с созданием отчета
@@ -186,26 +189,22 @@ class FuelReportService:
                 is_save_bad_data=is_save_bad_data
             )
 
-
             validation_error = FuelReportService._validate_dates(start_date, end_date)
             if validation_error:
                 ReportService.complete_report_error(report_query, validation_error)
                 return {"error": validation_error}, 400
 
-
-            provider = parser if parser is not None else GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "fuel")
+            provider = parser if parser is not None else GlonassGeneralProvider(None, car, provider_obj, start_date,
+                                                                                end_date, "fuel")
             if not provider.authenticate():
                 error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
                 return {"error": error_msg}, 401
 
-
             status, df, sensors = provider.parse_raw_data("fuel", True, car)
             fillings = provider.parse_refill_data_full(car, start_date, end_date)
             if df is None or df.is_empty() or not status:
-
                 result = make_fuel_spent(0, 0, 0, [], [])
-
 
                 ReportService.create_bad_data_record(
                     car,
@@ -213,7 +212,6 @@ class FuelReportService:
                     report_query,
                     start_date, end_date
                 )
-
 
                 report_data = {
                     "result": result,
@@ -232,15 +230,15 @@ class FuelReportService:
             if isinstance(df, pl.DataFrame):
                 auto = CarDataService.prepare_auto_data(car)
                 auto_record = auto.filter(pl.col("auto") == str(car_id)).to_dicts()[0]
-                result, reports = FuelReportService.fuel_spent_calculate_instant(df, sensors, fillings, auto_record, agg)
+                result, reports = FuelReportService.fuel_spent_calculate_instant(df, sensors, fillings, auto_record,
+                                                                                 agg)
                 report_data = {
                     "result": result,
                     "rows_processed": len(df),
                     "aggregation_period_minutes": agg
                 }
-                if reports and is_save_bad_data:
-                    ReportService.create_bad_data_record_from_list(car, reports, report_query)
-
+                if reports:
+                    ReportService.create_bad_data_record_from_list(car, reports, report_query, is_save_bad_data)
 
                 ReportService.complete_report_success(
                     report_query,
@@ -271,8 +269,6 @@ class FuelReportService:
                 ReportService.complete_report_error(report_query, error_msg, e)
 
             return {"error": error_msg}, 500
-    
-
 
     @staticmethod
     def _get_car_and_provider(car_id: str) -> Tuple[Optional[Car], Optional[DataProvider]]:
@@ -290,4 +286,3 @@ class FuelReportService:
         if start_date and end_date and start_date >= end_date:
             return "start_date должна быть раньше end_date."
         return None
-

@@ -3,6 +3,7 @@ import uuid
 from django.core.exceptions import ValidationError
 from rest_framework.response import Response
 from core.models import APICalculationLog, Car
+from core.services.providers.json_serializer import serialize_for_json
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +43,15 @@ class APICalculationLoggingMixin:
 
             status_code = getattr(response, 'status_code', None)
 
+            safe_req_data = serialize_for_json(req_data)
+            safe_res_data = serialize_for_json(res_data)
+
             APICalculationLog.objects.create(
                 view_name=self.__class__.__name__,
                 user=request.user if request.user and request.user.is_authenticated else None,
                 car=car_obj,
-                request_data=req_data,
-                response_data=res_data,
+                request_data=safe_req_data,
+                response_data=safe_res_data,
                 status_code=status_code
             )
 
