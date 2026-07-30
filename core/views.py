@@ -37,6 +37,7 @@ from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
 from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
+from .helpers.car_move_stop import get_stops_mileage_report
 
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
@@ -63,7 +64,7 @@ from core.helpers.rest import (
     CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA,
-    ANALYSIS_SCHEMA
+    ANALYSIS_SCHEMA, STOPS_MILEAGE_REQUEST_SCHEMA, STOPS_MILEAGE_RESPONSE_SCHEMA
 )
 from app.tasks import FuelReportService, sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
@@ -82,7 +83,7 @@ from .serializers import (
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
     TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
     APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer,
-    AlertSubscriptionPatchSerializer, AnalysisRequestSerializer
+    AlertSubscriptionPatchSerializer, AnalysisRequestSerializer, StopsMileageRequestSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
@@ -1827,6 +1828,41 @@ class MLReasoningView(APIView):
             return success_response(result['data'], status.HTTP_200_OK)
         else:
             return error_response(result.get('error', 'Unknown error'), status.HTTP_400_BAD_REQUEST)
+
+
+class StopsMileageAPIView(APICalculationLoggingMixin, APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_summary="Получить список стоянок автомобиля с пробегом за период",
+        operation_description=(
+                "Запрашивает у провайдера данные об остановках (moveStop) и почасовом "
+                "пробеге/одометре (mileageAndMotohours) за указанный период, сопоставляет их "
+                "и возвращает список стоянок: дата/время, адрес, длительность и пробег "
+                "(показание одометра) до начала стоянки. Максимальный период — 60 дней."
+        ),
+        request_body=STOPS_MILEAGE_REQUEST_SCHEMA,
+        responses={
+            200: STOPS_MILEAGE_RESPONSE_SCHEMA,
+            400: "Неверные параметры или превышен период 60 дней",
+            404: "Автомобиль не найден",
+            500: "Ошибка расчёта",
+        },
+    )
+    def post(self, request):
+        serializer = StopsMileageRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        result, status_code = get_stops_mileage_report(
+            car_id=data["car_id"],
+            start_date=data["start_date"],
+            end_date=data["end_date"],
+            user=request.user,
+            is_save_bad_data=data.get("is_save_bad_data", True),
+        )
+
+        return success_response(result, status_code)
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {'api_description_url': '/api/v1/swagger.json'})
