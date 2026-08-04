@@ -55,7 +55,7 @@ class FuelReportService:
     def fuel_spent_calculate_instant(result: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]],
                                      fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
         is_primary, primary = make_primary_fast(result)
-        result, reports = preprocess_basic_one(result, cars, sensors, primary, is_fuel_processing=True)
+        result, reports, _ = preprocess_basic_one(result, cars, sensors, primary, is_fuel_processing=True)
         if not is_primary:
             result = result.with_columns(
                 pl.lit(0).alias("calc_sensors_fuel_level"),

@@ -2,14 +2,15 @@ import json
 import logging
 import re
 import polars as pl
-from typing import Optional, Tuple, Dict
+from typing import Any, Optional, Tuple, Dict
 from datetime import datetime, timedelta
 from pathlib import Path
 from django.conf import settings
 from sklearn.linear_model import Lasso
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays, alg_piece_remove_skipped_messages
-from core.helpers.fuel import tarify_car_by_sensor, _get_postfix
+from core.helpers.fuel import compute_data_standing, tarify_car_by_sensor, _get_postfix
+from core.helpers.fuel_constants import SATELLITES_COVERAGE
 from core.services.providers.glonass.constants import reconcile_multisensor
 
 logger = logging.getLogger(__name__)
@@ -134,7 +135,7 @@ class NormsService:
             primary_dict: Dict[str, Dict[str, float]],
             ANTI_BUG_TIME_SECONDS: int = 10,
             PRE_PERIOD_TIME: int = 3,
-            PERIOD_2_MIN: int = 30, 
+            PERIOD_2_MIN: int = 60, 
             VOLTAGE_LIMIT: float = 0.16,
             REFUELING_LIMIT: int = 4000,
             FUEL_JUMP_BARRIER_PERC: float = 0.05,
@@ -173,6 +174,7 @@ class NormsService:
                 .agg([
                     pl.col("pos_s").median(),
                     pl.col("spent_fuel").sum(),
+                    pl.col("dtime_moving").sum(),
                     pl.col("dtime").sum(),
                     pl.col("count").sum(),
                     pl.col("jumps").sum(),
@@ -182,6 +184,8 @@ class NormsService:
                     pl.sum("rpm_total"),
                     pl.col("rpm_mean").mean(),
                     pl.col("fd").sum(),
+                    pl.col("sf_m").sum(),
+                    pl.col("pos_s_m").mean(),
                     pl.col("fuel_level_nan").max(),
                     pl.col("no_sat_data").sum(),
                     pl.col("ign").sum(),
@@ -208,6 +212,7 @@ class NormsService:
                     pl.col("pos_s").mean(),
                     pl.col("spent_fuel").sum(),
                     pl.col("dtime").sum(),
+                    pl.col("dtime_moving").sum(),
                     pl.col("travel").sum(),
                     pl.col("count").sum(),
                     pl.col("amtr").sum(),
@@ -220,6 +225,8 @@ class NormsService:
                     pl.col("no_sat_data").sum(),
                     pl.col("max_local_fuel_level").max(),
                     pl.col("ign").sum(),
+                    pl.col("sf_m").sum(),
+                    pl.col("pos_s_m").mean(),
                 ])
                 .sort(["auto", "timestamp"])
             )
@@ -231,9 +238,10 @@ class NormsService:
         result = result.with_columns(
             (pl.col("spent_fuel") / pl.col("travel") * 100).alias("spent_per_100")
         )
-
-        result = result.filter(pl.col("spent_fuel").lt(0))
-        logger.info(f"После фильтрации отрицательных расходов: {result.shape}")
+        # NOTE: sf_m is NOT clipped here — _calculate_by_car needs the signed
+        # values to filter consumption (sf_m < 0) for Lasso training. Clipping
+        # here would zero out the training set and produce fpm_model_std=0,
+        # which causes pick_by_fpm_std to divide by zero and mark everything.
 
         return result
 
@@ -506,6 +514,9 @@ class NormsService:
                 pl.col("dtime").mul(pl.col("rpm")).alias("rpm_total"),
             )
 
+            # sf_m: расход топлива при движении (pos_s > 0), как в compute_data_standing (fuel.py)
+            df_processed, aggs = compute_data_standing(df_processed)
+
             # Группировка по анти-баг интервалам
             logger.debug("Группировка по анти-баг интервалам...")
             initial_count = len(df_processed)
@@ -529,9 +540,12 @@ class NormsService:
                     pl.col("no_sat_data").sum(),
                     pl.col("count").sum(),
                     pl.col("ign").sum(),
+                    *aggs
                 ])
             )
             logger.debug(f"После группировки: {len(df_processed)}/{initial_count} записей")
+
+            # fpm: расход топлива в минуту при движении (как в leaks_service._fuel_leak_calculate)
 
             # Фильтр заправок (логика из preprocess_basic_one)
             df_processed = df_processed.with_columns(
@@ -571,6 +585,67 @@ class NormsService:
             return pl.DataFrame()
 
     @staticmethod
+    def _fit_lasso_per_car(
+            group: pl.DataFrame,
+            feature: str,
+            target: str,
+            auto: Any,
+            MIN_SAMPLES: int = 10,
+            alpha: float = 0.1,
+    ) -> Tuple[float, float, float, float]:
+        """Подгонка Lasso по данным одной машины.
+
+        Возвращает (coef, intercept, residual_std). residual_std — std остатков
+        (y - ŷ). При нехватке данных/ошибке возвращает (0, mean(y), 0).
+        """
+        try:
+            if feature not in group.columns or target not in group.columns:
+                logger.warning(f"Машина {auto}: нет колонки {feature}/{target} для Lasso")
+                return 0.0, 0.0, 0.0, 0.0
+
+            if group.height < MIN_SAMPLES:
+                logger.info(f"Машина {auto}: мало данных ({group.height}) для Lasso {target}")
+                y_mean = NormsService._safe_mean(group, target)
+                return 0.0, y_mean, 0.0, 0.0
+
+            x = group.select(feature).to_numpy().astype("float64")
+            y = group.select(target).to_numpy().astype("float64").ravel()
+
+            # заполняем NaN/inf нулями, чтобы не падать
+            import numpy as np
+            x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).reshape(-1, 1)
+            y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
+
+            if y.std() == 0 or x.std() == 0:
+                logger.info(f"Машина {auto}: нулевая дисперсия для Lasso {target}")
+                return 0.0, float(y.mean()) if y.size > 0 else 0.0, 0.0, 0.0  # type: ignore[arg-type]
+
+            model = Lasso(alpha=alpha)
+            model.fit(X=x, y=y)
+            residuals = y - model.predict(x)
+            return float(model.coef_[0]), float(model.intercept_), float(residuals.mean()), float(residuals.std())
+        except Exception as e:
+            logger.warning(f"Машина {auto}: ошибка Lasso для {target}: {e}")
+            try:
+                y_mean = NormsService._safe_mean(group, target)
+            except Exception:
+                y_mean = 0.0
+            return 0.0, y_mean, 0.0, 0.0
+
+    @staticmethod
+    def _safe_mean(group: pl.DataFrame, col: str) -> float:
+        """Безопасное получение float-среднего значения колонки."""
+        if group.height == 0 or col not in group.columns:
+            return 0.0
+        val = group[col].fill_null(0).mean()
+        if val is None:
+            return 0.0
+        try:
+            return float(val)  # type: ignore[arg-type]
+        except Exception:
+            return 0.0
+
+    @staticmethod
     def _fuel_afterprocess_norms(
             df_values: pl.DataFrame,
             cars_dict: Dict[str, Dict[str, float]],
@@ -607,6 +682,10 @@ class NormsService:
             (1 - pl.col("no_sat_data") / pl.col("count")).alias("sat_coverage"),
         ])
 
+        df = df.with_columns(
+            pl.col("sf_m").clip(upper_bound=0).abs().truediv("dtime_moving").mul(60).alias("fpm")
+        )
+
 
         df = df.filter(pl.col("is_bad_data").eq(False))
         if df.is_empty():
@@ -615,7 +694,7 @@ class NormsService:
 
         df = df.filter(
             (pl.col("spent_fuel") > 0) &
-            (pl.col("sat_coverage") > 0.85)
+            (pl.col("sat_coverage") > SATELLITES_COVERAGE)
         )
 
         if df.is_empty():
@@ -669,15 +748,22 @@ class NormsService:
             else:
                 logger.info(f"Машина {auto}: средний расход = {spent_fuel:.2f}")
 
-            arr = df.select(["rpm_total", "energy", "spent_fuel"]).to_numpy()
-            x_rpm = arr[:, 0].reshape(-1, 1)
-            x_energy =  arr[:, 1].reshape(-1, 1)
-            y = arr[:, 2].reshape(-1, 1)
+            # Lasso подгоняется по каждой машине отдельно (если у машины
+            # своя модель поведения). Стандартное отклонение — это std остатков
+            # (y - ŷ), а не std предсказаний.
+            rpm_model_coef, rpm_model_intercept, rpm_model_mean, rpm_model_std = NormsService._fit_lasso_per_car(
+                group, feature="rpm_total", target="spent_fuel", auto=auto
+            )
+            speed_model_coef, speed_model_intercept, speed_model_mean, speed_model_std = NormsService._fit_lasso_per_car(
+                group, feature="pos_s", target="spent_fuel", auto=auto
+            )
+            group_sfm = group.filter(pl.col("sf_m").lt(0)).with_columns(
+                pl.col("pos_s_m").abs().mul(pl.col("dtime_moving")).alias("fpm_x_metric"),
+            )
+            fpm_model_coef, fpm_model_intercept, fpm_model_mean, fpm_model_std = NormsService._fit_lasso_per_car(
+                group_sfm, feature="fpm_x_metric", target="fpm", auto=auto
+            )
 
-            model_rpm = Lasso(alpha=0.1)
-            model_rpm = model_rpm.fit(X=x_rpm, y=y)
-            diff = model_rpm.predict(group.select("rpm_total").to_numpy())
-            std_model_rpm = float(diff.std())
             std = group["spent_fuel"].std()
             if std is None:
                 std = 0
@@ -696,13 +782,15 @@ class NormsService:
                 logger.info(f"Машина {auto} нулевую скорость за весь период. Проблема с датчиком?")
                 continue
 
-            max_fuel = group["max_local_fuel_level"].max()
+            max_fuel_val = group["max_local_fuel_level"].max()
+            max_fuel = float(max_fuel_val) if max_fuel_val is not None else 0.0
             rpm_max = group["rpm_mean"].max()
             rpm_mean = group["rpm_mean"].mean()
             rpm_std = group["rpm_mean"].std()
 
+
             logger.info(f"Машина {auto}: max_speed={max_speed}, max_fuel={max_fuel}, "
-                        f"rpm_mean={rpm_mean}, rpm_std={rpm_std}, rpm_max={rpm_max}")
+                        f"rpm_mean={rpm_mean}, rpm_std={rpm_std}, rpm_max={rpm_max}, ") 
 
             if max_speed is not None and spent_fuel is not None:
                 results.append({
@@ -712,13 +800,21 @@ class NormsService:
                     "norma_rasx_winter": spent_fuel * 1.1,
                     "norma_mean": spent_fuel,
                     "norma_std": std,
-                    "speed_etalon": float(min(max_speed, 60)),
+                    "speed_etalon": float(min(max_speed, 60)),  # type: ignore[arg-type]
                     "norma_rpm_mean": rpm_mean,
-                    "rpm_model_coef": model_rpm.coef_[0],
-                    "rpm_model_intercept": model_rpm.intercept_[0],
-                    "rpm_model_std": std_model_rpm,
+                    "rpm_model_coef": rpm_model_coef,
+                    "rpm_model_intercept": rpm_model_intercept,
+                    "rpm_model_std": rpm_model_std,
+                    "rpm_model_mean": rpm_model_mean,
+                    "speed_model_coef": speed_model_coef,
+                    "speed_model_intercept": speed_model_intercept,
+                    "speed_model_std": speed_model_std,
                     "norma_rpm_std": rpm_std,
                     "norma_rpm_max": rpm_max,
+                    "fpm_model_coef": fpm_model_coef,
+                    "fpm_model_intercept": fpm_model_intercept,
+                    "fpm_model_mean": fpm_model_mean,
+                    "fpm_model_std": fpm_model_std,
                     "period": datetime.now() + timedelta(days=365),
                     "is_special_car": max_speed > 30,
                 })
@@ -747,6 +843,13 @@ class NormsService:
             "rpm_model_coef": pl.Float32,
             "rpm_model_intercept": pl.Float32,
             "rpm_model_std": pl.Float32,
+            "speed_model_coef": pl.Float32,
+            "speed_model_intercept": pl.Float32,
+            "speed_model_std": pl.Float32,
+            "fpm_model_coef": pl.Float32,
+            "fpm_model_intercept": pl.Float32,
+            "fpm_model_mean": pl.Float32,
+            "fpm_model_std": pl.Float32,
             "period": pl.Datetime,
             "is_special_car": pl.Boolean
         }

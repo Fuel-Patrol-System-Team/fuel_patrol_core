@@ -3,7 +3,6 @@ import polars
 import pytest
 
 from app.tasks import DataProvider, GlonassGeneralProvider
-from core.services.fuelrepot_service import FuelReportService
 
 
 @pytest.mark.django_db

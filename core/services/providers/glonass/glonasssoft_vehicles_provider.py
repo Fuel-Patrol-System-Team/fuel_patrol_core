@@ -159,6 +159,10 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             pseudonym = sensor.get("pseudonym", None)
             metadata_postfix = {}
             priority_default = 5
+            median_degree = sensor.get("medianDegree", None)
+            
+            if median_degree is not None:
+                metadata_postfix["median_degree"] = median_degree
 
             multi_type = "can"
             if sensor_agg is None:

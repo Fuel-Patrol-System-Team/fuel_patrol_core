@@ -22,7 +22,7 @@ def test_parser_compute_single():
     end_time = datetime.datetime(2025, 12, 21)
 
     parser = GlonassGeneralProvider(None, car, provider, start_time, end_time, "fuel")
-    status, raw_df = parser.parse_raw_data("fuel", return_df=True)
+    status, raw_df, sensors = parser.parse_raw_data("fuel", return_df=True)
     # raw_df = data_provider.get_car_data(start_dt, end_dt)
     
     auto_df = CarDataService.prepare_auto_data(car)
@@ -39,6 +39,7 @@ def test_parser_compute_single():
         leaks_result, intermediate_df, reports = leaks_service.compute_leaks(
             auto_df=auto_df,
             data_df=raw_df,
+            sensors=sensors,
             primary_df=primary_df,
             norma_df=norms_df,
             is_save_bad_data=False,
@@ -60,7 +61,7 @@ def test_parser_computed_data_single():
     end_time = datetime.datetime(2025, 12, 21)
 
     parser = GlonassGeneralProvider(None, car, provider, start_time, end_time, "fuel")
-    status, raw_df = parser.parse_raw_data("fuel", return_df=True)
+    status, raw_df, sensors = parser.parse_raw_data("fuel", return_df=True)
     # raw_df = data_provider.get_car_data(start_dt, end_dt)
     
     auto_df = CarDataService.prepare_auto_data(car)
@@ -77,6 +78,7 @@ def test_parser_computed_data_single():
         leaks_result, intermediate_df = leaks_service.compute_leaks(
             auto_df=auto_df,
             data_df=raw_df,
+            sensors=sensors,
             primary_df=primary_df,
             norma_df=norms_df,
             is_save_bad_data=False,

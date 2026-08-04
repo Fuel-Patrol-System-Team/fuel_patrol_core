@@ -315,7 +315,7 @@ def process_single_car_data_task(
         logger.info("ЭТАП 5: Фильтрация результатов утечек...")
         if leaks_result is not None:
             filtering_service = FilteringService()
-            filtered_leaks = filtering_service.apply_filters(leaks_result)
+            filtered_leaks, result_df = filtering_service.apply_filters(leaks_result)
         else:
             filtered_leaks = None
 
@@ -482,8 +482,9 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 continue
 
 
+
 @shared_task(bind=True)
-def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=False, is_save_bad_data=False):
+def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=False, is_save_bad_data=False, default_duration=180):
     
     datetime_now = datetime.now()
     provider = DataProvider.objects.get(name=provider_name)
@@ -493,7 +494,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
         logger.warning(f"Машина не найдена {car_id}")
         return
     if car is not None:
-        datetime_for_stats = datetime_now - timedelta(days=180)
+        datetime_for_stats = datetime_now - timedelta(days=default_duration)
         # primary computing
         parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now, default_period_days=30)
         try:
@@ -552,6 +553,12 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
             ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
 
+@shared_task(bind=True)
+def calculate_stats_for_car(self, provider_name: str, cars: list[str], is_save_bad_data=False, default_duration=180):
+    tasks = [
+        calculate_stats_fuel_cron_one.si(provider_name, str(car_id), is_save_bad_data, False,default_duration) for car_id in cars
+    ]
+    chain(*tasks).apply_async()
 
 @shared_task(bind=True)
 def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
@@ -736,7 +743,7 @@ def calculate_leaks_cron(
                     ParsingCarStats.objects.filter(car_id=car.id).update(leaks_last_processed=now)
                     continue
                 filtering_service = FilteringService()
-                filtering_result = filtering_service.apply_filters(leaks_result)
+                true_leaks, filtering_result = filtering_service.apply_filters(leaks_result)
                 ReportService.save_car_reports_batch(filtering_result)
 
                 if not filtering_result.is_empty():
@@ -746,7 +753,7 @@ def calculate_leaks_cron(
                         car_map,
                     )
 
-                logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
+                logger.info(f"Сохранено {true_leaks.shape[0]} сливов")
                 Car.objects.filter(id=car.id).update(last_processed_date=now)
             except Exception as err:
                 report_query, report_details = ReportService.create_report(
@@ -792,7 +799,7 @@ def calculate_leaks_cron_one(
             logger.info(f"Car {car.id} already processed today, skipping")
             return
 
-        parser = GlonassGeneralProvider([car], None, provider, now, now)
+        parser = GlonassGeneralProvider([car], None, provider, now, now, default_period_days=25)
 
         try:
             # ✅ Same logic as cron
@@ -837,21 +844,22 @@ def calculate_leaks_cron_one(
                     logger.error(error_msg)
                     ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
                     return
-                computed_service = ComputedDataService()
-                saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
-                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
+                
                 filtering_service = FilteringService()
-                filtering_result = filtering_service.apply_filters(leaks_result)
-                ReportService.save_car_reports_batch(filtering_result)
+                true_leaks, filtering_result = filtering_service.apply_filters(leaks_result)
+                ReportService.save_car_reports_batch(true_leaks)
+                computed_service = ComputedDataService()
+                saved_records_amount, _ = computed_service.save_preprocessed_data(filtering_result)
+                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
 
-                if not filtering_result.is_empty():
+                if not true_leaks.is_empty():
                     save_leak_alerts_from_rows(
-                        filtering_result.rows(named=True),
+                        true_leaks.rows(named=True),
                         provider.org_id,
                         {car.name: car},
                     )
 
-                logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
+                logger.info(f"Сохранено {true_leaks.shape[0]} сливов")
             Car.objects.filter(id=car.id).update(last_processed_date=now)
             ParsingCarStats.objects.filter(car_id=car.id).update(computed_last_processed=now, leaks_last_processed=now)
             if is_fuel_report_made:
@@ -865,6 +873,8 @@ def calculate_leaks_cron_one(
             error_msg = f"Внутренняя ошибка {car.id}"
             ReportService.create_bad_data_record(car, error_msg, report_query, now, now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+    else:
+        logger.warning("Машина с заданными свойствами не найдена, пропускаем выполнение задачи")
 
 @shared_task(bind=True)
 def calculate_leaks_cron_new(self, provider_name: str, is_save_bad_data = False):
@@ -1302,7 +1312,7 @@ def parse_cars_motohours_task(
         self.update_state(state='FAILURE', meta={'error': str(e)})
         raise
 
-
+# TODO: не использовать убрать
 @shared_task(bind=True)
 def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_save_bad_data: bool, ignore_last_processed=False):
     provider = DataProvider.objects.get(id=provider_id)

@@ -78,7 +78,7 @@ class GlonassGeneralProvider:
         
         if not self.sensors_mapping_cache:
             right_car = Car.objects.only("id").get(id_in_provider_system=car.id_in_provider_system)
-            sensors = SensorsValues.objects.filter(car_id=right_car.id, is_active=True)
+            sensors = SensorsValues.objects.filter(car_id=right_car.id, is_active=True).order_by("created_at")
             try:
                 sensors_mapping = {sv.key.key: [] for sv in sensors}
                 for sv in sensors:

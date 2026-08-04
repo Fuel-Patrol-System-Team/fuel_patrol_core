@@ -61,7 +61,9 @@ class GL_ACTION_KEYS(Enum):
 class FuelFilters(Enum):
     BOUNDARY = "boundary_spent_fuel"
     SIGMA = "spent_fuel_std"
+    SIGMA_FPM = "fpm_model"
     RPM_MODEL = "rpm_model"
+    SPEED_MODEL = "speed_model"
 
 def _cast_ign(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]]):
     if "ign" in df.columns:
@@ -162,12 +164,7 @@ def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_map
         return df
 
     for i, sensor in enumerate(sensors):
-        df = df.filter(pl.col(sensor).lt(65535))
-
-    df = alg_piece_remove_message_delays(df)
-
-    for i, sensor in enumerate(sensors):
-        df = df.filter(pl.col(sensor).gt(0))
+        df = df.filter(pl.col(sensor).gt(0) & pl.col(sensor).lt(65535))
         # if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
         #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
         if df.shape[0] == 0:

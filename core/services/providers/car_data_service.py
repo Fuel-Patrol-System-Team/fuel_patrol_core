@@ -25,6 +25,8 @@ class CarDataService:
         """
         try:
             # Определяем все колонки топливных датчиков
+            if df.shape[0] == 0:
+                return df
             fuel_cols = [c for c in df.columns if c.startswith("calc_sensors_fuel_level")]
             is_multi = len(fuel_cols) > 1
 
@@ -40,8 +42,7 @@ class CarDataService:
             if "rpm" not in df.columns:
                 df = df.with_columns(pl.lit(65535).alias("rpm"))
 
-            # drop_nulls по всем топливным колонкам
-            df = df.drop_nulls(fuel_cols)
+            # df = df.drop_nulls(fuel_cols)
 
             if df.is_empty():
                 logger.warning("Нет данных после удаления NaN")

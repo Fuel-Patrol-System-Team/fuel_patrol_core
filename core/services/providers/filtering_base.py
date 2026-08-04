@@ -28,7 +28,7 @@ class BaseFilteringService(ABC):
         pass
 
     @abstractmethod
-    def pick_by_spent_fuel_std(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
+    def pick_by_fpm_std(self, df: pl.DataFrame, **kwargs) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по стандартному отклонению расхода"""
         pass
 

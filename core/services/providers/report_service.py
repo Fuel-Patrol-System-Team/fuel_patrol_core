@@ -279,7 +279,7 @@ class ReportService:
                     real_last = record["leak_end"]
                     if real_last is None:
                         real_last = record["leak_end"].replace(tzinfo=timezone.utc)
-                    leak = record["leak"]
+                    leak = record["leak_display"]
                     if record["picked_by"] == FuelFilters.BOUNDARY.value:
                         real_date = record["prev_period"].replace(tzinfo=timezone.utc)
                         # + т.к. spent_fuel_boundary отрицательный
