@@ -16,5 +16,6 @@ class ComputedDataService:
         tmp = list(map(lambda x: ComputedData(
             **x
         ), tmp ))
+        
         result = ComputedData.objects.bulk_create(tmp)
         return len(result), result

@@ -66,7 +66,7 @@ def prepare_fuel_data(car_report_id: UUID):
     if consumption:
         if consumption.json_data:
             norma_std = consumption.json_data.get('norma_std', 0.0)
-            norma_rasx = consumption.json_data.get('norma_rasx_summer', 0.0)
+            norma_rasx = computed.norma_rasx_per_travel
         if consumption.speed_etalon is not None:
             speed_etalon = consumption.speed_etalon
 
@@ -84,7 +84,7 @@ def prepare_fuel_data(car_report_id: UUID):
         "norma_rasx_per_travel": norma_rasx,
         "norma_std": norma_std,
         "norm_speed": speed_etalon,
-        "spent_fuel_boundary": 0.0,
+        "spent_fuel_boundary": computed.spent_fuel_boundary,
         "leak": leak,
         "ptime": computed.dtime,
     }

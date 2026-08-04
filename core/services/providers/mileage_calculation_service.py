@@ -34,7 +34,7 @@ class MileageCalculationService:
             is_save_bad_data: bool = True,
             parser: Optional[GlonassGeneralProvider] = None,
             sensor_speed_chart: Literal["can"] | Literal["mileage"] = "mileage",
-            force_chart = False
+            force_chart=False
     ) -> Tuple[Dict[str, Any], int]:
         """
         Выполняет расчет пробега с созданием отчета
@@ -53,39 +53,36 @@ class MileageCalculationService:
                 is_save_bad_data=is_save_bad_data
             )
 
-
             validation_error = MileageCalculationService._validate_dates(start_date, end_date)
             if validation_error:
                 ReportService.complete_report_error(report_query, validation_error)
                 return {"error": validation_error}, 400
 
-
-            provider = parser if parser is not None else GlonassGeneralProvider(None, car, provider_obj, start_date, end_date, "mileage")
+            provider = parser if parser is not None else GlonassGeneralProvider(None, car, provider_obj, start_date,                                                           end_date, "mileage")
             if not provider.authenticate():
                 error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
                 return {"error": error_msg}, 401
 
-
             status, df, sensors = provider.parse_raw_data("mileage", True, car)
             if df is None or df.is_empty() or not status:
-
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 result = make_empty_mileage_result(mode)
 
-
-                ReportService.create_bad_data_record(
+                empty_bad_data = ReportService.create_bad_data_record(
                     car,
                     "Нет данных mileage за указанный период",
                     report_query,
                     start_date, end_date
                 )
-
+                created_reports = [empty_bad_data] if empty_bad_data else []
+                result["created_reports"] = ReportService.serialize_bad_data_records(created_reports)
 
                 report_data = {
                     "result": result,
                     "empty_data": True,
-                    "rows_processed": 0
+                    "rows_processed": 0,
+                    "bad_data_created": len(created_reports)
                 }
 
                 ReportService.complete_report_success(
@@ -100,27 +97,56 @@ class MileageCalculationService:
                 auto = CarDataService.prepare_auto_data(car)
                 auto_record = auto.filter(pl.col("auto") == str(car_id)).to_dicts()[0]
                 mode = MileageModes.standart if agg is None else MileageModes.agg
-                if alg == MileageAlgorithms.compute:
-                    result = mileage_test_compute(df, auto_record, agg, mode)
-                else:
-                    result = mileage_test_fraud_new(car_id, df, sensors, auto_record, agg, mode, sensor_chart=sensor_speed_chart, force_chart=force_chart )
 
-                if result["msg_skip_big"] == 1:
+                try:
+                    if alg == MileageAlgorithms.compute:
+                        result = mileage_test_compute(df, auto_record, agg, mode)
+                    else:
+                        result = mileage_test_fraud_new(car_id, df, sensors, auto_record, agg, mode,
+                                                        sensor_chart=sensor_speed_chart, force_chart=force_chart)
+                except (SystemExit, KeyboardInterrupt, GeneratorExit):
+                    raise
+                except BaseException as calc_error:
+                    error_msg = f"Ошибка при расчете пробега: {calc_error}"
+                    logger.error(f"Ошибка расчета пробега для car_id={car_id}: {calc_error}", exc_info=True)
+                    ReportService.complete_report_error(
+                        report_query, error_msg, calc_error if isinstance(calc_error, Exception) else None
+                    )
+                    return {"error": error_msg}, 400
+
+                created_reports = []
+
+                if result.get("msg_skip_big") == 1:
                     try:
-                        ReportService.create_bad_data_record(Car.objects.get(id=car_id), "Обнаружены пропущенные сообщения для пробега", report_query, start_date, end_date, CarBadData.Severity.INFO, CarBadData.Category.PROVIDER_ERROR, [CarBadData.Tag.MOTOHOURS, CarBadData.Tag.PROVIDER])
-                    
+                        skip_big_record = ReportService.create_bad_data_record(
+                            Car.objects.get(id=car_id),
+                            "Обнаружены пропущенные сообщения для пробега",
+                            report_query, start_date, end_date,
+                            CarBadData.Severity.INFO,
+                            CarBadData.Category.PROVIDER_ERROR,
+                            [CarBadData.Tag.MOTOHOURS, CarBadData.Tag.PROVIDER]
+                        )
+                        if skip_big_record:
+                            created_reports.append(skip_big_record)
                     except BaseException as err:
-                        logger.error(f"Невозможно создать baddata для mileage отчета для {car_id} (пропуск данных) из-за {err}")
+                        logger.error(
+                            f"Невозможно создать baddata для mileage отчета для {car_id} (пропуск данных) из-за {err}")
+                if result.get("reports"):
+                    created_reports.extend(
+                        ReportService.create_bad_data_record_from_list(car, result["reports"], report_query,
+                                                                       is_save_bad_data)
+                    )
+
+                result["created_reports"] = ReportService.serialize_bad_data_records(created_reports)
+
                 report_data = {
                     "result": result,
                     "rows_processed": len(df),
                     "calculation_mode": mode,
                     "alg": alg.name,
-                    "aggregation_period_minutes": agg
+                    "aggregation_period_minutes": agg,
+                    "bad_data_created": len(created_reports)
                 }
-                if result["reports"] and is_save_bad_data:
-                    ReportService.create_bad_data_record_from_list(car, result["reports"], report_query)
-
 
                 ReportService.complete_report_success(
                     report_query,
@@ -151,8 +177,6 @@ class MileageCalculationService:
                 ReportService.complete_report_error(report_query, error_msg, e)
 
             return {"error": error_msg}, 500
-    
-
 
     @staticmethod
     def _get_car_and_provider(car_id: str) -> Tuple[Optional[Car], Optional[DataProvider]]:

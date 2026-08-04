@@ -783,3 +783,26 @@ class AnalysisRequestSerializer(serializers.Serializer):
             if not isinstance(self.initial_data['data'], list):
                 raise serializers.ValidationError({"data": "Must be a list of objects."})
         return attrs
+
+
+class StopsMileageRequestSerializer(serializers.Serializer):
+    car_id = serializers.CharField()
+    start_date = serializers.DateTimeField()
+    end_date = serializers.DateTimeField()
+    is_save_bad_data = serializers.BooleanField(required=False, default=True)
+
+
+class StopMileageRecordSerializer(serializers.Serializer):
+    stop_start = serializers.DateTimeField()
+    stop_end = serializers.DateTimeField()
+    address = serializers.CharField(allow_blank=True)
+    duration_seconds = serializers.IntegerField()
+    mileage_before_stop = serializers.FloatField(allow_null=True)
+    mileage = serializers.FloatField(allow_null=True)
+
+class StopsMileageResultSerializer(serializers.Serializer):
+    stops = StopMileageRecordSerializer(many=True)
+
+
+class StopsMileageResponseSerializer(serializers.Serializer):
+    result = StopsMileageResultSerializer()

@@ -6,6 +6,7 @@ from datetime import timedelta, datetime, timezone
 import polars as pl
 import pytz
 from pytz import tzinfo
+from dateutil import parser
 
 from core.models import (
     ReportQuery,
@@ -117,21 +118,26 @@ class ReportService:
         except Exception as e:
             logger.error(f"Ошибка при завершении отчета с ошибкой {report_query.id}: {e}")
             raise
-        
+
     @staticmethod
     @transaction.atomic
     def create_bad_data_record_from_list(
             car: Car,
             reports: List[Any],
             report_query: Optional[ReportQuery] = None,
-            
-    ) -> int | None:
-        if not report_query or not report_query.is_save_bad_data:
-            return None
+            is_save_bad_data: bool = True,
 
-        period_info   = ""
-        bad_reports = []
+    ) -> List[CarBadData]:
+        if not report_query:
+            return []
+
+        period_info = ""
+        created: List[CarBadData] = []
         for report in reports:
+            severity = report["severity"]
+
+            if not is_save_bad_data and severity != CarBadData.Severity.CRITICAL:
+                continue
 
             tags = report["tags"]
             if tags is None:
@@ -143,7 +149,7 @@ class ReportService:
                 car_id=car,
                 reason=f"{report["message"]}",
                 datetime=datetime.now().astimezone(),
-                severity=report["severity"],
+                severity=severity,
                 description=f"{report["message"]}\n Дата события: {report["event_date"]}",
                 event_date=report["event_date"],
                 category=report["category"],
@@ -151,16 +157,30 @@ class ReportService:
                 report_query=report_query,
             )
             bad_data.save()
+            created.append(bad_data)
 
             logger.info(
-                f"[{report["severity"]}][{report["category"]}] tags={valid_tags} "
+                f"[{severity}][{report["category"]}] tags={valid_tags} "
                 f"CarBadData для {car.name}: {report["message"]}{period_info}"
             )
-        if len(bad_reports) > 0:
-            CarBadData.objects.bulk_create(
-                bad_reports
-            )
-        return len(bad_reports)
+
+        return created
+
+    @staticmethod
+    def serialize_bad_data_records(records: List[CarBadData]) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": str(record.id),
+                "reason": record.reason,
+                "description": record.description,
+                "severity": record.severity,
+                "category": record.category,
+                "tags": record.tags,
+                "event_date": record.event_date.isoformat() if record.event_date else None,
+                "datetime": record.datetime.isoformat() if record.datetime else None,
+            }
+            for record in records
+        ]
 
     @staticmethod
     @transaction.atomic
@@ -246,7 +266,6 @@ class ReportService:
             return value
         if isinstance(value, str):
             try:
-                from dateutil import parser
                 return parser.parse(value)
             except (ValueError, TypeError):
                 logger.warning(f"Не удалось распарсить {field_name}: {value!r}")
@@ -254,7 +273,7 @@ class ReportService:
         logger.warning(f"Неизвестный тип {field_name}: {type(value)}")
         return None
 
-        
+
 
     @staticmethod
     @transaction.atomic

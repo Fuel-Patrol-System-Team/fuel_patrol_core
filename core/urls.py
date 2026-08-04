@@ -19,7 +19,7 @@ from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, Ca
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
     CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView, \
-    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView, MLReasoningView
+    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView, MLReasoningView, StopsMileageAPIView
 
 urlpatterns = [
 
@@ -78,6 +78,7 @@ urlpatterns = [
     path('car-reports-motohours', CarMotohoursReportListAPIView.as_view(), name='car-report-motohours-list'),
     path('car-reports-motohours/<uuid:pk>', CarMotohoursReportListAPIView.as_view(),
          name='car-report-motohours-detail'),
+    path("cars/stops-mileage", StopsMileageAPIView.as_view(), name="car-stops-mileage"),
 
     path('staff/auto-data', AutoDataListAPIView.as_view(), name="staff-auto-data"),
     path('drivers', DriverListAPIView.as_view(), name='driver-list'),

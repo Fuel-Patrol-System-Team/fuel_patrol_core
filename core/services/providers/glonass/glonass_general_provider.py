@@ -523,7 +523,9 @@ class GlonassGeneralProvider:
 
 
     def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, list[SensorMappingParserType]], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
+        # TODO: first collect data from all sensors -> expr -> filter -> loop filters
         use_cols = self._build_use_cols(required_columns, sensors_mapping )
+        
         result = self._process_unmapped(car, messages, use_cols)
         
 

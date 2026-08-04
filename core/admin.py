@@ -22,9 +22,10 @@ from core.models import (
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails,
     UnitService, CarUnit, UserCarList, CarPrimary, CarMileageReport,
     TelegramUser, CarFuelReport, CoreNotification, ParsingCarStats, ComputedData, AlertSubscription, Alert,
-    APICalculationLog,
+    APICalculationLog, CarMotohoursReport,
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
+from django.utils import timezone
 
 admin.site.unregister(PeriodicTask)
 admin.site.unregister(IntervalSchedule)
@@ -46,20 +47,50 @@ def _link(url, label):
     return mark_safe(f'<a href="{url}">{label}</a>')
 
 
+def _format_number(value, suffix=""):
+    if value is None:
+        return "—"
+    try:
+        return f"{float(value):,.2f} {suffix}".replace(",", " ")
+    except (ValueError, TypeError):
+        return str(value)
+
+
+def _json_preview(data, max_length=100):
+    if data:
+        import json
+        s = json.dumps(data, ensure_ascii=False)
+        return s[:max_length] + '…' if len(s) > max_length else s
+    return "—"
+
+
+def _json_full(data):
+    if data:
+        import json
+        s = json.dumps(data, ensure_ascii=False, indent=2)
+        return format_html(
+            '<pre style="font-family:monospace;font-size:12px;background:#000;color:#0f0;'
+            'padding:15px;border-radius:3px;max-height:500px;overflow-y:auto;'
+            'line-height:1.3;white-space:pre;">{}</pre>', s
+        )
+    return "Нет данных"
+
+
 # ─────────────────────────────────────────────────────────────
 # Инлайны
 # ─────────────────────────────────────────────────────────────
 class CarReportInline(TabularInline):
     model = CarReport
     extra = 0
-    fields = ('datetime', 'speed', 'volume', 'status')
-    readonly_fields = ('datetime', 'speed', 'volume', 'status')
-    verbose_name = "Отчёт"
-    verbose_name_plural = "Отчёты об автомобиле"
+    fields = ('datetime', 'datetime_end', 'speed', 'volume', 'status', 'picked_by', 'ai_response_status')
+    readonly_fields = ('datetime', 'datetime_end', 'speed', 'volume', 'status', 'picked_by', 'ai_response_status')
+    verbose_name = "Отчёт об утечке"
+    verbose_name_plural = "Отчёты об утечках"
     can_delete = False
     max_num = 20
     classes = ('collapse',)
     show_change_link = True
+
 
 class TelegramUserInline(TabularInline):
     model = TelegramUser
@@ -70,6 +101,7 @@ class TelegramUserInline(TabularInline):
     verbose_name_plural = "Telegram-аккаунт"
     can_delete = True
     max_num = 1
+
 
 class CarFuelReportInline(TabularInline):
     model = CarFuelReport
@@ -82,14 +114,11 @@ class CarFuelReportInline(TabularInline):
     show_change_link = True
     classes = ('collapse',)
 
-    def has_add_permission(self, request, obj=None):
-        return False
-
 
 class SensorsValuesInline(TabularInline):
     model = SensorsValues
     extra = 0
-    fields = ('key', 'value')
+    fields = ('key', 'value', 'is_system_pick', 'is_active', 'multi', 'multi_type', 'grades', 'metadata')
     verbose_name = "Значение датчика"
     verbose_name_plural = "Значения датчиков"
     can_delete = True
@@ -108,8 +137,7 @@ class SensorsKeyLocalizationInline(TabularInline):
 class CarConsumptionInline(TabularInline):
     model = CarConsumption
     extra = 0
-    fields = ('winter_volume', 'summer_volume', 'valid_period', 'max_fuel', 'speed_etalon')
-    readonly_fields = ('winter_volume', 'summer_volume', 'valid_period')
+    fields = ('winter_volume', 'summer_volume', 'valid_period', 'max_fuel', 'speed_etalon', 'json_data')
     verbose_name = "Расход топлива"
     verbose_name_plural = "Расходы топлива"
     can_delete = True
@@ -159,12 +187,6 @@ class CarBadDataInline(admin.TabularInline):
 
     reason_short.short_description = "Причина"
 
-    def has_add_permission(self, request, obj=None):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
 
 class OrgUserInline(TabularInline):
     model = OrgUser
@@ -190,16 +212,39 @@ class CarInline(TabularInline):
 class CarMileageReportInline(admin.TabularInline):
     model = CarMileageReport
     extra = 0
-    fields = ('datetime', 'mileage_start', 'mileage_end', 'fraud')
-    readonly_fields = ('datetime', 'mileage_start', 'mileage_end', 'fraud')
+    fields = ('datetime', 'mileage_start', 'mileage_end', 'travel', 'fraud', 'ign_miss', 'travel_fraud_jumps',
+              'ai_response_status')
+    readonly_fields = ('datetime', 'mileage_start', 'mileage_end', 'travel', 'fraud', 'ign_miss', 'travel_fraud_jumps',
+                       'ai_response_status')
     verbose_name = "Отчет по пробегу"
     verbose_name_plural = "Отчеты по пробегу"
     can_delete = False
     show_change_link = True
     classes = ('collapse',)
 
-    def has_add_permission(self, request, obj=None):
-        return False
+
+class CarMotohoursReportInline(admin.TabularInline):
+    model = CarMotohoursReport
+    extra = 0
+    fields = (
+        'datetime', 'motohours_start', 'motohours_end', 'motohours',
+        'motohours_fraud', 'motohours_fraud_by_sensor', 'motohours_idle',
+        'motohours_active', 'rpm_same_cases', 'rpm_same_cases_time',
+        'unefficient_cases', 'unefficient_time', 'sensor', 'sensor_check',
+        'ai_response_status'
+    )
+    readonly_fields = (
+        'datetime', 'motohours_start', 'motohours_end', 'motohours',
+        'motohours_fraud', 'motohours_fraud_by_sensor', 'motohours_idle',
+        'motohours_active', 'rpm_same_cases', 'rpm_same_cases_time',
+        'unefficient_cases', 'unefficient_time', 'sensor', 'sensor_check',
+        'ai_response_status'
+    )
+    verbose_name = "Отчет по моточасам"
+    verbose_name_plural = "Отчеты по моточасам"
+    can_delete = False
+    show_change_link = True
+    classes = ('collapse',)
 
 
 class ReportQueryDetailsInline(TabularInline):
@@ -207,11 +252,11 @@ class ReportQueryDetailsInline(TabularInline):
     extra = 0
     fields = (
         'start_time', 'end_time', 'time_proceed_display',
-        'cars_proceed', 'cars_skipped', 'traceback_preview',
+        'cars_proceed', 'cars_skipped', 'traceback_preview', 'result_preview'
     )
     readonly_fields = (
         'start_time', 'end_time', 'time_proceed_display',
-        'cars_proceed', 'cars_skipped', 'traceback_preview',
+        'cars_proceed', 'cars_skipped', 'traceback_preview', 'result_preview'
     )
     verbose_name = "Детали выполнения"
     verbose_name_plural = "Детали выполнения"
@@ -225,21 +270,17 @@ class ReportQueryDetailsInline(TabularInline):
 
     def traceback_preview(self, obj):
         if obj.traceback:
-            import json
-            s = json.dumps(obj.traceback, ensure_ascii=False, indent=2)
-            return mark_safe(
-                f'<pre style="max-height:150px;overflow:auto;background:#f8f8f8;'
-                f'padding:8px;border:1px solid #ddd;font-size:11px;">{s}</pre>'
-            )
+            return _json_full(obj.traceback)
         return "—"
 
     traceback_preview.short_description = "Ошибка"
 
-    def has_add_permission(self, request, obj=None):
-        return False
+    def result_preview(self, obj):
+        if obj.result:
+            return _json_preview(obj.result, 200)
+        return "—"
 
-    def has_change_permission(self, request, obj=None):
-        return False
+    result_preview.short_description = "Результат"
 
 
 class CoreNotificationInline(TabularInline):
@@ -253,9 +294,6 @@ class CoreNotificationInline(TabularInline):
     show_change_link = True
     classes = ('collapse',)
 
-    def has_add_permission(self, request, obj=None):
-        return False
-
 
 class ParsingCarStatsInline(TabularInline):
     model = ParsingCarStats
@@ -263,19 +301,13 @@ class ParsingCarStatsInline(TabularInline):
     fields = (
         'norms_last_processed', 'fuel_last_processed', 'leaks_last_processed',
         'primary_last_processed', 'mileage_last_processed', 'computed_last_processed',
-        'preffered_period_days', 'is_parse_mileage', 'is_parse_motohours', 'is_parse_fuel',
-    )
-    readonly_fields = (
-        'norms_last_processed', 'fuel_last_processed', 'leaks_last_processed',
-        'primary_last_processed', 'mileage_last_processed', 'computed_last_processed',
+        'motohours_last_processed', 'preffered_period_days', 'rpm_idle',
+        'is_parse_mileage', 'is_parse_motohours', 'is_parse_fuel',
     )
     verbose_name = "Статистика парсинга"
     verbose_name_plural = "Статистика парсинга"
     can_delete = False
     classes = ('collapse',)
-
-    def has_add_permission(self, request, obj=None):
-        return False
 
 
 # ─────────────────────────────────────────────────────────────
@@ -369,7 +401,6 @@ class TelegramUserAdmin(ImportExportMixin, ModelAdmin):
     user_display.short_description = "Пользователь"
     user_display.admin_order_field = 'user__username'
 
-
     @admin.action(description='✅ Активировать выбранных пользователей')
     def activate_users(self, request, queryset):
         updated = queryset.update(is_active=True)
@@ -379,6 +410,7 @@ class TelegramUserAdmin(ImportExportMixin, ModelAdmin):
     def deactivate_users(self, request, queryset):
         updated = queryset.update(is_active=False)
         self.message_user(request, f'Деактивировано {updated} пользователей.')
+
 
 # ─────────────────────────────────────────────────────────────
 # Language
@@ -493,7 +525,7 @@ class CoreNotificationAdmin(ImportExportMixin, ModelAdmin):
         'target_display', 'type', 'message_short',
         'is_read_display', 'created_at', 'url_display',
     )
-    list_filter = ('type', 'created_at')
+    list_filter = ('type', 'created_at', 'read_at')
     search_fields = ('target__username', 'type', 'message')
     ordering = ('-created_at',)
     export_form_class = UnfoldExportForm
@@ -543,7 +575,7 @@ class CoreNotificationAdmin(ImportExportMixin, ModelAdmin):
 
     @admin.action(description="✅ Отметить как прочитанные")
     def mark_as_read(self, request, queryset):
-        from django.utils import timezone
+
         updated = queryset.filter(read_at__isnull=True).update(read_at=timezone.now())
         self.message_user(request, f"Отмечено прочитанными: {updated}.")
 
@@ -559,8 +591,8 @@ class CoreNotificationAdmin(ImportExportMixin, ModelAdmin):
 @admin.register(Car)
 class CarAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
-        'name', 'id_in_provider_system', 'car_unit_display',
-        'engine_type', 'is_active_display', 'is_tarrified_display',
+        'id', 'name', 'id_in_provider_system', 'car_unit_display',
+        'is_active_display', 'is_tarrified_display',
         'data_providers_display', 'last_processed_date',
     )
     list_filter = ('is_active', 'is_tarrified', 'engine_type', 'car_unit')
@@ -574,11 +606,12 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
     inlines = [
         CarConsumptionInline, SensorsValuesInline, CarReportInline,
         DriverCarInline, CarFuelReportInline, ParsingCarStatsInline,
+        CarMileageReportInline, CarMotohoursReportInline,
     ]
     actions = ['export_selected', 'activate_selected', 'deactivate_selected']
     fieldsets = (
         ('Основное', {'fields': ('name', 'description', 'id_in_provider_system', 'car_unit', 'list_id')}),
-        ('Технические параметры', {'fields': ('engine_type', 'input', 'output')}),
+        ('Технические параметры', {'fields': ('engine_type', 'input', 'output', 'grades')}),
         ('Статус', {'fields': ('is_active', 'is_tarrified')}),
         ('Даты', {'fields': ('created_at', 'last_processed_date'), 'classes': ('collapse',)}),
     )
@@ -640,9 +673,6 @@ class CarUnitCarInline(TabularInline):
     verbose_name_plural = "Машины подразделения"
     can_delete = False
     show_change_link = True
-
-    def has_add_permission(self, request, obj=None):
-        return False
 
 
 @admin.register(CarUnit)
@@ -734,6 +764,7 @@ class ParsingCarStatsAdmin(ImportExportMixin, ModelAdmin):
         'norms_last_processed',
         'primary_last_processed',
         'computed_last_processed',
+        'motohours_last_processed',
     )
     list_filter = ('is_parse_fuel', 'is_parse_mileage', 'is_parse_motohours')
     search_fields = ('car__name', 'car__id_in_provider_system')
@@ -742,19 +773,16 @@ class ParsingCarStatsAdmin(ImportExportMixin, ModelAdmin):
     import_form_class = UnfoldImportForm
     list_per_page = 30
     show_full_result_count = False
-    readonly_fields = (
-        'car', 'fuel_last_processed', 'mileage_last_processed', 'leaks_last_processed',
-        'norms_last_processed', 'primary_last_processed', 'computed_last_processed',
-    )
     fieldsets = (
         ('Автомобиль', {'fields': ('car',)}),
         ('Настройки', {
-            'fields': ('preffered_period_days', 'is_parse_fuel', 'is_parse_mileage', 'is_parse_motohours'),
+            'fields': ('preffered_period_days', 'rpm_idle', 'is_parse_fuel', 'is_parse_mileage', 'is_parse_motohours'),
         }),
         ('Даты последней обработки', {
             'fields': (
                 'fuel_last_processed', 'mileage_last_processed', 'leaks_last_processed',
                 'norms_last_processed', 'primary_last_processed', 'computed_last_processed',
+                'motohours_last_processed',
             ),
             'classes': ('collapse',),
         }),
@@ -800,6 +828,7 @@ class ParsingCarStatsAdmin(ImportExportMixin, ModelAdmin):
             norms_last_processed=None,
             primary_last_processed=None,
             computed_last_processed=None,
+            motohours_last_processed=None,
         )
         self.message_user(request, f'Даты сброшены для {updated} записей.', messages.SUCCESS)
 
@@ -813,9 +842,6 @@ class ParsingCarStatsAdmin(ImportExportMixin, ModelAdmin):
         updated = queryset.update(is_parse_fuel=False)
         self.message_user(request, f'Парсинг топлива отключён для {updated} машин.', messages.SUCCESS)
 
-    def has_add_permission(self, request):
-        return False
-
 
 # ─────────────────────────────────────────────────────────────
 # ComputedData
@@ -824,11 +850,12 @@ class ParsingCarStatsAdmin(ImportExportMixin, ModelAdmin):
 class ComputedDataAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
         'id', 'auto_display', 'timestamp',
-        'pos_s', 'spent_fuel', 'z_values',
+        'pos_s', 'spent_fuel', 'spent_fuel_boundary', 'z_values',
         'rpm_mean', 'fpm', 'dtime',
-        'fuel_first', 'fuel_last', 'es',
+        'fuel_first', 'fuel_last', 'es', 'no_sat_data', 'count',
+        'norma_rasx_per_travel'
     )
-    list_filter = ('auto',)
+    list_filter = ('auto', 'timestamp')
     search_fields = ('auto__name', 'auto__id_in_provider_system')
     ordering = ('-timestamp',)
     export_form_class = UnfoldExportForm
@@ -836,13 +863,12 @@ class ComputedDataAdmin(ImportExportMixin, ModelAdmin):
     list_per_page = 50
     date_hierarchy = 'timestamp'
     show_full_result_count = False
-    readonly_fields = tuple(ComputedData.get_required_columns())
     actions = ['export_selected', 'delete_selected_records']
     fieldsets = (
         ('Автомобиль', {'fields': ('auto', 'timestamp')}),
         ('Показатели движения', {'fields': ('pos_s', 'dtime', 'rpm_mean', 'ign_spread')}),
-        ('Топливо', {'fields': ('spent_fuel', 'fpm', 'fuel_first', 'fuel_last')}),
-        ('Прочее', {'fields': ('z_values', 'es')}),
+        ('Топливо', {'fields': ('spent_fuel', 'spent_fuel_boundary', 'fpm', 'fuel_first', 'fuel_last')}),
+        ('Прочее', {'fields': ('z_values', 'es', 'no_sat_data', 'count', 'norma_rasx_per_travel')}),
     )
 
     def get_queryset(self, request):
@@ -857,12 +883,6 @@ class ComputedDataAdmin(ImportExportMixin, ModelAdmin):
     auto_display.short_description = "Автомобиль"
     auto_display.admin_order_field = 'auto__name'
 
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
     @admin.action(description='🗑️ Удалить выбранные записи')
     def delete_selected_records(self, request, queryset):
         count = queryset.count()
@@ -871,209 +891,16 @@ class ComputedDataAdmin(ImportExportMixin, ModelAdmin):
 
 
 # ─────────────────────────────────────────────────────────────
-# CarMileageReport
-# ─────────────────────────────────────────────────────────────
-@admin.register(CarMileageReport)
-class CarMileageReportAdmin(ImportExportMixin, ModelAdmin):
-    list_display = (
-        'car_info', 'datetime',
-        'mileage_start', 'mileage_end',
-        'mileage_difference', 'fraud_status',
-    )
-    list_filter = ('datetime', 'car_id__name')
-    search_fields = ('car_id__name', 'car_id__id_in_provider_system')
-    ordering = ('-datetime',)
-    list_per_page = 30
-    date_hierarchy = 'datetime'
-    autocomplete_fields = ['car_id']
-    fieldsets = (
-        ('Основная информация', {'fields': ('car_id', 'datetime')}),
-        ('Показания пробега', {
-            'fields': ('mileage_start', 'mileage_end'),
-            'description': 'Пробег в километрах',
-        }),
-        ('Аномалии', {'fields': ('fraud',), 'classes': ('collapse',)}),
-    )
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).select_related('car_id')
-
-    def car_info(self, obj):
-        if obj.car_id:
-            url = reverse("admin:core_car_change", args=[obj.car_id.id])
-            car_name = obj.car_id.name
-            if obj.car_id.id_in_provider_system:
-                car_name += f" (ID: {obj.car_id.id_in_provider_system})"
-            return format_html('<a href="{}">{}</a>', url, car_name)
-        return "—"
-
-    car_info.short_description = "Автомобиль"
-    car_info.admin_order_field = 'car_id__name'
-
-    def mileage_difference(self, obj):
-        if obj.mileage_start is not None and obj.mileage_end is not None:
-            diff = obj.mileage_end - obj.mileage_start
-            color = '#22c55e' if diff >= 0 else '#ef4444'
-            arrow = '↑' if diff >= 0 else '↓'
-            return format_html(
-                '<span style="color: {};">{} {}</span>',
-                color, arrow, self._format_number(abs(diff)),
-            )
-        return "—"
-
-    mileage_difference.short_description = "Изменение"
-
-    def fraud_status(self, obj):
-        if obj.fraud is not None:
-            if obj.fraud > 0:
-                return format_html(
-                    '<span style="color: #ef4444; font-weight: bold;">⚠️ {}</span>',
-                    self._format_number(obj.fraud),
-                )
-            return format_html('<span style="color: #22c55e;">✓ {}</span>', self._format_number(obj.fraud))
-        return format_html('<span style="color: #94a3b8;">—</span>')
-
-    fraud_status.short_description = "Аномалия"
-    fraud_status.admin_order_field = 'fraud'
-
-    def _format_number(self, value):
-        if value is None:
-            return "—"
-        try:
-            return f"{float(value):,.0f} км".replace(",", " ")
-        except (ValueError, TypeError):
-            return str(value)
-
-    def mileage_start(self, obj):
-        return self._format_number(obj.mileage_start)
-
-    mileage_start.short_description = "Пробег начало"
-    mileage_start.admin_order_field = 'mileage_start'
-
-    def mileage_end(self, obj):
-        return self._format_number(obj.mileage_end)
-
-    mileage_end.short_description = "Пробег конец"
-    mileage_end.admin_order_field = 'mileage_end'
-
-    actions = ['clear_fraud_flags']
-
-    @admin.action(description='Сбросить флаги аномалий')
-    def clear_fraud_flags(self, request, queryset):
-        updated = queryset.update(fraud=None)
-        self.message_user(request, f'Сброшены флаги аномалий для {updated} записей.', messages.SUCCESS)
-
-    def get_readonly_fields(self, request, obj=None):
-        return ('car_id', 'datetime') if obj else ()
-
-    def has_delete_permission(self, request, obj=None):
-        return request.user.is_superuser
-
-
-# ─────────────────────────────────────────────────────────────
-# UserCarList
-# ─────────────────────────────────────────────────────────────
-class UserCarListCarInline(TabularInline):
-    model = Car
-    extra = 0
-    fields = ('name', 'id_in_provider_system', 'car_unit', 'is_active', 'is_tarrified')
-    readonly_fields = ('name', 'id_in_provider_system', 'car_unit', 'is_active', 'is_tarrified')
-    verbose_name = "Машина"
-    verbose_name_plural = "Машины в списке"
-    can_delete = False
-    show_change_link = True
-
-    def has_add_permission(self, request, obj=None):
-        return False
-
-
-@admin.register(UserCarList)
-class UserCarListAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('name', 'user_display', 'cars_count_display')
-    list_filter = ('user',)
-    search_fields = ('name', 'user__username')
-    ordering = ('name',)
-    export_form_class = UnfoldExportForm
-    import_form_class = UnfoldImportForm
-    list_per_page = 30
-    fields = ('name', 'user')
-    actions = ['export_selected', 'delete_empty_lists']
-
-    def get_queryset(self, request):
-        return super().get_queryset(request).annotate(cars_count=Count('car', distinct=True))
-
-    def user_display(self, obj):
-        if obj.user:
-            url = reverse("admin:core_orguser_change", args=[obj.user.id])
-            return _link(url, obj.user.username)
-        return "—"
-
-    user_display.short_description = "Пользователь"
-    user_display.admin_order_field = 'user__username'
-
-    def cars_count_display(self, obj):
-        count = getattr(obj, 'cars_count', 0)
-        if count:
-            url = reverse('admin:core_car_changelist') + f'?list_id__id__exact={obj.id}'
-            return _link(url, f'{count} машин(ы)')
-        return '0'
-
-    cars_count_display.short_description = "Машин в списке"
-    cars_count_display.admin_order_field = 'cars_count'
-
-    def get_inlines(self, request, obj=None):
-        return [UserCarListCarInline] if obj else []
-
-    @admin.action(description='🗑️ Удалить пустые списки')
-    def delete_empty_lists(self, request, queryset):
-        deleted = []
-        for lst in queryset:
-            if not lst.car_set.exists():
-                deleted.append(lst.name)
-                lst.delete()
-        if deleted:
-            self.message_user(
-                request,
-                f'Удалено {len(deleted)}: {", ".join(deleted[:5])}{"…" if len(deleted) > 5 else ""}',
-                messages.SUCCESS,
-            )
-        else:
-            self.message_user(request, 'Пустых списков не найдено.', messages.INFO)
-
-
-# ─────────────────────────────────────────────────────────────
-# CarConsumption
-# ─────────────────────────────────────────────────────────────
-@admin.register(CarConsumption)
-class CarConsumptionAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('car_display', 'winter_volume', 'summer_volume', 'speed_etalon', 'max_fuel', 'valid_period')
-    list_filter = ('valid_period',)
-    search_fields = ('car_id__name',)
-    ordering = ('car_id__name', 'valid_period')
-    export_form_class = UnfoldExportForm
-    import_form_class = UnfoldImportForm
-    list_per_page = 30
-    date_hierarchy = 'valid_period'
-    actions = ['export_selected']
-
-    def car_display(self, obj):
-        if obj.car_id:
-            url = reverse("admin:core_car_change", args=[obj.car_id.id])
-            return _link(url, obj.car_id.name)
-        return "—"
-
-    car_display.short_description = "Автомобиль"
-    car_display.admin_order_field = 'car_id__name'
-
-
-# ─────────────────────────────────────────────────────────────
-# CarReport
+# CarReport (Leaks)
 # ─────────────────────────────────────────────────────────────
 @admin.register(CarReport)
 class CarReportAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('car_display', 'datetime', 'speed', 'volume', 'status_display')
-    list_filter = ('status', 'datetime')
-    search_fields = ('car_id__name',)
+    list_display = (
+        'car_display', 'datetime', 'datetime_end', 'speed', 'volume',
+        'status_display', 'picked_by', 'ai_response_status_display'
+    )
+    list_filter = ('status', 'picked_by', 'ai_response_status', 'datetime')
+    search_fields = ('car_id__name', 'car_id__id_in_provider_system')
     ordering = ('-datetime',)
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
@@ -1081,6 +908,15 @@ class CarReportAdmin(ImportExportMixin, ModelAdmin):
     date_hierarchy = 'datetime'
     show_full_result_count = False
     actions = ['export_selected', 'mark_as_active', 'mark_as_inactive']
+    fieldsets = (
+        ('Основное', {'fields': ('car_id', 'datetime', 'datetime_end', 'created_at')}),
+        ('Параметры', {'fields': ('speed', 'volume', 'status', 'picked_by')}),
+        ('AI', {'fields': ('ai_response', 'ai_response_status'), 'classes': ('collapse',)}),
+    )
+    readonly_fields = ('created_at',)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('car_id')
 
     def car_display(self, obj):
         if obj.car_id:
@@ -1096,6 +932,19 @@ class CarReportAdmin(ImportExportMixin, ModelAdmin):
 
     status_display.short_description = "Статус"
     status_display.admin_order_field = 'status'
+
+    def ai_response_status_display(self, obj):
+        if obj.ai_response_status:
+            colors = {
+                'ok': '#22c55e',
+                'error': '#ef4444',
+            }
+            color = colors.get(obj.ai_response_status, '#94a3b8')
+            return format_html('<span style="color:{};font-weight:600;">{}</span>', color, obj.ai_response_status)
+        return "—"
+
+    ai_response_status_display.short_description = "AI статус"
+    ai_response_status_display.admin_order_field = 'ai_response_status'
 
     @admin.action(description="✅ Отметить как активные")
     def mark_as_active(self, request, queryset):
@@ -1182,12 +1031,10 @@ class CarPrimaryAdmin(ImportExportMixin, ModelAdmin):
     import_form_class = UnfoldImportForm
     list_per_page = 30
     date_hierarchy = 'created_at'
-    readonly_fields = ('id', 'car_display', 'created_at', 'data_preview_full')
     actions = ['export_selected', 'delete_empty_primary_data']
     fieldsets = (
-        ('Основная информация', {'fields': ('id', 'car_display', 'created_at')}),
-        ('JSON данные (редактирование)', {'fields': ('primary',), 'classes': ('collapse',)}),
-        ('Предпросмотр', {'fields': ('data_preview_full',)}),
+        ('Основная информация', {'fields': ('id', 'car', 'created_at')}),
+        ('JSON данные', {'fields': ('primary', 'data_preview_full'), 'classes': ('collapse',)}),
     )
 
     def car_display(self, obj):
@@ -1206,34 +1053,14 @@ class CarPrimaryAdmin(ImportExportMixin, ModelAdmin):
     has_data_display.boolean = True
 
     def data_preview(self, obj):
-        if obj.primary:
-            import json
-            s = json.dumps(obj.primary, ensure_ascii=False)
-            return s[:100] + '…' if len(s) > 100 else s
-        return "—"
+        return _json_preview(obj.primary, 100)
 
     data_preview.short_description = "Данные (предпросмотр)"
 
     def data_preview_full(self, obj):
-        if obj.primary:
-            import json
-            s = json.dumps(obj.primary, ensure_ascii=False, indent=2)
-            return format_html(
-                '<pre style="font-family:monospace;font-size:12px;background:#000;color:#0f0;'
-                'padding:15px;border-radius:3px;max-height:500px;overflow-y:auto;'
-                'line-height:1.3;white-space:pre;">{}</pre>', s
-            )
-        return "Нет данных"
+        return _json_full(obj.primary)
 
     data_preview_full.short_description = "Данные (полный просмотр)"
-
-    def has_add_permission(self, request):
-        return False
-
-    def get_readonly_fields(self, request, obj=None):
-        if obj:
-            return ['id', 'car_display', 'created_at', 'data_preview_full']
-        return self.readonly_fields
 
     @admin.action(description='🗑️ Удалить записи без данных')
     def delete_empty_primary_data(self, request, queryset):
@@ -1244,6 +1071,268 @@ class CarPrimaryAdmin(ImportExportMixin, ModelAdmin):
             self.message_user(request, f'Удалено {count} записей без данных.', messages.SUCCESS)
         else:
             self.message_user(request, 'Записей без данных не найдено.', messages.INFO)
+
+
+# ─────────────────────────────────────────────────────────────
+# CarMileageReport
+# ─────────────────────────────────────────────────────────────
+@admin.register(CarMileageReport)
+class CarMileageReportAdmin(ImportExportMixin, ModelAdmin):
+    list_display = (
+        'car_info', 'datetime',
+        'mileage_start', 'mileage_end', 'travel',
+        'fraud_status', 'ign_miss', 'travel_fraud_jumps',
+        'ai_response_status_display'
+    )
+    list_filter = ('datetime', 'car_id__name', 'ai_response_status')
+    search_fields = ('car_id__name', 'car_id__id_in_provider_system')
+    ordering = ('-datetime',)
+    list_per_page = 30
+    date_hierarchy = 'datetime'
+    autocomplete_fields = ['car_id']
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    actions = ['export_selected', 'clear_fraud_flags']
+    fieldsets = (
+        ('Основная информация', {'fields': ('car_id', 'datetime')}),
+        ('Показания пробега', {
+            'fields': ('mileage_start', 'mileage_end', 'travel'),
+            'description': 'Пробег в километрах',
+        }),
+        ('Аномалии', {'fields': ('fraud', 'ign_miss', 'travel_fraud_jumps'), 'classes': ('collapse',)}),
+        ('AI', {'fields': ('ai_response', 'ai_response_status'), 'classes': ('collapse',)}),
+    )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('car_id')
+
+    def car_info(self, obj):
+        if obj.car_id:
+            url = reverse("admin:core_car_change", args=[obj.car_id.id])
+            car_name = obj.car_id.name
+            if obj.car_id.id_in_provider_system:
+                car_name += f" (ID: {obj.car_id.id_in_provider_system})"
+            return format_html('<a href="{}">{}</a>', url, car_name)
+        return "—"
+
+    car_info.short_description = "Автомобиль"
+    car_info.admin_order_field = 'car_id__name'
+
+    def fraud_status(self, obj):
+        if obj.fraud is not None:
+            if obj.fraud > 0:
+                return format_html(
+                    '<span style="color: #ef4444; font-weight: bold;">⚠️ {}</span>',
+                    _format_number(obj.fraud, "км"),
+                )
+            return format_html('<span style="color: #22c55e;">✓ {}</span>', _format_number(obj.fraud, "км"))
+        return format_html('<span style="color: #94a3b8;">—</span>')
+
+    fraud_status.short_description = "Аномалия"
+    fraud_status.admin_order_field = 'fraud'
+
+    def ai_response_status_display(self, obj):
+        if obj.ai_response_status:
+            colors = {
+                'ok': '#22c55e',
+                'error': '#ef4444',
+            }
+            color = colors.get(obj.ai_response_status, '#94a3b8')
+            return format_html('<span style="color:{};font-weight:600;">{}</span>', color, obj.ai_response_status)
+        return "—"
+
+    ai_response_status_display.short_description = "AI статус"
+    ai_response_status_display.admin_order_field = 'ai_response_status'
+
+    @admin.action(description='Сбросить флаги аномалий')
+    def clear_fraud_flags(self, request, queryset):
+        updated = queryset.update(fraud=None)
+        self.message_user(request, f'Сброшены флаги аномалий для {updated} записей.', messages.SUCCESS)
+
+    def get_readonly_fields(self, request, obj=None):
+        return ('car_id', 'datetime') if obj else ()
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+# ─────────────────────────────────────────────────────────────
+# CarMotohoursReport
+# ─────────────────────────────────────────────────────────────
+@admin.register(CarMotohoursReport)
+class CarMotohoursReportAdmin(ImportExportMixin, ModelAdmin):
+    list_display = (
+        'car_info', 'datetime',
+        'motohours_start', 'motohours_end', 'motohours',
+        'motohours_fraud_display', 'motohours_idle', 'motohours_active',
+        'sensor', 'sensor_check', 'ai_response_status_display'
+    )
+    list_filter = ('datetime', 'car_id__name', 'sensor', 'sensor_check', 'ai_response_status')
+    search_fields = ('car_id__name', 'car_id__id_in_provider_system')
+    ordering = ('-datetime',)
+    list_per_page = 30
+    date_hierarchy = 'datetime'
+    autocomplete_fields = ['car_id']
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    actions = ['export_selected']
+    fieldsets = (
+        ('Основная информация', {'fields': ('car_id', 'datetime')}),
+        ('Показания моточасов', {
+            'fields': ('motohours_start', 'motohours_end', 'motohours', 'motohours_idle', 'motohours_active'),
+            'description': 'Моточасы',
+        }),
+        ('Аномалии', {
+            'fields': (
+                'motohours_fraud', 'motohours_fraud_by_sensor',
+                'rpm_same_cases', 'rpm_same_cases_time',
+                'unefficient_cases', 'unefficient_time'
+            ),
+            'classes': ('collapse',),
+        }),
+        ('Датчики', {'fields': ('sensor', 'sensor_check'), 'classes': ('collapse',)}),
+        ('AI', {'fields': ('ai_response', 'ai_response_status'), 'classes': ('collapse',)}),
+    )
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('car_id')
+
+    def car_info(self, obj):
+        if obj.car_id:
+            url = reverse("admin:core_car_change", args=[obj.car_id.id])
+            return format_html('<a href="{}">{}</a>', url, obj.car_id.name)
+        return "—"
+
+    car_info.short_description = "Автомобиль"
+    car_info.admin_order_field = 'car_id__name'
+
+    def motohours_fraud_display(self, obj):
+        if obj.motohours_fraud is not None and obj.motohours_fraud > 0:
+            return format_html(
+                '<span style="color: #ef4444; font-weight: bold;">⚠️ {}</span>',
+                _format_number(obj.motohours_fraud, "ч"),
+            )
+        return _format_number(obj.motohours_fraud, "ч")
+
+    motohours_fraud_display.short_description = "Накрутка"
+    motohours_fraud_display.admin_order_field = 'motohours_fraud'
+
+    def ai_response_status_display(self, obj):
+        if obj.ai_response_status:
+            colors = {
+                'ok': '#22c55e',
+                'error': '#ef4444',
+            }
+            color = colors.get(obj.ai_response_status, '#94a3b8')
+            return format_html('<span style="color:{};font-weight:600;">{}</span>', color, obj.ai_response_status)
+        return "—"
+
+    ai_response_status_display.short_description = "AI статус"
+    ai_response_status_display.admin_order_field = 'ai_response_status'
+
+    def get_readonly_fields(self, request, obj=None):
+        return ('car_id', 'datetime') if obj else ()
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+
+# ─────────────────────────────────────────────────────────────
+# UserCarList
+# ─────────────────────────────────────────────────────────────
+class UserCarListCarInline(TabularInline):
+    model = Car
+    extra = 0
+    fields = ('name', 'id_in_provider_system', 'car_unit', 'is_active', 'is_tarrified')
+    readonly_fields = ('name', 'id_in_provider_system', 'car_unit', 'is_active', 'is_tarrified')
+    verbose_name = "Машина"
+    verbose_name_plural = "Машины в списке"
+    can_delete = False
+    show_change_link = True
+
+
+@admin.register(UserCarList)
+class UserCarListAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('name', 'user_display', 'cars_count_display')
+    list_filter = ('user',)
+    search_fields = ('name', 'user__username')
+    ordering = ('name',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    list_per_page = 30
+    fields = ('name', 'user')
+    actions = ['export_selected', 'delete_empty_lists']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(cars_count=Count('car', distinct=True))
+
+    def user_display(self, obj):
+        if obj.user:
+            url = reverse("admin:core_orguser_change", args=[obj.user.id])
+            return _link(url, obj.user.username)
+        return "—"
+
+    user_display.short_description = "Пользователь"
+    user_display.admin_order_field = 'user__username'
+
+    def cars_count_display(self, obj):
+        count = getattr(obj, 'cars_count', 0)
+        if count:
+            url = reverse('admin:core_car_changelist') + f'?list_id__id__exact={obj.id}'
+            return _link(url, f'{count} машин(ы)')
+        return '0'
+
+    cars_count_display.short_description = "Машин в списке"
+    cars_count_display.admin_order_field = 'cars_count'
+
+    def get_inlines(self, request, obj=None):
+        return [UserCarListCarInline] if obj else []
+
+    @admin.action(description='🗑️ Удалить пустые списки')
+    def delete_empty_lists(self, request, queryset):
+        deleted = []
+        for lst in queryset:
+            if not lst.car_set.exists():
+                deleted.append(lst.name)
+                lst.delete()
+        if deleted:
+            self.message_user(
+                request,
+                f'Удалено {len(deleted)}: {", ".join(deleted[:5])}{"…" if len(deleted) > 5 else ""}',
+                messages.SUCCESS,
+            )
+        else:
+            self.message_user(request, 'Пустых списков не найдено.', messages.INFO)
+
+
+# ─────────────────────────────────────────────────────────────
+# CarConsumption
+# ─────────────────────────────────────────────────────────────
+@admin.register(CarConsumption)
+class CarConsumptionAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('car_display', 'winter_volume', 'summer_volume', 'speed_etalon', 'max_fuel', 'valid_period')
+    list_filter = ('valid_period',)
+    search_fields = ('car_id__name',)
+    ordering = ('car_id__name', 'valid_period')
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    list_per_page = 30
+    date_hierarchy = 'valid_period'
+    actions = ['export_selected']
+    fieldsets = (
+        ('Основное', {'fields': ('car_id', 'valid_period')}),
+        ('Расход', {'fields': ('winter_volume', 'summer_volume')}),
+        ('Дополнительно', {'fields': ('speed_etalon', 'max_fuel', 'json_data'), 'classes': ('collapse',)}),
+    )
+
+    def car_display(self, obj):
+        if obj.car_id:
+            url = reverse("admin:core_car_change", args=[obj.car_id.id])
+            return _link(url, obj.car_id.name)
+        return "—"
+
+    car_display.short_description = "Автомобиль"
+    car_display.admin_order_field = 'car_id__name'
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1338,7 +1427,7 @@ class ReportQueryAdmin(ImportExportMixin, ModelAdmin):
 class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
         'report_query_display', 'start_time', 'end_time',
-        'time_proceed_display', 'cars_proceed', 'cars_skipped', 'has_traceback_display',
+        'time_proceed_display', 'cars_proceed', 'cars_skipped', 'has_traceback_display'
     )
     list_filter = ('start_time',)
     search_fields = ('report_query__id',)
@@ -1348,15 +1437,12 @@ class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
     list_per_page = 30
     date_hierarchy = 'start_time'
     show_full_result_count = False
-    readonly_fields = (
-        'id', 'report_query_display', 'start_time', 'end_time',
-        'time_proceed', 'cars_proceed', 'cars_skipped', 'traceback_preview',
-    )
     actions = ['export_selected', 'clear_traceback']
     fieldsets = (
-        ('Запрос', {'fields': ('id', 'report_query_display')}),
+        ('Запрос', {'fields': ('id', 'report_query')}),
         ('Время выполнения', {'fields': ('start_time', 'end_time', 'time_proceed')}),
         ('Результат', {'fields': ('cars_proceed', 'cars_skipped')}),
+        ('Данные', {'fields': ('result_preview',), 'classes': ('collapse',)}),
         ('Ошибки', {'fields': ('traceback_preview',), 'classes': ('collapse',)}),
     )
 
@@ -1382,32 +1468,27 @@ class ReportQueryDetailsAdmin(ImportExportMixin, ModelAdmin):
 
     def traceback_preview(self, obj):
         if obj.traceback:
-            import json
-            s = json.dumps(obj.traceback, ensure_ascii=False, indent=2)
-            return mark_safe(
-                f'<pre style="max-height:300px;overflow:auto;background:#1e1e1e;'
-                f'color:#d4d4d4;padding:12px;border-radius:4px;font-size:12px;">{s}</pre>'
-            )
+            return _json_full(obj.traceback)
         return "Нет данных об ошибках"
 
     traceback_preview.short_description = "Детали ошибки"
+
+    def result_preview(self, obj):
+        if obj.result:
+            return _json_full(obj.result)
+        return "Нет данных о результате"
+
+    result_preview.short_description = "Результат"
 
     @admin.action(description="🗑 Очистить traceback")
     def clear_traceback(self, request, queryset):
         updated = queryset.update(traceback=None)
         self.message_user(request, f'Traceback очищен для {updated} записей.', messages.SUCCESS)
 
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
 
 # ─────────────────────────────────────────────────────────────
 # CarBadData
 # ─────────────────────────────────────────────────────────────
-
 @admin.register(CarBadData)
 class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
@@ -1426,8 +1507,7 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
     date_hierarchy = 'datetime'
     show_full_result_count = True
     list_select_related = ('car_id', 'report_query')
-    actions = ['export_selected', 'delete_selected']
-
+    actions = ['export_selected', 'set_critical', 'set_warning', 'set_info']
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
 
@@ -1436,16 +1516,13 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
             'fields': ('car_id', 'datetime', 'severity', 'category', 'tags')
         }),
         ('Детали', {
-            'fields': ('reason', 'report_query')
+            'fields': ('reason', 'description', 'report_query')
         }),
         ('Системная информация', {
-            'fields': ('id', 'created_at_display'),
+            'fields': ('id', 'event_date', 'created_at_display'),
             'classes': ('collapse',)
         }),
     )
-
-    list_filter_suite = ['severity', 'category', 'datetime']
-    list_filter_suite_theme = 'box'
 
     def car_link(self, obj):
         if obj.car_id:
@@ -1509,7 +1586,6 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
     def tags_display(self, obj):
         if not obj.tags:
             return "—"
-
         tags_html = []
         tag_colors = {
             'mileage': '#007bff',
@@ -1522,7 +1598,6 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
             'alert': '#ffc107',
             'fault': '#dc3545',
         }
-
         for tag in obj.tags[:5]:
             color = tag_colors.get(tag, '#6c757d')
             tag_display = dict(CarBadData.Tag.choices).get(tag, tag)
@@ -1533,11 +1608,11 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
                     color, color, tag_display
                 )
             )
-
         if len(obj.tags) > 5:
             tags_html.append(format_html('<span>…+{}</span>', len(obj.tags) - 5))
-
         return mark_safe(' '.join(str(t) for t in tags_html))
+
+    tags_display.short_description = "Теги"
 
     def reason_short(self, obj):
         if len(obj.reason) > 60:
@@ -1574,8 +1649,6 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
         updated = queryset.update(severity=CarBadData.Severity.INFO)
         self.message_user(request, f'Отмечено как INFO: {updated} записей.', messages.SUCCESS)
 
-    actions = ['export_selected', 'set_critical', 'set_warning', 'set_info']
-
     def get_actions(self, request):
         actions = super().get_actions(request)
         if 'delete_selected' in actions:
@@ -1588,7 +1661,7 @@ class CarBadDataAdmin(ImportExportMixin, ModelAdmin):
 # ─────────────────────────────────────────────────────────────
 @admin.register(DataProvider)
 class DataProviderAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('name', 'org_display', 'cars_count_display', 'queries_count_display')
+    list_display = ('id', 'name', 'org_display', 'cars_count_display', 'queries_count_display')
     list_filter = ('org_id',)
     search_fields = ('name', 'cars__name')
     ordering = ('name',)
@@ -1674,8 +1747,12 @@ class SensorsKeyAdmin(ImportExportMixin, ModelAdmin):
 
 @admin.register(SensorsValues)
 class SensorsValuesAdmin(ImportExportMixin, ModelAdmin):
-    list_display = ('car_display', 'key_display', 'value')
-    list_filter = ('key',)
+    list_display = (
+        'car_display', 'key_display', 'value',
+        'is_system_pick_display', 'is_active_display',
+        'multi_type_display', 'created_at'
+    )
+    list_filter = ('key', 'is_active', 'is_system_pick', 'multi_type')
     search_fields = ('car_id__name', 'key__key', 'value')
     ordering = ('car_id__name', 'key__key')
     export_form_class = UnfoldExportForm
@@ -1683,6 +1760,12 @@ class SensorsValuesAdmin(ImportExportMixin, ModelAdmin):
     list_per_page = 40
     show_full_result_count = False
     actions = ['export_selected']
+    fieldsets = (
+        ('Основное', {'fields': ('car_id', 'key', 'value')}),
+        ('Настройки', {'fields': ('is_system_pick', 'is_active', 'multi', 'multi_type')}),
+        ('Дополнительно', {'fields': ('grades', 'metadata', 'created_at'), 'classes': ('collapse',)}),
+    )
+    readonly_fields = ('created_at',)
 
     def car_display(self, obj):
         if obj.car_id:
@@ -1699,6 +1782,25 @@ class SensorsValuesAdmin(ImportExportMixin, ModelAdmin):
         return "—"
 
     key_display.short_description = "Ключ"
+
+    def is_active_display(self, obj):
+        return _bool_icon(obj.is_active, "Активен", "Откл.")
+
+    is_active_display.short_description = "Активен"
+    is_active_display.admin_order_field = 'is_active'
+
+    def is_system_pick_display(self, obj):
+        return _bool_icon(obj.is_system_pick, "Системный", "")
+
+    is_system_pick_display.short_description = "Системный"
+    is_system_pick_display.admin_order_field = 'is_system_pick'
+
+    def multi_type_display(self, obj):
+        if obj.multi_type:
+            return obj.get_multi_type_display()
+        return "—"
+
+    multi_type_display.short_description = "Тип"
 
 
 @admin.register(SensorsKeyLocalization)
@@ -1727,6 +1829,146 @@ class SensorsKeyLocalizationAdmin(ImportExportMixin, ModelAdmin):
         return "—"
 
     language_display.short_description = "Язык"
+
+
+# ─────────────────────────────────────────────────────────────
+# ALERTS
+# ─────────────────────────────────────────────────────────────
+@admin.register(AlertSubscription)
+class AlertSubscriptionAdmin(ModelAdmin):
+    list_display = [
+        'user',
+        'alert_types',
+        'bad_data_min_severity',
+        'min_leak_liters',
+        'min_fraud_km',
+        'notify_hour',
+        'is_active',
+        'updated_at',
+    ]
+    list_filter = ['is_active', 'bad_data_min_severity', 'notify_hour']
+    search_fields = ['user__username', 'user__email']
+    readonly_fields = ['updated_at']
+
+    fieldsets = (
+        ("Пользователь", {
+            "fields": ("user", "is_active"),
+        }),
+        ("Типы уведомлений", {
+            "fields": ("alert_types",),
+        }),
+        ("Настройки Bad Data", {
+            "fields": ("bad_data_tags", "bad_data_min_severity"),
+            "classes": ("collapse",),
+        }),
+        ("Настройки сливов", {
+            "fields": ("min_leak_liters",),
+            "classes": ("collapse",),
+        }),
+        ("Настройки накруток", {
+            "fields": ("min_fraud_km",),
+            "classes": ("collapse",),
+        }),
+        ("Расписание", {
+            "fields": ("notify_hour",),
+        }),
+        ("Служебное", {
+            "fields": ("updated_at",),
+            "classes": ("collapse",),
+        }),
+    )
+
+
+@admin.register(Alert)
+class AlertAdmin(ModelAdmin):
+    list_display = [
+        'car',
+        'organization',
+        'alert_type',
+        'event_datetime',
+        'is_sent',
+        'sent_at',
+        'created_at',
+    ]
+    list_filter = [
+        'alert_type',
+        'is_sent',
+        'organization',
+        'event_datetime',
+    ]
+    search_fields = ['car__name', 'organization__name']
+    date_hierarchy = 'event_datetime'
+
+    fieldsets = (
+        ("Основное", {
+            "fields": ("organization", "car", "alert_type", "event_datetime"),
+        }),
+        ("Источник", {
+            "fields": (
+                "source_car_report",
+                "source_mileage_report",
+                "source_motohours_report",
+                "source_bad_data",
+            ),
+            "classes": ("collapse",),
+        }),
+        ("Payload", {
+            "fields": ("payload",),
+            "classes": ("collapse",),
+        }),
+        ("Telegram", {
+            "fields": ("is_sent", "sent_at"),
+        }),
+        ("Служебное", {
+            "fields": ("created_at",),
+            "classes": ("collapse",),
+        }),
+    )
+
+
+# ─────────────────────────────────────────────────────────────
+# LOGS
+# ─────────────────────────────────────────────────────────────
+@admin.register(APICalculationLog)
+class APICalculationLogAdmin(ModelAdmin):
+    list_display = (
+        'created_at', 'view_name', 'user', 'car', 'status_display'
+    )
+    list_filter = ('view_name', 'status_code', 'created_at')
+    search_fields = (
+        'view_name', 'user__username', 'user__email', 'car__name', 'car__id_in_provider_system')
+    readonly_fields = (
+        'created_at', 'view_name', 'user', 'car',
+        'status_display', 'request_content_display', 'response_content_display'
+    )
+    fieldsets = (
+        ('Основная информация', {
+            'fields': ('created_at', 'view_name', 'user', 'car', 'status_display'),
+        }),
+        ('Данные запроса и ответа', {
+            'fields': ('request_content_display', 'response_content_display'),
+        }),
+    )
+
+    def status_display(self, obj):
+        status = obj.status_code
+        if status and 200 <= status < 300:
+            return format_html(f'<span style="color: #22c55e; font-weight: bold;">{status} OK</span>')
+        elif status and status >= 400:
+            return format_html(f'<span style="color: #ef4444; font-weight: bold;">{status} Error</span>')
+        return format_html(f'<span style="color: #f59e0b;">{status}</span>')
+
+    status_display.short_description = "Статус"
+
+    def request_content_display(self, obj):
+        return _json_full(obj.request_data)
+
+    request_content_display.short_description = "Тело запроса (Request Data)"
+
+    def response_content_display(self, obj):
+        return _json_full(obj.response_data)
+
+    response_content_display.short_description = "Тело ответа (Response Data)"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2146,165 +2388,3 @@ class UnitServiceAdmin(ImportExportMixin, ModelAdmin):
                  name='core_unitservice_disable'),
         ]
         return custom_urls + urls
-
-# ─────────────────────────────────────────────────────────────
-# ALERTS
-# ─────────────────────────────────────────────────────────────
-@admin.register(AlertSubscription)
-class AlertSubscriptionAdmin(ModelAdmin):
-    list_display = [
-        'user',
-        'alert_types',
-        'bad_data_min_severity',
-        'min_leak_liters',
-        'min_fraud_km',
-        'notify_hour',
-        'is_active',
-        'updated_at',
-    ]
-    list_filter = ['is_active', 'bad_data_min_severity', 'notify_hour']
-    search_fields = ['user__username', 'user__email']
-    readonly_fields = ['updated_at']
-
-    fieldsets = (
-        ("Пользователь", {
-            "fields": ("user", "is_active"),
-        }),
-        ("Типы уведомлений", {
-            "fields": ("alert_types",),
-        }),
-        ("Настройки Bad Data", {
-            "fields": ("bad_data_tags", "bad_data_min_severity"),
-            "classes": ("collapse",),
-        }),
-        ("Настройки сливов", {
-            "fields": ("min_leak_liters",),
-            "classes": ("collapse",),
-        }),
-        ("Настройки накруток", {
-            "fields": ("min_fraud_km",),
-            "classes": ("collapse",),
-        }),
-        ("Расписание", {
-            "fields": ("notify_hour",),
-        }),
-        ("Служебное", {
-            "fields": ("updated_at",),
-            "classes": ("collapse",),
-        }),
-    )
-
-
-@admin.register(Alert)
-class AlertAdmin(ModelAdmin):
-    list_display = [
-        'car',
-        'organization',
-        'alert_type',
-        'event_datetime',
-        'is_sent',
-        'sent_at',
-        'created_at',
-    ]
-    list_filter = [
-        'alert_type',
-        'is_sent',
-        'organization',
-        'event_datetime',
-    ]
-    search_fields = ['car__name', 'organization__name']
-    readonly_fields = [
-        'created_at',
-        'sent_at',
-        'source_car_report',
-        'source_mileage_report',
-        'source_bad_data',
-    ]
-    date_hierarchy = 'event_datetime'
-
-    fieldsets = (
-        ("Основное", {
-            "fields": ("organization", "car", "alert_type", "event_datetime"),
-        }),
-        ("Источник", {
-            "fields": (
-                "source_car_report",
-                "source_mileage_report",
-                "source_bad_data",
-            ),
-            "classes": ("collapse",),
-        }),
-        ("Payload", {
-            "fields": ("payload",),
-            "classes": ("collapse",),
-        }),
-        ("Telegram", {
-            "fields": ("is_sent", "sent_at"),
-        }),
-        ("Служебное", {
-            "fields": ("created_at",),
-            "classes": ("collapse",),
-        }),
-    )
-
-
-# ─────────────────────────────────────────────────────────────
-# LOGS
-# ─────────────────────────────────────────────────────────────
-@admin.register(APICalculationLog)
-class APICalculationLogAdmin(ModelAdmin):
-    list_display = (
-        'created_at', 'view_name', 'user', 'car', 'status_display'
-    )
-    list_filter = ('view_name', 'status_code', 'created_at')
-
-    search_fields = (
-        'view_name', 'user__username', 'user__email', 'car__id', 'car__name', 'car__id_in_provider_system')
-
-    readonly_fields = (
-        'created_at', 'view_name', 'user', 'car',
-        'status_display', 'request_content_display', 'response_content_display'
-    )
-
-    fieldsets = (
-        ('Основная информация', {
-            'fields': ('created_at', 'view_name', 'user', 'car', 'status_display'),
-        }),
-        ('Данные запроса и ответа', {
-            'fields': ('request_content_display', 'response_content_display'),
-        }),
-    )
-
-    def status_display(self, obj):
-        status = obj.status_code
-        if status and 200 <= status < 300:
-            return format_html(f'<span style="color: #00ff00; font-weight: bold;">{status} OK</span>')
-        elif status and status >= 400:
-            return format_html(f'<span style="color: #ff0000; font-weight: bold;">{status} Error</span>')
-        return format_html(f'<span style="color: #ff9900;">{status}</span>')
-
-    status_display.short_description = "Статус"
-
-    def request_content_display(self, obj):
-        if obj.request_data:
-            formatted_json = json.dumps(obj.request_data, indent=2, ensure_ascii=False)
-            return format_html(
-                '<pre style="font-family: monospace; font-size: 12px; background-color: #000000; '
-                'color: #00ff00; padding: 10px; border-radius: 3px; max-height: 300px; '
-                'overflow-y: auto; line-height: 1.3; white-space: pre;">{}</pre>', formatted_json
-            )
-        return "Нет данных"
-
-    request_content_display.short_description = "Тело запроса (Request Data)"
-
-    def response_content_display(self, obj):
-        if obj.response_data:
-            formatted_json = json.dumps(obj.response_data, indent=2, ensure_ascii=False)
-            return format_html(
-                '<pre style="font-family: monospace; font-size: 12px; background-color: #000000; '
-                'color: #00ff00; padding: 10px; border-radius: 3px; max-height: 500px; '
-                'overflow-y: auto; line-height: 1.3; white-space: pre;">{}</pre>', formatted_json
-            )
-        return "Нет ответа"
-
-    response_content_display.short_description = "Тело ответа (Response Data)"

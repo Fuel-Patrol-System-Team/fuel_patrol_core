@@ -36,13 +36,16 @@ from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
+from .helpers.agg import validate_agg
 from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
+from .helpers.car_move_stop import get_stops_mileage_report
 
 from .helpers.car_request_helpers import CarRequestHelper
 from .helpers.car_sensors_helpers import CarSensorsHelper
 from .helpers.data_provider import validate_provider_cars, \
     create_data_provider
+from .helpers.date import _parse_to_aware
 from .helpers.ml_reasoning import update_ai_response, prepare_motohours_data, prepare_mileage_data, prepare_fuel_data
 
 from .helpers.sensors_mapping import get_user_language_code, get_car_sensors_values, get_sensors_keys_with_localization
@@ -64,7 +67,7 @@ from core.helpers.rest import (
     CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA,
-    ANALYSIS_SCHEMA
+    ANALYSIS_SCHEMA, STOPS_MILEAGE_REQUEST_SCHEMA, STOPS_MILEAGE_RESPONSE_SCHEMA
 )
 from app.tasks import FuelReportService, sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
@@ -83,7 +86,7 @@ from .serializers import (
     UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
     TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
     APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer,
-    AlertSubscriptionPatchSerializer, AnalysisRequestSerializer
+    AlertSubscriptionPatchSerializer, AnalysisRequestSerializer, StopsMileageRequestSerializer
 )
 
 from core.helpers.responses import error_response, user_registered_response, user_response, \
@@ -431,10 +434,10 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
     @swagger_auto_schema(
         operation_summary="Рассчитать пробег автомобиля за период",
         operation_description=(
-            "Вычисляет пробег по телематическим данным за указанный период. "
-            "Максимальный период — 60 дней. "
-            "Поддерживает несколько алгоритмов расчёта (`alg`) и агрегацию (`agg`). "
-            "Логирует результат в APICalculationLog."
+                "Вычисляет пробег по телематическим данным за указанный период. "
+                "Максимальный период — 60 дней. "
+                "Поддерживает несколько алгоритмов расчёта (`alg`) и агрегацию (`agg`). "
+                "Логирует результат в APICalculationLog."
         ),
         request_body=MILEAGE_REQUEST_SCHEMA,
         responses={
@@ -454,6 +457,10 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
+        agg, agg_error = validate_agg(agg)
+        if agg_error:
+            return Response({"error": agg_error}, status=400)
+
         try:
             if not car_id:
                 return Response({"error": "Параметр car_id обязателен"}, status=404)
@@ -461,30 +468,35 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
         except (ValueError, TypeError):
             return Response({"error": "Автомобиль не найден (неверный формат ID)"}, status=404)
 
+        user = request.user
+        if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
+            target_timezone = ZoneInfo(user.timezone)
+        else:
+            target_timezone = ZoneInfo("UTC")
+
         try:
-            user = request.user
-            if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
-                target_timezone = ZoneInfo(user.timezone)
-            else:
-                target_timezone = ZoneInfo("UTC")
             if start_date:
-                start_date = datetime.fromisoformat(start_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
+                start_date = _parse_to_aware(start_date, target_timezone).astimezone(pytz.utc)
             if end_date:
-                end_date = datetime.fromisoformat(end_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
+                end_date = _parse_to_aware(end_date, target_timezone).astimezone(pytz.utc)
             else:
-                end_date = datetime.now()
+                end_date = datetime.now(pytz.utc)
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
         except Exception as e:
             return Response({"error": f"Ошибка обработки дат: {e}"}, status=400)
 
-        if start_date and (end_date - start_date).days > 60:
+        if not start_date:
+            return Response({"error": "Параметр start_date обязателен"}, status=400)
+
+        now = datetime.now(target_timezone)
+
+        if (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
-        if start_date > datetime.now().astimezone(target_timezone).__add__(timedelta(hours=12)):
+        if start_date > now + timedelta(hours=12):
             return error_response("Начало периода выше текущей даты", status.HTTP_400_BAD_REQUEST)
-        if end_date > datetime.now().astimezone(target_timezone) + timedelta(days=1):
-            end_date = datetime.now().astimezone(target_timezone) + timedelta(days=1)
-        
+        if end_date > now + timedelta(days=1):
+            end_date = now + timedelta(days=1)
 
         try:
             result, status_code = MileageCalculationService.calculate_mileage(
@@ -503,16 +515,17 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
 
         return Response(result, status=status_code)
 
+
 class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
         operation_summary="Рассчитать пробег автомобиля за период",
         operation_description=(
-            "Вычисляет пробег по телематическим данным за указанный период. "
-            "Максимальный период — 60 дней. "
-            "Поддерживает несколько алгоритмов расчёта (`alg`) и агрегацию (`agg`). "
-            "Логирует результат в APICalculationLog."
+                "Вычисляет пробег по телематическим данным за указанный период. "
+                "Максимальный период — 60 дней. "
+                "Поддерживает несколько алгоритмов расчёта (`alg`) и агрегацию (`agg`). "
+                "Логирует результат в APICalculationLog."
         ),
         request_body=FUELREPORT_REQUEST_SCHEMA,
         responses={
@@ -530,6 +543,10 @@ class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
+        agg, agg_error = validate_agg(agg)
+        if agg_error:
+            return Response({"error": agg_error}, status=400)
+
         try:
             if not car_id:
                 return Response({"error": "Параметр car_id обязателен"}, status=404)
@@ -537,29 +554,35 @@ class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
         except (ValueError, TypeError):
             return Response({"error": "Автомобиль не найден (неверный формат ID)"}, status=404)
 
+        user = request.user
+        if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
+            target_timezone = ZoneInfo(user.timezone)
+        else:
+            target_timezone = ZoneInfo("UTC")
+
         try:
-            user = request.user
-            if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
-                target_timezone = ZoneInfo(user.timezone)
-            else:
-                target_timezone = ZoneInfo("UTC")
             if start_date:
-                start_date = datetime.fromisoformat(start_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
+                start_date = _parse_to_aware(start_date, target_timezone).astimezone(pytz.utc)
             if end_date:
-                end_date = datetime.fromisoformat(end_date).astimezone(tz=target_timezone).astimezone(pytz.utc)
+                end_date = _parse_to_aware(end_date, target_timezone).astimezone(pytz.utc)
             else:
-                end_date = datetime.now()
+                end_date = datetime.now(pytz.utc)
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
         except Exception as e:
             return Response({"error": f"Ошибка обработки дат: {e}"}, status=400)
 
-        if start_date and (end_date - start_date).days > 60:
+        if not start_date:
+            return Response({"error": "Параметр start_date обязателен"}, status=400)
+
+        now = datetime.now(target_timezone)
+
+        if (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
-        if start_date > datetime.now().astimezone(target_timezone).__add__(timedelta(hours=12)):
+        if start_date > now + timedelta(hours=12):
             return error_response("Начало периода выше текущей даты", status.HTTP_400_BAD_REQUEST)
-        if end_date > datetime.now().astimezone(target_timezone) + timedelta(days=1):
-            end_date = datetime.now().astimezone(target_timezone) + timedelta(days=1)
+        if end_date > now + timedelta(days=1):
+            end_date = now + timedelta(days=1)
 
         try:
             result, status_code = FuelReportService.calculate_fuelspent(
@@ -570,6 +593,11 @@ class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
                 is_save_bad_data=is_save_bad_data,
                 force_chart=force_chart
             )
+
+            leaks_sum, leaks_data = FuelReportService._get_leaks_data(car_id, start_date, end_date)
+            result['leaks_sum'] = leaks_sum
+            result['leaks_data'] = leaks_data
+
             if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
                 status_code = 404
         except (ObjectDoesNotExist, ValidationError):
@@ -577,15 +605,16 @@ class FuelSpentCalculationService(APICalculationLoggingMixin, APIView):
 
         return Response(result, status=status_code)
 
+
 class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
     @swagger_auto_schema(
         operation_summary="Рассчитать моточасы автомобиля за период",
         operation_description=(
-            "Вычисляет моточасы по данным датчиков зажигания/RPM за указанный период. "
-            "Максимальный период — 60 дней. "
-            "Логирует результат в APICalculationLog."
+                "Вычисляет моточасы по данным датчиков зажигания/RPM за указанный период. "
+                "Максимальный период — 60 дней. "
+                "Логирует результат в APICalculationLog."
         ),
         request_body=MOTOHOURS_REQUEST_SCHEMA,
         responses={
@@ -602,6 +631,10 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
 
+        agg, agg_error = validate_agg(agg)
+        if agg_error:
+            return Response({"error": agg_error}, status=400)
+
         try:
             if not car_id:
                 return Response({"error": "Параметр car_id обязателен"}, status=404)
@@ -609,25 +642,32 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
         except (ValueError, TypeError):
             return Response({"error": "Автомобиль не найден (неверный формат ID)"}, status=404)
 
-        try:
-            if start_date:
-                start_date = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
-            if end_date:
-                end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
-        except ValueError as e:
-            return Response({"error": f"Неверный формат даты: {e}"}, status=400)
         user = request.user
         if user and user.is_authenticated and hasattr(user, 'timezone') and user.timezone in pytz.common_timezones:
             target_timezone = ZoneInfo(user.timezone)
         else:
             target_timezone = ZoneInfo("UTC")
-        if start_date and end_date and (end_date - start_date).days > 60:
+
+        try:
+            if start_date:
+                start_date = _parse_to_aware(start_date, target_timezone)
+            if end_date:
+                end_date = _parse_to_aware(end_date, target_timezone)
+        except ValueError as e:
+            return Response({"error": f"Неверный формат даты: {e}"}, status=400)
+
+        if not start_date or not end_date:
+            return Response({"error": "Параметры start_date и end_date обязательны"}, status=400)
+
+        now = datetime.now(target_timezone)
+
+        if (end_date - start_date).days > 60:
             return error_response("Превышен период в 60 дней", status.HTTP_400_BAD_REQUEST)
-        if start_date > datetime.now().__add__(timedelta(hours=12)):
+        if start_date > now + timedelta(hours=12):
             return error_response("Начало периода выше текущей даты", status.HTTP_400_BAD_REQUEST)
-        if end_date > datetime.now() + timedelta(days=1):
-            end_date = datetime.now().astimezone(target_timezone) + timedelta(days=1)
-        
+        if end_date > now + timedelta(days=1):
+            end_date = now + timedelta(days=1)
+
         try:
             result, status_code = MotohoursCalculationService.calculate_motohours(
                 car_id=car_id, agg=agg,
@@ -639,7 +679,6 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
             return Response({"error": "Автомобиль не найден в системе"}, status=404)
 
         return Response(result, status=status_code)
-
 
 class UserRegistrationAPIView(APIView):
     permission_classes = [IsNotDemoUser]
@@ -1583,19 +1622,23 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         if not computed_data_list:
             return error_response("Нет данных для этой машины", status.HTTP_400_BAD_REQUEST)
 
-        leaks = CarReport.objects.filter(car_id__id=car_id, datetime__gte=start_date)
+        leaks = CarReport.objects.filter(car_id__id=car_id, datetime__gte=start_date, picked_by__in=["fpm_model"])
         leaks_df = polars.DataFrame(list(leaks.values()))
 
         df = polars.DataFrame(computed_data_list)
-        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values", "ign_spread", "rpm_mean", "spent_fuel"])
-        tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
-        tmp = tmp.filter(polars.col("spent_fuel").gt(0))
+        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values_fpm", "ign_spread", "rpm_mean", "filtered", "sf_m", "spent_fuel", "leak_display"])
+        tmp = tmp.rename({"z_values_fpm": "z_values"})
+        if leaks_df.shape[0] > 0:
+            tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
+        else:
+            tmp = tmp.with_columns(pl.lit(False).alias("is_leak"))
+        tmp = tmp.filter(pl.col("filtered").eq(False))
         tmp = tmp.with_columns(
             pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias("color"))
         tmp = tmp.with_columns(
             pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
 
-        data_fast = tmp.filter(polars.col("pos_s").gt(1)).select(["timestamp", "pos_s", "spent_fuel", "fpm", "color"])
+        data_fast = tmp.filter(pl.col("pos_s").gt(1)).select(["timestamp", "pos_s", "spent_fuel", "fpm", "color"])
         is_rpm = SensorsValues.objects.filter(key__key="rpm", car_id__id=car_id, is_active=True).count() > 0
         target_column = "rpm_mean" if is_rpm else "ign_spread"
         data_slow = tmp.filter(polars.col("pos_s").lt(1)).select(["timestamp", "pos_s", target_column, "fpm", "color"])
@@ -1609,7 +1652,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         ]).with_columns(polars.lit("year").alias("color"))
 
         data_bar = [
-            *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "spent_fuel"]).with_columns(
+            *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "sf_m"]).with_columns(
                 polars.lit("leaks").alias("color")).with_columns(
                 polars.col("timestamp").dt.to_string("iso:strict")).to_dicts(),
             year.row(0, named=True),
@@ -1839,6 +1882,41 @@ class MLReasoningView(APIView):
             return success_response(result['data'], status.HTTP_200_OK)
         else:
             return error_response(result.get('error', 'Unknown error'), status.HTTP_400_BAD_REQUEST)
+
+
+class StopsMileageAPIView(APICalculationLoggingMixin, APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
+
+    @swagger_auto_schema(
+        operation_summary="Получить список стоянок автомобиля с пробегом за период",
+        operation_description=(
+                "Запрашивает у провайдера данные об остановках (moveStop) и почасовом "
+                "пробеге/одометре (mileageAndMotohours) за указанный период, сопоставляет их "
+                "и возвращает список стоянок: дата/время, адрес, длительность и пробег "
+                "(показание одометра) до начала стоянки. Максимальный период — 60 дней."
+        ),
+        request_body=STOPS_MILEAGE_REQUEST_SCHEMA,
+        responses={
+            200: STOPS_MILEAGE_RESPONSE_SCHEMA,
+            400: "Неверные параметры или превышен период 60 дней",
+            404: "Автомобиль не найден",
+            500: "Ошибка расчёта",
+        },
+    )
+    def post(self, request):
+        serializer = StopsMileageRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        result, status_code = get_stops_mileage_report(
+            car_id=data["car_id"],
+            start_date=data["start_date"],
+            end_date=data["end_date"],
+            user=request.user,
+            is_save_bad_data=data.get("is_save_bad_data", True),
+        )
+
+        return success_response(result, status_code)
 
 def api_docs_view(request):
     return render(request, 'api_docs.html', {'api_description_url': '/api/v1/swagger.json'})

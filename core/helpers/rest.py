@@ -230,10 +230,12 @@ MILEAGE_REQUEST_SCHEMA = openapi.Schema(
         'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
                                    description='Дата конца в ISO формате'),
         'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах"),
-        'sensor_chart': openapi.Schema(type=openapi.TYPE_STRING, description="Сенсор для графика (скорость)")
+        'is_save_bad_data': openapi.Schema(type=openapi.TYPE_BOOLEAN,
+                                           description="Сохранять ли bad data записи (по умолчанию true)"),
     },
     required=['car_id', 'start_date', 'end_date']
 )
+
 FUELREPORT_REQUEST_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     properties={
@@ -242,7 +244,9 @@ FUELREPORT_REQUEST_SCHEMA = openapi.Schema(
                                      description='Дата начала в ISO формате'),
         'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
                                    description='Дата конца в ISO формате'),
-        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах")
+        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах"),
+        'is_save_bad_data': openapi.Schema(type=openapi.TYPE_BOOLEAN,
+                                           description="Сохранять ли bad data записи (по умолчанию true)"),
     },
     required=['car_id', 'start_date', 'end_date']
 )
@@ -255,7 +259,9 @@ MOTOHOURS_REQUEST_SCHEMA = openapi.Schema(
                                      description='Дата начала в ISO формате'),
         'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
                                    description='Дата конца в ISO формате'),
-        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах")
+        'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах"),
+        'is_save_bad_data': openapi.Schema(type=openapi.TYPE_BOOLEAN,
+                                           description="Сохранять ли bad data записи (по умолчанию true)"),
     },
     required=['car_id', 'start_date', 'end_date']
 )
@@ -872,3 +878,44 @@ ANALYSIS_SCHEMA = {
         503: openapi.Response(description='Сервис недоступен')
     }
 }
+
+STOPS_MILEAGE_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        'car_id': openapi.Schema(type=openapi.TYPE_STRING, description='UUID автомобиля'),
+        'start_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                     description='Дата начала периода в ISO формате'),
+        'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                   description='Дата конца периода в ISO формате'),
+        'is_save_bad_data': openapi.Schema(type=openapi.TYPE_BOOLEAN,
+                                           description='Сохранять ли bad data записи (по умолчанию true)'),
+    },
+    required=['car_id', 'start_date', 'end_date'],
+)
+
+STOP_MILEAGE_RECORD_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        'stop_start': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                     description='Дата и время начала стоянки'),
+        'stop_end': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
+                                   description='Дата и время окончания стоянки'),
+        'address': openapi.Schema(type=openapi.TYPE_STRING, description='Адрес стоянки'),
+        'duration_seconds': openapi.Schema(type=openapi.TYPE_INTEGER, description='Длительность стоянки, сек'),
+        'mileage_before_stop': openapi.Schema(
+            type=openapi.TYPE_NUMBER, format=openapi.FORMAT_FLOAT,
+            description='Показание одометра на момент начала стоянки, может быть null',
+        ),
+        'mileage': openapi.Schema(
+            type=openapi.TYPE_NUMBER, format=openapi.FORMAT_FLOAT,
+            description='Пробег (км) за промежуток движения перед этой стоянкой. Берётся из данных '
+                        'провайдера (moves), либо, если сегмент не найден, считается как разница '
+                        'mileage_before_stop с предыдущей стоянкой. Может быть null.',
+        ),
+    },
+)
+
+STOPS_MILEAGE_RESPONSE_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_ARRAY,
+    items=STOP_MILEAGE_RECORD_SCHEMA,
+)

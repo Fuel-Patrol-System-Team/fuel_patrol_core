@@ -460,6 +460,7 @@ class ComputedData(models.Model):
     timestamp = models.DateTimeField()
     pos_s = models.FloatField()
     spent_fuel = models.FloatField()
+    sf_m = models.FloatField(default=0)
     spent_fuel_boundary = models.FloatField(default=0)
     z_values = models.FloatField()
     rpm_mean = models.FloatField()
@@ -475,6 +476,7 @@ class ComputedData(models.Model):
     z_values_rpm = models.FloatField(default=0, null=True)
     z_values_fpm = models.FloatField(default=0, null=True)
     leak_display = models.FloatField(default=0)
+    filtered = models.BooleanField(default=False)
     count = models.IntegerField(default=60)
     norma_rasx_per_travel = models.FloatField(null=True)
 
@@ -487,7 +489,7 @@ class ComputedData(models.Model):
         ]
 
     @classmethod
-    def make_one(example: dict[str, Any]):
+    def make_one(cls, example: dict[str, Any]):
         columns = ComputedData.get_required_columns()
         return ComputedData.objects.create(
             **example
@@ -497,7 +499,7 @@ class ComputedData(models.Model):
     def get_required_columns(cls):
         return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
                 "fuel_first", "fuel_last", "count", "no_sat_data", "spent_fuel_boundary", "norma_rasx_per_travel",
-                "z_values_rpm", "z_values_fpm", "leak_standing", "leak_display"]
+                "z_values_rpm", "z_values_fpm", "leak_standing", "leak_display", "filtered", "sf_m"]
 
 class CarMotohoursReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -726,6 +728,174 @@ class SensorsKeyLocalization(models.Model):
 
     def __str__(self):
         return f"{self.key} - {self.language} - {self.localization}"
+
+
+## ALERTS MODELS
+class AlertSubscription(models.Model):
+    class AlertType(models.TextChoices):
+        LEAKS    = "leaks",    "Сливы топлива"
+        FRAUDS   = "frauds",   "Накрутки пробега"
+        BAD_DATA = "bad_data", "Ошибки оборудования"
+        SYSTEM   = "system",   "Системное уведомление"
+
+    id   = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        OrgUser, on_delete=models.CASCADE, related_name="alert_subscription"
+    )
+
+    alert_types = ArrayField(
+        base_field=models.CharField(max_length=20, choices=AlertType.choices),
+        default=list,
+        blank=True,
+        verbose_name="Типы уведомлений"
+    )
+
+    bad_data_tags = ArrayField(
+        base_field=models.CharField(max_length=20, choices=CarBadData.Tag.choices),
+        default=list,
+        blank=True,
+        verbose_name="Теги ошибок (пусто = все теги)",
+        help_text="Фильтр по тегам CarBadData. Пустой список = без фильтрации по тегам."
+    )
+    bad_data_min_severity = models.CharField(
+        max_length=20,
+        choices=CarBadData.Severity.choices,
+        default=CarBadData.Severity.WARNING,
+        verbose_name="Минимальный уровень серьёзности ошибки"
+    )
+
+    min_fraud_km = models.FloatField(
+        default=0.0,
+        verbose_name="Мин. накрутка пробега (км)",
+        help_text="Накрутки меньше этого значения не попадут в отчёт. 0 = все."
+    )
+
+    min_leak_liters = models.FloatField(
+        default=0.0,
+        verbose_name="Мин. объём слива (л)",
+        help_text="Сливы меньше этого значения не попадут в отчёт. 0 = все."
+    )
+
+    notify_hour = models.IntegerField(
+        default=5,
+        verbose_name="Час отправки дайджеста (UTC)",
+        help_text="Целое число от 0 до 23. Celery Beat отправляет в этот час по UTC.",
+        validators=[
+            MinValueValidator(0),
+            MaxValueValidator(23),
+        ]
+    )
+
+    is_active  = models.BooleanField(default=True, verbose_name="Подписка активна")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Настройки уведомлений"
+        verbose_name_plural = "Настройки уведомлений"
+        indexes = [
+            models.Index(fields=['user', 'is_active'], name='alertsub_user_active_idx'),
+            models.Index(fields=['notify_hour', 'is_active'], name='alertsub_hour_active_idx'),
+        ]
+
+    def __str__(self):
+        return f"Подписка {self.user.username} — {self.alert_types}"
+
+
+class Alert(models.Model):
+    class AlertType(models.TextChoices):
+        LEAK = "leak", "Слив топлива"
+        FRAUD = "fraud", "Накрутка пробега"
+        BAD_DATA = "bad_data", "Ошибка оборудования"
+        SYSTEM = "system", "Системное уведомление"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization, on_delete=models.CASCADE, related_name="alerts"
+    )
+    car = models.ForeignKey(
+        Car, on_delete=models.CASCADE, related_name="alerts",**NULLABLE
+    )
+    alert_type = models.CharField(
+        max_length=20, choices=AlertType.choices, db_index=True
+    )
+
+    source_car_report = models.ForeignKey(
+        CarReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+    source_mileage_report = models.ForeignKey(
+        CarMileageReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+    source_motohours_report = models.ForeignKey(
+        CarMotohoursReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+    source_bad_data = models.ForeignKey(
+        CarBadData, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
+    )
+
+    payload = models.JSONField(default=dict, verbose_name="Данные события")
+
+    event_datetime = models.DateTimeField(verbose_name="Время события", db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    is_sent = models.BooleanField(default=False, db_index=True)
+    sent_at = models.DateTimeField(**NULLABLE)
+
+
+    class Meta:
+        verbose_name = "Алерт"
+        verbose_name_plural = "Алерты"
+        ordering = ["-event_datetime"]
+        indexes = [
+            models.Index(
+                fields=['organization', 'alert_type', 'is_sent'],
+                name='alert_org_type_sent_idx'
+            ),
+            models.Index(
+                fields=['organization', 'is_sent', 'event_datetime'],
+                name='alert_org_sent_dt_idx'
+            ),
+            models.Index(
+                fields=['car', 'alert_type', 'event_datetime'],
+                name='alert_car_type_dt_idx'
+            ),
+            models.Index(
+                fields=['organization', 'is_sent', 'created_at'],
+                name='alert_org_sent_created_idx'
+            ),
+        ]
+
+    def __str__(self):
+        return f"[{self.alert_type}] — {self.event_datetime:%Y-%m-%d %H:%M}"
+
+##LOGS MODEL
+class APICalculationLog(models.Model):
+    view_name = models.CharField("Название View", max_length=255)
+    user = models.ForeignKey(
+        OrgUser,
+        verbose_name="Пользователь",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    car = models.ForeignKey(
+        Car,
+        verbose_name="Автомобиль",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True
+    )
+    request_data = models.JSONField("Параметры запроса", default=dict)
+    response_data = models.JSONField("Тело ответа / Ошибка", default=dict)
+    status_code = models.IntegerField("Статус ответа", null=True, blank=True)
+    created_at = models.DateTimeField("Дата запроса", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Лог расчетов API"
+        verbose_name_plural = "Логи расчетов API"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.view_name} - {self.car} ({self.created_at.strftime('%d.%m.%Y %H:%M')})"
 
 ## DEVOPS FEATURES
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -1041,170 +1211,3 @@ class UnitService(models.Model):
             return True, "Автозагрузка отключена"
         except Exception as e:
             return False, str(e)
-
-## ALERTS MODELS
-class AlertSubscription(models.Model):
-    class AlertType(models.TextChoices):
-        LEAKS    = "leaks",    "Сливы топлива"
-        FRAUDS   = "frauds",   "Накрутки пробега"
-        BAD_DATA = "bad_data", "Ошибки оборудования"
-        SYSTEM   = "system",   "Системное уведомление"
-
-    id   = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(
-        OrgUser, on_delete=models.CASCADE, related_name="alert_subscription"
-    )
-
-    alert_types = ArrayField(
-        base_field=models.CharField(max_length=20, choices=AlertType.choices),
-        default=list,
-        blank=True,
-        verbose_name="Типы уведомлений"
-    )
-
-    bad_data_tags = ArrayField(
-        base_field=models.CharField(max_length=20, choices=CarBadData.Tag.choices),
-        default=list,
-        blank=True,
-        verbose_name="Теги ошибок (пусто = все теги)",
-        help_text="Фильтр по тегам CarBadData. Пустой список = без фильтрации по тегам."
-    )
-    bad_data_min_severity = models.CharField(
-        max_length=20,
-        choices=CarBadData.Severity.choices,
-        default=CarBadData.Severity.WARNING,
-        verbose_name="Минимальный уровень серьёзности ошибки"
-    )
-
-    min_fraud_km = models.FloatField(
-        default=0.0,
-        verbose_name="Мин. накрутка пробега (км)",
-        help_text="Накрутки меньше этого значения не попадут в отчёт. 0 = все."
-    )
-
-    min_leak_liters = models.FloatField(
-        default=0.0,
-        verbose_name="Мин. объём слива (л)",
-        help_text="Сливы меньше этого значения не попадут в отчёт. 0 = все."
-    )
-
-    notify_hour = models.IntegerField(
-        default=5,
-        verbose_name="Час отправки дайджеста (UTC)",
-        help_text="Целое число от 0 до 23. Celery Beat отправляет в этот час по UTC.",
-        validators=[
-            MinValueValidator(0),
-            MaxValueValidator(23),
-        ]
-    )
-
-    is_active  = models.BooleanField(default=True, verbose_name="Подписка активна")
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Настройки уведомлений"
-        verbose_name_plural = "Настройки уведомлений"
-        indexes = [
-            models.Index(fields=['user', 'is_active'], name='alertsub_user_active_idx'),
-            models.Index(fields=['notify_hour', 'is_active'], name='alertsub_hour_active_idx'),
-        ]
-
-    def __str__(self):
-        return f"Подписка {self.user.username} — {self.alert_types}"
-
-
-class Alert(models.Model):
-    class AlertType(models.TextChoices):
-        LEAK = "leak", "Слив топлива"
-        FRAUD = "fraud", "Накрутка пробега"
-        BAD_DATA = "bad_data", "Ошибка оборудования"
-        SYSTEM = "system", "Системное уведомление"
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    organization = models.ForeignKey(
-        Organization, on_delete=models.CASCADE, related_name="alerts"
-    )
-    car = models.ForeignKey(
-        Car, on_delete=models.CASCADE, related_name="alerts",**NULLABLE
-    )
-    alert_type = models.CharField(
-        max_length=20, choices=AlertType.choices, db_index=True
-    )
-
-    source_car_report = models.ForeignKey(
-        CarReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
-    )
-    source_mileage_report = models.ForeignKey(
-        CarMileageReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
-    )
-    source_motohours_report = models.ForeignKey(
-        CarMotohoursReport, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
-    )
-    source_bad_data = models.ForeignKey(
-        CarBadData, on_delete=models.SET_NULL, **NULLABLE, related_name="alerts"
-    )
-
-    payload = models.JSONField(default=dict, verbose_name="Данные события")
-
-    event_datetime = models.DateTimeField(verbose_name="Время события", db_index=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    is_sent = models.BooleanField(default=False, db_index=True)
-    sent_at = models.DateTimeField(**NULLABLE)
-
-
-    class Meta:
-        verbose_name = "Алерт"
-        verbose_name_plural = "Алерты"
-        ordering = ["-event_datetime"]
-        indexes = [
-            models.Index(
-                fields=['organization', 'alert_type', 'is_sent'],
-                name='alert_org_type_sent_idx'
-            ),
-            models.Index(
-                fields=['organization', 'is_sent', 'event_datetime'],
-                name='alert_org_sent_dt_idx'
-            ),
-            models.Index(
-                fields=['car', 'alert_type', 'event_datetime'],
-                name='alert_car_type_dt_idx'
-            ),
-            models.Index(
-                fields=['organization', 'is_sent', 'created_at'],
-                name='alert_org_sent_created_idx'
-            ),
-        ]
-
-    def __str__(self):
-        return f"[{self.alert_type}] — {self.event_datetime:%Y-%m-%d %H:%M}"
-
-##LOGS MODEL
-class APICalculationLog(models.Model):
-    view_name = models.CharField("Название View", max_length=255)
-    user = models.ForeignKey(
-        OrgUser,
-        verbose_name="Пользователь",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-    car = models.ForeignKey(
-        Car,
-        verbose_name="Автомобиль",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True
-    )
-    request_data = models.JSONField("Параметры запроса", default=dict)
-    response_data = models.JSONField("Тело ответа / Ошибка", default=dict)
-    status_code = models.IntegerField("Статус ответа", null=True, blank=True)
-    created_at = models.DateTimeField("Дата запроса", auto_now_add=True)
-
-    class Meta:
-        verbose_name = "Лог расчетов API"
-        verbose_name_plural = "Логи расчетов API"
-        ordering = ["-created_at"]
-
-    def __str__(self):
-        return f"{self.view_name} - {self.car} ({self.created_at.strftime('%d.%m.%Y %H:%M')})"
