@@ -1645,10 +1645,10 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         data_agg = tmp.filter(polars.col("spent_fuel").gt(0))
 
         month = data_agg.group_by_dynamic(index_column="timestamp", every="1mo").agg([
-            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"),
+            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"), pl.mean("sf_m"),
         ]).with_columns(polars.lit("month").alias("color"))
         year = data_agg.group_by_dynamic(index_column="timestamp", every="1y").agg([
-            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"),
+            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"), pl.mean("sf_m")
         ]).with_columns(polars.lit("year").alias("color"))
 
         data_bar = [
