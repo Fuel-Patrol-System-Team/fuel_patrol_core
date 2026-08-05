@@ -206,6 +206,8 @@ class FilteringService(BaseFilteringService):
             result_df = result_df.with_columns(
                 [
                     pl.lit(0).cast(pl.Float32).alias("z_values_fpm"),
+                    pl.lit(0).cast(pl.Float32).alias("sf_m_predicted"),
+                    pl.lit(0).cast(pl.Float32).alias("sf_m_diff"),
                     pl.lit(False).alias("is_leak_model_fpm"),
                 ]
             )
@@ -213,6 +215,7 @@ class FilteringService(BaseFilteringService):
 
         result_df = result_df.with_columns(
             [
+                pl.col("fpm_model_predicted").mul(pl.col("dtime_moving").truediv(60)).alias("sf_m_predicted"),
                 (
                     (pl.col("fpm") - pl.col("fpm_model_predicted") - pl.col("fpm_model_mean"))
                     / pl.col("fpm_model_std")
@@ -220,12 +223,15 @@ class FilteringService(BaseFilteringService):
             ]
         )
         result_df = result_df.with_columns(
-            pl.col("z_values_fpm").gt(SIGMAS).alias("is_leak_model_fpm")
+            [
+            pl.col("z_values_fpm").gt(SIGMAS).alias("is_leak_model_fpm"),
+            pl.col("sf_m").sub(pl.col("sf_m_predicted")).clip(lower_bound=0).alias("sf_m_diff")
+            ]
         )
         result_df = self._tool_pick_leak(
             result_df,
             (pl.col("fpm") - pl.col("fpm_model_predicted")).clip(lower_bound=0),
-            pl.col("is_leak_model_fpm") & pl.col("sf_m").gt(SF_M_BARRIER),
+            pl.col("is_leak_model_fpm") & pl.col("sf_m_diff").gt(SF_M_BARRIER / 1.2),
             FuelFilters.SIGMA_FPM.value
         )
         return result_df, result_df

@@ -16,7 +16,9 @@ def maintenance_analysis(df: pl.DataFrame):
     return pl.DataFrame(issues)
 
 
-def maintenance_fuel_level_check(df: pl.DataFrame, reports=[]):
+def maintenance_fuel_level_check(df: pl.DataFrame, reports=None):
+    if reports is None:
+        reports = []
     # spent_fuel
     # moving_with_no_loss = df.filter(
     #     pl.col("pos_s").gt(0) & pl.col("spent_fuel").eq(0)
@@ -35,7 +37,9 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports=[]):
     return reports
 
 
-def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=[]):
+def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=None):
+    if reports is None:
+        reports = []
     if "mileage" in df.columns and df["mileage"].is_not_null().any():
         dtime_period = pl.col("timestamp").dt.truncate("1h")
         tdf = df.with_columns(
@@ -89,8 +93,10 @@ def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=[]):
 
 
 def maintenance_fuel_consumpt_check(
-    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]
+    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=None
 ):
+    if reports is None:
+        reports = []
     if df.shape[0] == 0:
         return reports
     if "fuel_consumpt" in sensors and df["fuel_consumpt"].max() > 0:
@@ -128,8 +134,10 @@ def maintenace_check_missing_sensors(
     df: pl.DataFrame,
     columns: List[str],
     sensors: Dict[str, List[Dict[str, Any]]],
-    reports=[],
+    reports=None,
 ):
+    if reports is None:
+        reports = []
     for column in columns:
         if column not in sensors:
             continue
@@ -160,8 +168,10 @@ def maintenace_check_missing_sensors(
 
 
 def maintenance_mileage_sensor_check(
-    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]
+    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=None
 ):
+    if reports is None:
+        reports = []
     if "mileage" in df.columns:
         report_data = (
             df.filter(pl.col("speed_gps").gt(0))
@@ -193,7 +203,9 @@ def maintenance_mileage_sensor_check(
     return reports
 
 
-def maintenance_event_codes(df: pl.DataFrame, reports=[]):
+def maintenance_event_codes(df: pl.DataFrame, reports=None):
+    if reports is None:
+        reports = []
     is_event_codes_column = "event_code" in df.columns
     if is_event_codes_column:
         is_event_codes = df["event_code"].is_not_null().any()
@@ -293,7 +305,9 @@ def maintenance_event_codes(df: pl.DataFrame, reports=[]):
     return reports
 
 
-def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=[]):
+def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=None):
+    if reports is None:
+        reports = []
     if "calc_sensors_voltage" in df.columns:
         if df["calc_sensors_voltage"].is_not_null().any():
             pvf = (
@@ -346,8 +360,10 @@ def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=[]):
 
 
 def maintenance_critical_raw_fuel_values(
-    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=[]
+    df: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]], reports=None
 ):
+    if reports is None:
+        reports = []
     # 7000 - crash
     # 65530, 65532, 65535
     if "calc_sensors_fuel_level" not in sensors:
@@ -395,7 +411,9 @@ def maintenance_critical_raw_fuel_values(
     return reports
 
 
-def maintenance_rpm_slow_change_on_speed(df: pl.DataFrame, reports=[]):
+def maintenance_rpm_slow_change_on_speed(df: pl.DataFrame, reports=None):
+    if reports is None:
+        reports = []
     period = pl.col("timestamp").dt.truncate("10m")
     is_rpm_present = df["rpm"].is_not_null().any()
     is_dtime_present = "dtime" in df.columns

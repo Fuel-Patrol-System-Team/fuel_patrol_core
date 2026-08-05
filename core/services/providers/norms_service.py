@@ -585,6 +585,14 @@ class NormsService:
             return pl.DataFrame()
 
     @staticmethod
+    def fit_lasso_per_car_with_guard(group: pl.DataFrame, feature: str, target: str, auto: Any, MIN_SAMPLES: int = 10, alpha: float = 0.1, GUARD_COEF_SIGMA: float = 2.5):
+        check_coef, check_intercept, check_mean, check_std = NormsService._fit_lasso_per_car(group, feature, target, auto, MIN_SAMPLES, alpha)
+        group = group.with_columns(pl.col(feature).mul(check_coef).add(check_intercept).alias("check_prediction"))
+        group = group.filter(pl.col(target).sub(pl.col("check_prediction")).lt(check_mean + check_std * GUARD_COEF_SIGMA))
+        real_coef, real_intercept, real_mean, real_std = NormsService._fit_lasso_per_car(group, feature, target, auto, MIN_SAMPLES, alpha=0.1)
+        return real_coef, real_intercept, real_mean, real_std
+
+    @staticmethod
     def _fit_lasso_per_car(
             group: pl.DataFrame,
             feature: str,
@@ -595,8 +603,8 @@ class NormsService:
     ) -> Tuple[float, float, float, float]:
         """Подгонка Lasso по данным одной машины.
 
-        Возвращает (coef, intercept, residual_std). residual_std — std остатков
-        (y - ŷ). При нехватке данных/ошибке возвращает (0, mean(y), 0).
+        Возвращает (coef, intercept, mean, std). residual_std — std остатков
+        (y - ŷ). При нехватке данных/ошибке возвращает (0, mean(y), 0, 0).
         """
         try:
             if feature not in group.columns or target not in group.columns:
@@ -760,7 +768,7 @@ class NormsService:
             group_sfm = group.filter(pl.col("sf_m").lt(0)).with_columns(
                 pl.col("pos_s_m").abs().mul(pl.col("dtime_moving")).alias("fpm_x_metric"),
             )
-            fpm_model_coef, fpm_model_intercept, fpm_model_mean, fpm_model_std = NormsService._fit_lasso_per_car(
+            fpm_model_coef, fpm_model_intercept, fpm_model_mean, fpm_model_std = NormsService.fit_lasso_per_car_with_guard(
                 group_sfm, feature="fpm_x_metric", target="fpm", auto=auto
             )
 

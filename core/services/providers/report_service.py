@@ -133,11 +133,28 @@ class ReportService:
 
         period_info = ""
         created: List[CarBadData] = []
+        seen_keys = set()
         for report in reports:
             severity = report["severity"]
 
             if not is_save_bad_data and severity != CarBadData.Severity.CRITICAL:
                 continue
+
+            # Defense-in-depth: dedupe reports by (event_date, message, category)
+            # to avoid creating duplicate CarBadData rows even if a caller
+            # passes a contaminated list (e.g. due to mutable-default-argument bugs).
+            dedupe_key = (
+                str(report.get("event_date")),
+                report.get("message"),
+                report.get("category"),
+            )
+            if dedupe_key in seen_keys:
+                logger.warning(
+                    f"Пропущен дубликат CarBadData для {car.name}: "
+                    f"{report.get('message')} ({report.get('event_date')})"
+                )
+                continue
+            seen_keys.add(dedupe_key)
 
             tags = report["tags"]
             if tags is None:

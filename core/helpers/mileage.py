@@ -25,8 +25,10 @@ class MileageModes(str, Enum):
 
 def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_skip_big: int, first_mileage: None | float, last_mileage: None | float,
                         data: List[Any], travel_fraud_jumps: float, ign_miss: float | None, chart_data: List[Any] | None, chart_data_rpm: List[Any] | None, count: int,
-                        std: float | None, intercept: float | None, slope: float | None, mileage_suspicious: float | None, reports=[]
+                        std: float | None, intercept: float | None, slope: float | None, mileage_suspicious: float | None, reports=None
                         ): 
+    if reports is None:
+        reports = []
     return {
         "travel": travel,
         "travel_fraud": travel_fraud,
@@ -303,7 +305,7 @@ def mileage_test_fraud_new(
     regime: MileageModes = MileageModes.standart,
     sensor_chart: Literal["can"] | Literal["mileage"] = "can",
     force_chart = False,
-    reports = [],
+    reports = None,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
 ):
@@ -317,6 +319,9 @@ def mileage_test_fraud_new(
     TIME_PERIOD=количество часов, которое использование для отсчения прыжков, связанных с помехами gps
     WORKING_AGG_PERIOD_HOURS=протестированное количество часов, которое отдает адекватные результаты в нахождении точного значения накрутки
     """
+    if reports is None:
+        reports = []
+
     COMMON_SENSOR_ISSUE_VALUES = [-127.0, 127.0, 254.0, -254.0]
 
     col_dtime_period = pl.col("timestamp").dt.truncate("48h")
