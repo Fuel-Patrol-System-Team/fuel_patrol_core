@@ -1622,7 +1622,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         if not computed_data_list:
             return error_response("Нет данных для этой машины", status.HTTP_400_BAD_REQUEST)
 
-        leaks = CarReport.objects.filter(car_id__id=car_id, datetime__gte=start_date, picked_by__in=["fpm_model"])
+        leaks = CarReport.objects.filter(car_id__id=car_id,datetime__gte=start_date, picked_by__in=["fpm_model"])
         leaks_df = polars.DataFrame(list(leaks.values()))
 
         df = polars.DataFrame(computed_data_list)

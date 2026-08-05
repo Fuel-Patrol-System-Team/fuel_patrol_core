@@ -230,7 +230,7 @@ class FilteringService(BaseFilteringService):
         )
         result_df = self._tool_pick_leak(
             result_df,
-            (pl.col("fpm") - pl.col("fpm_model_predicted")).clip(lower_bound=0),
+            pl.col("sf_m_diff"),
             pl.col("is_leak_model_fpm") & pl.col("sf_m_diff").gt(SF_M_BARRIER / 1.2),
             FuelFilters.SIGMA_FPM.value
         )
