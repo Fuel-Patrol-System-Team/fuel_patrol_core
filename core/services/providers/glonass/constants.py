@@ -79,6 +79,13 @@ def _cast_ign(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingPars
     df = df.with_columns(pl.col("ign").cast(pl.String).str.slice(ign_bit, 1).cast(pl.Int32).clip(upper_bound=1))
     return df
 
+def _cast_boolish_column(df: pl.DataFrame, sensor_mapping: dict[str, list[SensorMappingParserType]], column: str):
+    if column in df.columns:
+        if df[column].dtype == pl.Boolean:
+            df = df.with_columns(pl.col(column).cast(pl.Int32))
+            return df
+    return df
+
 GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.timestamp : GlonassParameter(False, "deviceTime", "timestamp",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp").cast(pl.Datetime)),True, None, None),
     GL_PARAM_KEYS.timestamp_server : GlonassParameter(False, "serverTime", "timestamp_server",lambda df, sensor_mapping: df.with_columns(pl.col("timestamp_server").cast(pl.Datetime)),True, None, None),
@@ -100,8 +107,8 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.msg_number: GlonassParameter(True, "parameters.msg_number", "msg_number", None, False, 999, 999),
     GL_PARAM_KEYS.event_code: GlonassParameter(True, "parameters.event_code", "event_code", None, False, None, None),
     GL_PARAM_KEYS.fuel_consumpt: GlonassParameter(True, "", "fuel_consumpt", None,  False, 0, 0),
-    GL_PARAM_KEYS.rpm_idle: GlonassParameter(True, "", "rpm_idle", None, False, 0, 0),
-    GL_PARAM_KEYS.rpm_active: GlonassParameter(True, "", "rpm_active", None, False, 0, 0),
+    GL_PARAM_KEYS.rpm_idle: GlonassParameter(True, "", "rpm_idle", lambda df, sensor_mapping: _cast_boolish_column(df, sensor_mapping, "rpm_idle"), False, 0, None),
+    GL_PARAM_KEYS.rpm_active: GlonassParameter(True, "", "rpm_active", lambda df, sensor_mapping: _cast_boolish_column(df, sensor_mapping, "rpm_active"), False, 0, None),
     }
     
 

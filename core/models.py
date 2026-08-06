@@ -472,6 +472,7 @@ class ComputedData(models.Model):
     fuel_last = models.FloatField()
     es = models.FloatField()
     no_sat_data = models.FloatField(default=0)
+    dtime_moving= models.FloatField(default=0)
     leak_standing = models.FloatField(default=0)
     z_values_rpm = models.FloatField(default=0, null=True)
     z_values_fpm = models.FloatField(default=0, null=True)
@@ -499,7 +500,7 @@ class ComputedData(models.Model):
     def get_required_columns(cls):
         return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
                 "fuel_first", "fuel_last", "count", "no_sat_data", "spent_fuel_boundary", "norma_rasx_per_travel",
-                "z_values_rpm", "z_values_fpm", "leak_standing", "leak_display", "filtered", "sf_m"]
+                "z_values_rpm", "dtime_moving", "z_values_fpm", "leak_standing", "leak_display", "filtered", "sf_m"]
 
 class CarMotohoursReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

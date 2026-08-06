@@ -244,6 +244,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             "engine_temp": [],
             "ign": [],
             "fuel_consumpt": [],
+            "rpm_idle": [],
+            "rpm_active": []
         }
 
         unit_name = vehicle_data.get("unitName")
@@ -366,17 +368,15 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     else:
                         sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif "холост" in sensor_name.lower():
-                if parameter_name:
-                    if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
-                    else:
-                        sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
-            elif  "нагруз" in sensor_name.lower():
-                if parameter_name:
-                    if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
-                    else:
-                        sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+                if key_part.startswith("can_") and input_number:
+                    sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
+                else:
+                    sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+            elif "нагруз" in sensor_name.lower():
+                if key_part.startswith("can_") and input_number:
+                    sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
+                else:
+                    sensors_mapping.get("rpm_active", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
             elif (
                     sensor_type == "MileageSensor" or sensor_name.startswith("Пробег")
                     or textdistance.damerau_levenshtein(sensor_name, "Пробег") <= 2 or sensor_name == "Датчик пробега"
@@ -419,6 +419,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
                     else:
                         sensors_mapping.get("engine_temp", []).append(SensorType(f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+            
             elif sensor_type == "Ignition":
                 if parameter_name or expr:
                     key_part = parameter_name.split(";")[0]
