@@ -330,17 +330,19 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         )
                         continue
                     if  input_type == "Analog":
-                        match = re.search(r"\bflex_adc(\d+)\b", expr)
-                        analog_match = re.search(r"\banalog(\d+)\b", expr)
-                        if match is not None:
-                            sensors_mapping.get("calc_sensors_fuel_level", []).append(
-                                SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
-                            )
-                        if analog_match is not None:
-                            sensors_mapping.get("calc_sensors_fuel_level", []).append(
-                                
-                                SensorType(f"paramaters.{analog_match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
-                            )
+                        # TODO: почему то обрасывает некоторые машин с этим датчиком из-за выражения, для РЖД, подробнее изучить причину
+                        if expr:
+                            match = re.search(r"\bflex_adc(\d+)\b", expr)
+                            analog_match = re.search(r"\banalog(\d+)\b", expr)
+                            if match is not None:
+                                sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                                    SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
+                                )
+                            if analog_match is not None:
+                                sensors_mapping.get("calc_sensors_fuel_level", []).append(
+                                    
+                                    SensorType(f"paramaters.{analog_match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
+                                )
                     else:
 
                         sensors_mapping.get("calc_sensors_fuel_level", []).append (

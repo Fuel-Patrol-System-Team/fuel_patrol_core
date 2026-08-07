@@ -545,10 +545,11 @@ class GlonassGeneralProvider:
                 path_to_params = sensors_mapping.get(col.value, [{"value": param.default_key}])
                 path_to_params = [path_to_params] if isinstance(path_to_params, str) else path_to_params
                 for index, sensor in enumerate(path_to_params):
-                    if sensor.get("metadata", {}).get("expr"):
+                    is_metadata = sensor.get("metadata") is not None
+                    if is_metadata and sensor.get("metadata", {}).get("expr"):
                         result_col = f"_expr_{col.value}_{index}"
                         expr_result_cols_map[col.value] = result_col
-                    if sensor.get("metadata", {}).get("pseudonym"):
+                    if is_metadata and sensor.get("metadata", {}).get("pseudonym"):
                         pseudonym_to_sensor_key[sensor["metadata"]["pseudonym"]] = col.value
 
         variables = expr_parser.make_variables(sensors_mapping, expr_result_cols_map)

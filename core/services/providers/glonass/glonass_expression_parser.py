@@ -27,7 +27,7 @@ class GlonassExpresssionParser:
         sensors_mapping: dict[str, List[dict[str, Any]]],
         expr_result_cols: dict[str, str] | None = None,
     ):
-        """Строит映射ение имён переменных → колонки DataFrame.
+        """Определение имён переменных для выражений → колонки DataFrame.
 
         Parameters
         ----------

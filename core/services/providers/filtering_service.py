@@ -40,6 +40,7 @@ class FilteringService(BaseFilteringService):
         # filtered_df, _ = self.pick_by_rpm_model(filtered_df)
         filtered_df, _ = self.filtering_count(filtered_df, 10)
         filtered_df, _ = self.filtering_sattelites(filtered_df)
+        filtered_df, _ = self.filtering_possible_short_circuit(filtered_df)
         
         filtered_df, _ = self.pick_by_fpm_std(filtered_df, SIGMAS=3)
         filtered_df, _ = self.pick_by_speed_model(filtered_df, SIGMAS=2.8)
@@ -236,6 +237,7 @@ class FilteringService(BaseFilteringService):
         )
         return result_df, result_df
 
+
     def pick_by_rpm_model(
         self, result_df: pl.DataFrame, SIGMAS: float = 2.5
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
@@ -314,6 +316,13 @@ class FilteringService(BaseFilteringService):
             ~pl.col("is_special_car")
             | (pl.col("is_special_car") & pl.col("ign_working"))
         )
+        return filtered_df, result_df
+    
+    def filtering_possible_short_circuit(
+        self, result_df: pl.DataFrame
+    ):
+        filtered_df = self._tool_pick_filter(result_df, pl.col("voltage_diff").lt(5), "short_curcuit")
+
         return filtered_df, result_df
 
     def filtering_sattelites(

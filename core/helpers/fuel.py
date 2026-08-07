@@ -503,7 +503,24 @@ def preprocess_basic_one(
 
     df = df.with_columns(pl.col("dtime").mul(pl.col("ign")).alias("es"))
     df = df.with_columns(pl.col("rpm").mul(pl.col("dtime")).alias("rpm_total"))
-    df = df.with_columns(pl.col("pos_s").mul(pl.col("dtime")).alias("energy"))
+    df = df.with_columns(pl.col("pos_s").mul(pl.col("dtime")).alias("energy"))    
+    # расчеты кол-ва смены знаков, смены напряжения (для отсекания сливов по признаку замыкания)
+    df = df.with_columns(pl.col("calc_sensors_fuel_level").diff().ge(0).cast(pl.Int32).alias("_fc_sign"))
+    df = df.with_columns(
+        [
+        pl.col("_fc_sign").ne(pl.col("_fc_sign").shift(1)).cast(pl.Int32).alias("fc_sign"),
+        pl.col("calc_sensors_voltage").diff().abs().alias("voltage_diff"),
+        ]
+    )
+    aggs = [
+        *aggs,
+        pl.sum("_fc_sign"),
+        pl.sum("voltage_diff")
+
+    ]
+
+
+
     df = df.group_by_dynamic(
         index_column="timestamp", every=f"{ANTI_BUG_TIME_SECONDS}s", group_by="auto"
     ).agg(
