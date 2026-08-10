@@ -1380,7 +1380,8 @@ class CarBadDataAPIView(ListAPIView):
         org = self.request.user.org
 
         queryset = CarBadData.objects.filter(
-            car_id__data_providers__org_id=org.id
+            # car_id__data_providers__org_id=org.id
+            report_query_id__provider_id__org_id=org.id
         ).select_related('car_id').distinct().order_by('-datetime')
 
         car_id = data.get('car_id')
