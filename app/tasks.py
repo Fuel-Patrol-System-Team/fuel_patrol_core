@@ -12,7 +12,7 @@ from app.celery import app as celery_app
 
 from app.settings import DEBUG
 from core.admin import CarPrimary, SensorsValues
-from core.helpers.alert import get_tg_user_for_org_user, get_unsent_alerts_by_org, build_digest_message, \
+from core.helpers.alert import get_tg_users_for_org_user, get_unsent_alerts_by_org, build_digest_message, \
     save_bad_data_alerts_bulk
 from core.helpers.fuel import fuel_spent_calculate
 from core.models import (
@@ -27,7 +27,6 @@ from core.models import (
     Organization,
     Car,
     DataProvider,
-    TelegramUser,
 )
 
 import glob
@@ -1451,35 +1450,29 @@ def send_alert_digests(self):
     now = datetime.now(tz)
     current_hour = now.hour
 
-    # Логируем текущий час по серверу
     logger.info(f"[send_alert_digests] Текущий час по серверу (UTC): {current_hour}")
 
     try:
-        # Получаем все подписки ДО проверки
         subscriptions = (
             AlertSubscription.objects
             .filter(is_active=True, notify_hour=current_hour)
             .select_related("user", "user__org")
         )
 
-        # Выводим информацию о подписках ДО проверки на существование
-        # Получаем все часы из всех активных подписок (не только для текущего часа)
+
         all_active_subscriptions = AlertSubscription.objects.filter(is_active=True)
         all_hours = list(all_active_subscriptions.values_list('notify_hour', flat=True).distinct())
 
         logger.info(f"[send_alert_digests] Все часы из активных подписок: {sorted(all_hours)}")
         logger.info(f"[send_alert_digests] Количество подписок для часа {current_hour}: {subscriptions.count()}")
 
-        # Теперь проверяем, есть ли подписки для текущего часа
         if not subscriptions.exists():
             logger.info(f"[send_alert_digests] Нет подписок для часа {current_hour} UTC")
-            # Выводим пример подписок для других часов (для отладки)
             if all_active_subscriptions.exists():
                 sample_hours = list(all_active_subscriptions.values_list('notify_hour', flat=True)[:5])
                 logger.info(f"[send_alert_digests] Примеры часов из других подписок: {sample_hours}")
             return
 
-        # Детальная информация по подпискам для текущего часа
         for sub in subscriptions:
             logger.info(
                 f"[send_alert_digests] Подписка для часа {current_hour}: "
@@ -1514,11 +1507,11 @@ def send_alert_digests(self):
                 )
                 continue
 
-            tg_user = get_tg_user_for_org_user(user)
+            tg_users = get_tg_users_for_org_user(user)
 
-            if tg_user is None:
+            if not tg_users:
                 logger.warning(
-                    f"[send_alert_digests] TelegramUser не найден или неактивен: "
+                    f"[send_alert_digests] Активные TelegramUser не найдены: "
                     f"user={user.username}"
                 )
                 continue
@@ -1532,20 +1525,25 @@ def send_alert_digests(self):
                 )
                 continue
 
-            success = send_telegram_message(tg_user.chat_id, message)
+            any_success = False
+            for tg_user in tg_users:
+                success = send_telegram_message(tg_user.chat_id, message)
 
-            if success:
-                logger.info(
-                    f"[send_alert_digests] Дайджест отправлен: "
-                    f"user={user.username}, org={org.name}"
-                )
+                if success:
+                    any_success = True
+                    logger.info(
+                        f"[send_alert_digests] Дайджест отправлен: "
+                        f"user={user.username}, org={org.name}, chat_id={tg_user.chat_id}"
+                    )
+                else:
+                    logger.error(
+                        f"[send_alert_digests] Ошибка отправки: "
+                        f"user={user.username}, chat_id={tg_user.chat_id}"
+                    )
+
+            if any_success:
                 for alert in alerts_for_org:
                     successfully_sent_ids.add(str(alert.id))
-            else:
-                logger.error(
-                    f"[send_alert_digests] Ошибка отправки: "
-                    f"user={user.username}, chat_id={tg_user.chat_id}"
-                )
 
         if successfully_sent_ids:
             sent_count = Alert.objects.filter(

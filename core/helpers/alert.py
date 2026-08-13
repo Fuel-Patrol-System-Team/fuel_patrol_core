@@ -389,10 +389,5 @@ def get_unsent_alerts_by_org() -> dict[str, list[Alert]]:
 
     return org_alerts
 
-
-def get_tg_user_for_org_user(user):
-    try:
-        tg_user = user.telegram_user
-        return tg_user if tg_user.is_active else None
-    except TelegramUser.DoesNotExist:
-        return None
+def get_tg_users_for_org_user(user) -> list[TelegramUser]:
+    return list(user.telegram_users.filter(is_active=True))

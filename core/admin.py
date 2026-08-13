@@ -98,9 +98,8 @@ class TelegramUserInline(TabularInline):
     readonly_fields = ('chat_id', 'username', 'first_name', 'last_name', 'created_at', 'is_active')
     fields = ('chat_id', 'username', 'first_name', 'last_name', 'is_active', 'created_at')
     verbose_name = "Telegram-аккаунт"
-    verbose_name_plural = "Telegram-аккаунт"
+    verbose_name_plural = "Telegram-аккаунты"
     can_delete = True
-    max_num = 1
 
 
 class CarFuelReportInline(TabularInline):

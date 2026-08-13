@@ -41,13 +41,12 @@ class Organization(models.Model):
     def __str__(self):
         return self.name
 
-
 class TelegramUser(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.OneToOneField(
+    user = models.ForeignKey(
         "OrgUser",
         on_delete=models.CASCADE,
-        related_name='telegram_user',
+        related_name='telegram_users',
         verbose_name="Пользователь",
         **NULLABLE
     )
