@@ -417,6 +417,8 @@ class LeakPicker(models.TextChoices):
     BOUNDARY_FILTER = "boundary_spent_fuel", ""
     SIGMA_FILTER = "fuel_spent_std", ""
     LOW_SPEED_FILTER = "low_speed", ""
+    FPM_FILTER = "fpm_model", ""
+    RPM_FILTER = "rpm_model", ""
 
 # TODO: Переименовать в CarLeakReport
 class CarReport(models.Model):
@@ -457,6 +459,7 @@ class ComputedData(models.Model):
     timestamp = models.DateTimeField()
     pos_s = models.FloatField()
     spent_fuel = models.FloatField()
+    sf_m = models.FloatField(default=0)
     spent_fuel_boundary = models.FloatField(default=0)
     z_values = models.FloatField()
     rpm_mean = models.FloatField()
@@ -468,6 +471,12 @@ class ComputedData(models.Model):
     fuel_last = models.FloatField()
     es = models.FloatField()
     no_sat_data = models.FloatField(default=0)
+    dtime_moving= models.FloatField(default=0)
+    leak_standing = models.FloatField(default=0)
+    z_values_rpm = models.FloatField(default=0, null=True)
+    z_values_fpm = models.FloatField(default=0, null=True)
+    leak_display = models.FloatField(default=0)
+    filtered = models.BooleanField(default=False)
     count = models.IntegerField(default=60)
     norma_rasx_per_travel = models.FloatField(null=True)
 
@@ -480,7 +489,7 @@ class ComputedData(models.Model):
         ]
 
     @classmethod
-    def make_one(example: dict[str, Any]):
+    def make_one(cls, example: dict[str, Any]):
         columns = ComputedData.get_required_columns()
         return ComputedData.objects.create(
             **example
@@ -489,7 +498,8 @@ class ComputedData(models.Model):
     @classmethod
     def get_required_columns(cls):
         return ["timestamp", "pos_s", "spent_fuel", "z_values", "rpm_mean", "ign_spread", "es", "fpm", "auto", "dtime",
-                "fuel_first", "fuel_last", "count", "no_sat_data", "spent_fuel_boundary", "norma_rasx_per_travel"]
+                "fuel_first", "fuel_last", "count", "no_sat_data", "spent_fuel_boundary", "norma_rasx_per_travel",
+                "z_values_rpm", "dtime_moving", "z_values_fpm", "leak_standing", "leak_display", "filtered", "sf_m"]
 
 class CarMotohoursReport(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

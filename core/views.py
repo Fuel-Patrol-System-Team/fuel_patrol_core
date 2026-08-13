@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -104,6 +105,22 @@ _ANON_GUARD = lambda self: (
     not getattr(self.request, 'user', None) or
     not self.request.user.is_authenticated
 )
+
+
+def _flatten_nested_for_csv(df: pl.DataFrame) -> pl.DataFrame:
+    """Serialize all nested (List/Struct/Array/Object) columns to JSON strings so the DataFrame can be written as CSV."""
+    nested_types = tuple(t for t in (pl.List, pl.Struct, pl.Array, pl.Object) if isinstance(t, type))
+    if not nested_types:
+        return df
+    nested_exprs = []
+    for col_name, dtype in zip(df.columns, df.dtypes):
+        if isinstance(dtype, nested_types):
+            nested_exprs.append(
+                pl.col(col_name).map_elements(lambda x: json.dumps(x, default=str), return_dtype=pl.Utf8).alias(col_name)
+            )
+    if nested_exprs:
+        df = df.with_columns(nested_exprs)
+    return df
 
 
 def _car_prefetch(language_code: str, prefix: str = ''):
@@ -777,7 +794,7 @@ class CarListBySensorGroupAPIView(ListAPIView):
         if key_value == "motohours":
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id, is_active=True
-            ).filter(Q(key__key="motohours") | Q(key__key="ign"))
+            ).filter(Q(key__key="motohours") | Q(key__key="rpm") | Q(key__key="ign"))
         elif key_value == "fuel":
             result = SensorsValues.objects.select_related("car_id", 'key').filter(
                 car_id__data_providers__org_id=self.request.user.org.id, is_active=True
@@ -1363,7 +1380,8 @@ class CarBadDataAPIView(ListAPIView):
         org = self.request.user.org
 
         queryset = CarBadData.objects.filter(
-            car_id__data_providers__org_id=org.id
+            # car_id__data_providers__org_id=org.id
+            report_query_id__provider_id__org_id=org.id
         ).select_related('car_id').distinct().order_by('-datetime')
 
         car_id = data.get('car_id')
@@ -1459,13 +1477,13 @@ class CarCarDataPreparedAPiView(APIView):
         result_primary = pl.DataFrame(result_primary)
         result_consumptions = pl.DataFrame(result_consumptions)
         if isinstance(result, pl.DataFrame):
-            result = result.with_columns(pl.col("grades").list.eval(pl.element().struct.json_encode()).list.join(", ").map_elements(lambda s: f"[{s}]").alias("grades"))
-            result = result.with_columns(pl.col("mileage_grading").list.eval(pl.element().struct.json_encode()).list.join(", ").alias("mileage_grading"))
-        
+            result = _flatten_nested_for_csv(result)
             result.write_csv("/data/datasets/fuel/cars.csv")
         if isinstance(result_primary, pl.DataFrame):
+            result_primary = _flatten_nested_for_csv(result_primary)
             result_primary.write_csv("/data/datasets/fuel/cars_primary.csv")
         if isinstance(result_consumptions, pl.DataFrame):
+            result_consumptions = _flatten_nested_for_csv(result_consumptions)
             result_consumptions.write_csv("/data/datasets/fuel/cars_consumptions.csv")
         return success_response({"ok": True}, 200)
 
@@ -1605,33 +1623,42 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         if not computed_data_list:
             return error_response("Нет данных для этой машины", status.HTTP_400_BAD_REQUEST)
 
-        leaks = CarReport.objects.filter(car_id__id=car_id, datetime__gte=start_date)
+        leaks = CarReport.objects.filter(car_id__id=car_id,datetime__gte=start_date, picked_by__in=["fpm_model"])
         leaks_df = polars.DataFrame(list(leaks.values()))
 
         df = polars.DataFrame(computed_data_list)
-        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values", "ign_spread", "rpm_mean", "spent_fuel"])
-        tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
-        tmp = tmp.filter(polars.col("spent_fuel").gt(0))
+        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values_fpm", "dtime", "ign_spread", "dtime_moving", "rpm_mean", "filtered", "sf_m", "spent_fuel", "leak_display"])
+        tmp = tmp.rename({"z_values_fpm": "z_values"})
+        if leaks_df.shape[0] > 0:
+            tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
+        else:
+            tmp = tmp.with_columns(pl.lit(False).alias("is_leak"))
+        tmp = tmp.filter(pl.col("filtered").eq(False))
+        # dtime, dtime_moving to minutes
+        tmp = tmp.with_columns(pl.col("dtime").truediv(60), pl.col("dtime_moving").truediv(60))
         tmp = tmp.with_columns(
             pl.when(pl.col("timestamp").ge(start_date_month)).then(pl.lit("month")).otherwise(pl.lit("year")).alias("color"))
         tmp = tmp.with_columns(
+            pl.when(pl.col("z_values").gt(3)).then(pl.lit("suspicious")).otherwise(pl.col("color")).alias("color")
+        )
+        tmp = tmp.with_columns(
             pl.when(pl.col("is_leak")).then(pl.lit("leak")).otherwise(pl.col("color")).alias("color"))
 
-        data_fast = tmp.filter(polars.col("pos_s").gt(1)).select(["timestamp", "pos_s", "spent_fuel", "fpm", "color"])
+        data_fast = tmp.filter(pl.col("pos_s").gt(1)).select(["timestamp", "pos_s", "dtime_moving", "sf_m", "fpm", "color"])
         is_rpm = SensorsValues.objects.filter(key__key="rpm", car_id__id=car_id, is_active=True).count() > 0
         target_column = "rpm_mean" if is_rpm else "ign_spread"
         data_slow = tmp.filter(polars.col("pos_s").lt(1)).select(["timestamp", "pos_s", target_column, "fpm", "color"])
         data_agg = tmp.filter(polars.col("spent_fuel").gt(0))
 
         month = data_agg.group_by_dynamic(index_column="timestamp", every="1mo").agg([
-            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"),
+            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"), pl.mean("sf_m"),
         ]).with_columns(polars.lit("month").alias("color"))
         year = data_agg.group_by_dynamic(index_column="timestamp", every="1y").agg([
-            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"),
+            polars.mean("z_values"), polars.mean("fpm"), polars.first("spent_fuel"), pl.mean("sf_m")
         ]).with_columns(polars.lit("year").alias("color"))
 
         data_bar = [
-            *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "spent_fuel"]).with_columns(
+            *tmp.filter(polars.col("is_leak")).select(["timestamp", "z_values", "fpm", "sf_m"]).with_columns(
                 polars.lit("leaks").alias("color")).with_columns(
                 polars.col("timestamp").dt.to_string("iso:strict")).to_dicts(),
             year.row(0, named=True),

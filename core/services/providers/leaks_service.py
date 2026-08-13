@@ -211,7 +211,7 @@ class LeaksService(BaseLeaksCalculator):
         reports: List[Any] = [],
         ANTI_BUG_TIME_SECONDS: int = 30,
         PRE_PERIOD_TIME: int = 3,
-        PERIOD_2_MIN: int = 30,
+        PERIOD_2_MIN: int = 60,
         VOLTAGE_LIMIT: float = 0.16,
         REFUELING_LIMIT: int = 4000,
         FUEL_JUMP_BARRIER_PERC: float = 0.05,
@@ -226,7 +226,7 @@ class LeaksService(BaseLeaksCalculator):
         anti_bug = None
         if initial_df is None:
             logger.debug("Используется базовая предобработка")
-            anti_bug, reports = preprocess_basic_one(
+            anti_bug, reports, aggs = preprocess_basic_one(
                 df,
                 cars,
                 sensors,
@@ -269,12 +269,16 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("no_sat_data").alias("no_sat_data"),
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
+                pl.col("rpm_total").sum(),
+                pl.col("energy").sum(),
                 pl.first("calc_sensors_fuel_level").alias("fuel_first"),
                 pl.last("calc_sensors_fuel_level").alias("fuel_last"),
                 pl.sum("ign"),
                 pl.sum("ptime"),
                 pl.sum("es"),
                 pl.sum("spent_fuel_boundary"),
+                pl.sum("refuel_eligble"),
+                *aggs
             ]
         )
         grouped_count = len(anti_bug)
@@ -329,7 +333,11 @@ class LeaksService(BaseLeaksCalculator):
                 pl.first("fuel_first"),
                 pl.last("fuel_last"),
                 pl.sum("es"),
+                pl.col("energy").sum(),
+                pl.col("rpm_total").sum(),
                 pl.sum("spent_fuel_boundary"),
+                pl.sum("refuel_eligble"),
+                *aggs,
             ]
         )
         result = result.filter(pl.col("fuel_level_nan").ne(pl.col("count")))
@@ -456,6 +464,59 @@ class LeaksService(BaseLeaksCalculator):
                 .alias("norma_rasx_per_travel")
             ]
         )
+        # fpm: fuel-per-minute for moving consumption periods (sf_m < 0 = consumption).
+        # Compute fpm from signed sf_m BEFORE clipping, matching norms_service.py.
+        df_values = df_values.with_columns(
+            pl.when(pl.col("sf_m") < 0)
+            .then(pl.col("sf_m").truediv(pl.col("dtime_moving")).mul(60))
+            .otherwise(0)
+            .cast(pl.Float32)
+            .clip(upper_bound=0)
+            .abs()
+            .alias("fpm")
+        )
+        # Now clip sf_m to positive magnitude for downstream use
+        df_values = df_values.with_columns(
+            pl.col("sf_m").clip(upper_bound=0).abs()
+        )
+        df_values = df_values.with_columns(
+            pl.col("pos_s_m").mul(pl.col("dtime_moving")).alias("fpm_metric_x")
+        )
+        if df_values["rpm_total"].is_not_null().any() or norma.get("rpm_model_coef") is None:
+            df_values = df_values.with_columns(
+                pl.col("rpm_total").mul(norma.get("rpm_model_coef", 0), ).add(norma.get("rpm_model_intercept", 0)).alias("rpm_model_predicted"),
+                pl.lit(norma.get("rpm_model_std")).cast(pl.Float32).alias("rpm_model_std")
+            )
+        else:
+            df_values = df_values.with_columns(
+                pl.lit(None).cast(pl.Float32).alias("rpm_model_predicted"),
+                pl.lit(None).cast(pl.Float32).alias("rpm_model_std"),
+            )
+        # fpm_model was trained with feature="pos_s_m", target="sf_m" (abs'd consumption),
+        # so we must predict using pos_s_m, NOT fpm.
+        if df_values["pos_s_m"].is_not_null().any() or norma.get("fpm_model_coef") is None:
+            df_values = df_values.with_columns(
+                pl.col("fpm_metric_x").mul(norma.get("fpm_model_coef", 0)).add(norma.get("fpm_model_intercept", 0)).alias("fpm_model_predicted"),
+                pl.lit(norma.get("fpm_model_std")).cast(pl.Float32).alias("fpm_model_std")
+            )
+        else:
+            df_values = df_values.with_columns(
+                pl.lit(None).cast(pl.Float32).alias("fpm_model_predicted"),
+                pl.lit(None).cast(pl.Float32).alias("fpm_model_std"),
+                pl.lit(None).cast(pl.Float32).alias("fpm_model_mean"),
+            )
+        # speed_model: linear model pos_s -> spent_fuel (per-car Lasso from norms)
+        if df_values["pos_s"].is_not_null().any() or norma.get("speed_model_coef") is None:
+            df_values = df_values.with_columns(
+                pl.col("pos_s").mul(norma.get("speed_model_coef", 0)).add(norma.get("speed_model_intercept", 0)).alias("speed_model_predicted"),
+                pl.lit(norma.get("speed_model_std")).cast(pl.Float32).alias("speed_model_std")
+            )
+        else:
+            df_values = df_values.with_columns(
+                pl.lit(None).cast(pl.Float32).alias("speed_model_predicted"),
+                pl.lit(None).cast(pl.Float32).alias("speed_model_std"),
+            )
+
         logger.debug("Рассчитана норма на пройденное расстояние")
 
         df_values = df_values.with_columns(
@@ -505,10 +566,13 @@ class LeaksService(BaseLeaksCalculator):
         df_values = df_values.with_columns(
             pl.when(pl.col("ign").gt(0)).then(1).otherwise(0).alias("ign_spread")
         )
-
+        # TODO: сделать лучше тут колонки которые будут нужны computed_data
         df_values = df_values.with_columns(
-            pl.col("spent_fuel").truediv(pl.col("dtime")).mul(60).alias("fpm")
+            pl.lit(0).alias("z_values_rpm"),
+            pl.lit(0).alias("z_values_fpm")
         )
+
+        
 
         if is_save_bad_data:
             logger.debug("Возвращаются данные с плохими записями")

@@ -314,7 +314,7 @@ def process_single_car_data_task(
         logger.info("ЭТАП 5: Фильтрация результатов утечек...")
         if leaks_result is not None:
             filtering_service = FilteringService()
-            filtered_leaks = filtering_service.apply_filters(leaks_result)
+            filtered_leaks, result_df = filtering_service.apply_filters(leaks_result)
         else:
             filtered_leaks = None
 
@@ -481,8 +481,9 @@ def calculate_primary_cron(self, provider_name: str, is_save_bad_data=False):
                 continue
 
 
+
 @shared_task(bind=True)
-def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=False, is_save_bad_data=False):
+def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=False, is_save_bad_data=False, default_duration=180):
     
     datetime_now = datetime.now()
     provider = DataProvider.objects.get(name=provider_name)
@@ -492,7 +493,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
         logger.warning(f"Машина не найдена {car_id}")
         return
     if car is not None:
-        datetime_for_stats = datetime_now - timedelta(days=180)
+        datetime_for_stats = datetime_now - timedelta(days=default_duration)
         # primary computing
         parser = GlonassGeneralProvider([car], None, provider, datetime_for_stats, datetime_now, default_period_days=30)
         try:
@@ -551,6 +552,12 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
             ReportService.create_bad_data_record(car, error_msg, report_query, datetime_for_stats, datetime_now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
 
+@shared_task(bind=True)
+def calculate_stats_for_car(self, provider_name: str, cars: list[str], is_save_bad_data=False, default_duration=180):
+    tasks = [
+        calculate_stats_fuel_cron_one.si(provider_name, str(car_id), is_save_bad_data, False,default_duration) for car_id in cars
+    ]
+    chain(*tasks).apply_async()
 
 @shared_task(bind=True)
 def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
@@ -735,7 +742,7 @@ def calculate_leaks_cron(
                     ParsingCarStats.objects.filter(car_id=car.id).update(leaks_last_processed=now)
                     continue
                 filtering_service = FilteringService()
-                filtering_result = filtering_service.apply_filters(leaks_result)
+                true_leaks, filtering_result = filtering_service.apply_filters(leaks_result)
                 ReportService.save_car_reports_batch(filtering_result)
 
                 if not filtering_result.is_empty():
@@ -745,7 +752,7 @@ def calculate_leaks_cron(
                         car_map,
                     )
 
-                logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
+                logger.info(f"Сохранено {true_leaks.shape[0]} сливов")
                 Car.objects.filter(id=car.id).update(last_processed_date=now)
             except Exception as err:
                 report_query, report_details = ReportService.create_report(
@@ -791,7 +798,7 @@ def calculate_leaks_cron_one(
             logger.info(f"Car {car.id} already processed today, skipping")
             return
 
-        parser = GlonassGeneralProvider([car], None, provider, now, now)
+        parser = GlonassGeneralProvider([car], None, provider, now, now, default_period_days=25)
 
         try:
             # ✅ Same logic as cron
@@ -835,22 +842,23 @@ def calculate_leaks_cron_one(
                     error_msg = f"Нет данных для машины после фильтров {car.id}"
                     logger.error(error_msg)
                     ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
-                    ParsingCarStats.objects.filter()
-                computed_service = ComputedDataService()
-                saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
-                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
+                    return
+                
                 filtering_service = FilteringService()
-                filtering_result = filtering_service.apply_filters(leaks_result)
-                ReportService.save_car_reports_batch(filtering_result)
+                true_leaks, filtering_result = filtering_service.apply_filters(leaks_result)
+                ReportService.save_car_reports_batch(true_leaks)
+                computed_service = ComputedDataService()
+                saved_records_amount, _ = computed_service.save_preprocessed_data(filtering_result)
+                logger.info(f"Сохранено {saved_records_amount} записей для графиков")
 
-                if not filtering_result.is_empty():
+                if not true_leaks.is_empty():
                     save_leak_alerts_from_rows(
-                        filtering_result.rows(named=True),
+                        true_leaks.rows(named=True),
                         provider.org_id,
                         {car.name: car},
                     )
 
-                logger.info(f"Сохранено {filtering_result.shape[0]} сливов")
+                logger.info(f"Сохранено {true_leaks.shape[0]} сливов")
             Car.objects.filter(id=car.id).update(last_processed_date=now)
             ParsingCarStats.objects.filter(car_id=car.id).update(computed_last_processed=now, leaks_last_processed=now)
             if is_fuel_report_made:
@@ -864,6 +872,8 @@ def calculate_leaks_cron_one(
             error_msg = f"Внутренняя ошибка {car.id}"
             ReportService.create_bad_data_record(car, error_msg, report_query, now, now, CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.LEAKS])
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
+    else:
+        logger.warning("Машина с заданными свойствами не найдена, пропускаем выполнение задачи")
 
 @shared_task(bind=True)
 def calculate_leaks_cron_new(self, provider_name: str, is_save_bad_data = False):
@@ -965,6 +975,117 @@ def parse_terminal_messages_task(
 
 
 @shared_task(bind=True)
+def parse_cars_milleage_task_one(
+        self,
+        provider_name: str,
+        car_id: str,
+        is_save_bad_data: bool = False,
+        is_parse_mileage=False,
+        start_date_manual=None,
+        last_date_manual=None,
+        force=False
+):
+    try:
+        if is_parse_mileage == False:
+            return
+        tz = pytz.UTC
+        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = start_date + timedelta(days=1)
+        if last_date_manual:
+            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
+
+        provider = DataProvider.objects.filter(name=provider_name).first()
+        car = Car.objects.filter(id=car_id).select_related("parsingcar_stats").first()
+        if car is None:
+            logger.warning(f"Машина не найдена {car_id}")
+            return
+
+        cars = [car]
+
+        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date)
+        anomalies = 0
+
+        try:
+            logger.info(f"Обработка пробега для машины {car.id}")
+            is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(key__key="mileage"))
+            is_already_computed = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
+            if is_already_computed > 0:
+                logger.info(f"Пробег для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработан, пропускаем")
+                parser._skip_car(car)
+                return
+            last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
+            if last_datetime is None or force:
+                last_datetime = start_date
+            if last_date_manual:
+                end_date = last_date_manual
+            if is_sensor == 0:
+                parser._skip_car(car)
+                return
+            for i in range((end_date - last_datetime).days):
+                is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
+                if is_no_need_to_parse > 0:
+                    parser._skip_car(car)
+                    continue
+                current_date = last_datetime + timedelta(days=i)
+                tmp_end_date = min(current_date + timedelta(days=1), end_date)
+                result, status = MileageCalculationService.calculate_mileage(
+                    car.id, MileageAlgorithms.fraud, None, current_date, tmp_end_date,
+                    parser=parser, is_save_bad_data=is_save_bad_data
+                )
+                data = result["result"]
+                if status == 200:
+                    fraud_value = data.get("travel_fraud")
+                    if fraud_value is not None and abs(fraud_value) > 0:
+                        anomalies += 1
+                    mileage_report, _ = CarMileageReport.objects.update_or_create(
+                        car_id_id=car.id,
+                        datetime=current_date,
+                        defaults={
+                            "mileage_start": data["first_mileage"],
+                            "mileage_end": data["last_mileage"],
+                            "travel": data["travel"],
+                            "fraud": fraud_value,
+                            "travel_fraud_jumps": data["travel_fraud_jumps"],
+                            "ign_miss": data["ign_miss"]
+                        }
+                    )
+                    logger.info(
+                        f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. "
+                        f"Пройдено км: {data['travel']}, подозрительный пробег: {fraud_value}"
+                    )
+
+                    if fraud_value is not None and abs(fraud_value) > 0:
+                        save_fraud_alert(
+                            car=car,
+                            organization=provider.org_id,
+                            fraud_km=fraud_value,
+                            event_datetime=current_date,
+                            source_mileage_report=mileage_report,
+                        )
+                else:
+                    logger.error("Статус репорта не успешный")
+            ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"mileage_last_processed": start_date})
+        except Exception as err:
+            logger.error(f"Ошибка при обработке пробега для машины {car.id}: {err}")
+            ReportService.create_bad_data_record(
+                car, f"Ошибка при обработке пробега: {err}", None,
+                start_date, end_date,
+                CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MILEAGE]
+            )
+
+        save_system_alert(
+            organization=provider.org_id,
+            message=f"Отчёт по пробегу за {start_date.date().isoformat()} завершён (машина {car.id}). Накруток: {anomalies}",
+            event_datetime=datetime.utcnow(),
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинга mileage_one: {e}", exc_info=True)
+        self.update_state(state='FAILURE', meta={'error': str(e)})
+        raise
+
+
+@shared_task(bind=True)
 def parse_cars_milleage_task(
         self,
         provider_name: str,
@@ -980,8 +1101,6 @@ def parse_cars_milleage_task(
         tz = pytz.UTC
         start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = start_date + timedelta(days=1)
-        if last_date_manual:
-            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
         cars = provider.cars.select_related("parsingcar_stats").filter(
@@ -1006,89 +1125,134 @@ def parse_cars_milleage_task(
             )
             return
 
-        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date)
-        anomalies = 0
-
-        for car in cars:
-            try:
-                logger.info(f"Обработка пробега для машины {car.id}")
-                is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(key__key="mileage"))
-                is_already_computed = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
-                if is_already_computed > 0:
-                    logger.info(f"Пробег для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработан, пропускаем")
-                    parser._skip_car(car)
-                    continue
-                last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
-                if last_datetime is None or force:
-                    last_datetime = start_date
-                if last_date_manual:
-                    end_date = last_date_manual
-                if is_sensor == 0:
-                    parser._skip_car(car)
-                    continue
-                for i in range((end_date - last_datetime).days):
-                    is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
-                    if is_no_need_to_parse > 0:
-                        parser._skip_car(car)
-                        continue
-                    current_date = last_datetime + timedelta(days=i)
-                    tmp_end_date = min(current_date + timedelta(days=1), end_date)
-                    result, status = MileageCalculationService.calculate_mileage(
-                        car.id, MileageAlgorithms.fraud, None, current_date, tmp_end_date,
-                        parser=parser, is_save_bad_data=is_save_bad_data
-                    )
-                    data = result["result"]
-                    if status == 200:
-                        fraud_value = data.get("travel_fraud")
-                        if fraud_value is not None and abs(fraud_value) > 0:
-                            anomalies += 1
-                        mileage_report, _ = CarMileageReport.objects.update_or_create(
-                            car_id_id=car.id,
-                            datetime=current_date,
-                            defaults={
-                                "mileage_start": data["first_mileage"],
-                                "mileage_end": data["last_mileage"],
-                                "travel": data["travel"],
-                                "fraud": fraud_value,
-                                "travel_fraud_jumps": data["travel_fraud_jumps"],
-                                "ign_miss": data["ign_miss"]
-                            }
-                        )
-                        logger.info(
-                            f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. "
-                            f"Пройдено км: {data['travel']}, подозрительный пробег: {fraud_value}"
-                        )
-
-                        if fraud_value is not None and abs(fraud_value) > 0:
-                            save_fraud_alert(
-                                car=car,
-                                organization=provider.org_id,
-                                fraud_km=fraud_value,
-                                event_datetime=current_date,
-                                source_mileage_report=mileage_report,
-                            )
-                    else:
-                        logger.error("Статус репорта не успешный")
-                ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"mileage_last_processed": start_date})
-            except Exception as err:
-                logger.error(f"Ошибка при обработке пробега для машины {car.id}: {err}")
-                ReportService.create_bad_data_record(
-                    car, f"Ошибка при обработке пробега: {err}", None,
-                    start_date, end_date,
-                    CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MILEAGE]
-                )
-                continue
-
-        save_system_alert(
-            organization=provider.org_id,
-            message=f"Отчёт по пробегу за {start_date.date().isoformat()} завершён. Накруток: {anomalies}",
-            event_datetime=datetime.utcnow(),
-        )
+        tasks = [
+            parse_cars_milleage_task_one.si(
+                provider_name, str(car.id), is_save_bad_data, is_parse_mileage,
+                start_date_manual, last_date_manual, force
+            )
+            for car in cars
+        ]
+        try:
+            chain(*tasks).apply_async()
+        except BaseException as err:
+            logger.error(f"Ошибка при расчёте пробега {err}")
 
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга mileage: {e}", exc_info=True)
         self.update_state(state='FAILURE', meta={'error': str(e)})
         raise
+
+@shared_task(bind=True)
+def parse_cars_motohours_task_one(
+        self,
+        provider_name: str,
+        car_id: str,
+        is_save_bad_data: bool = False,
+        is_parse_motohours=False,
+        start_date_manual=None,
+        last_date_manual=None,
+        force=False
+):
+    try:
+        if is_parse_motohours == False:
+            return
+        tz = pytz.UTC
+        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+        end_date = start_date + timedelta(days=1)
+        if last_date_manual:
+            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
+
+        provider = DataProvider.objects.filter(name=provider_name).first()
+        car = Car.objects.filter(id=car_id).select_related("parsingcar_stats").first()
+        if car is None:
+            logger.warning(f"Машина не найдена {car_id}")
+            return
+
+        cars = [car]
+
+        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date, "motohours")
+        anomalies = 0
+
+        try:
+            logger.info(f"Обработка моточасов для машины {car.id}")
+            is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(Q(key__key="motohours") | Q(key__key="ign")))
+            last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().motohours_last_processed
+            if last_datetime is None or force:
+                last_datetime = start_date
+            if last_date_manual:
+                end_date = last_date_manual
+            if is_sensor == 0:
+                parser._skip_car(car)
+                return
+            for i in range((end_date - last_datetime).days):
+                current_date = last_datetime + timedelta(days=i)
+                is_no_need_to_parse = len(CarMotohoursReport.objects.filter(datetime=current_date, car_id__id=car.id))
+                if is_no_need_to_parse > 0:
+                    continue
+                tmp_end_date = min(current_date + timedelta(days=1), end_date)
+                result, status = MotohoursCalculationService.calculate_motohours(
+                    car.id, None, current_date, tmp_end_date,
+                    is_save_bad_data=is_save_bad_data
+                )
+                data = result["result"]
+                if status == 200:
+                    fraud_value = data.get("motohours_fraud")
+                    if fraud_value is not None and abs(fraud_value) > 0:
+                        anomalies += 1
+                    motohours_report, _ = CarMotohoursReport.objects.update_or_create(
+                        car_id_id=car.id,
+                        datetime=current_date,
+                        defaults={
+                            "motohours_start": data["motohours_start"],
+                            "motohours_end": data["motohours_end"],
+                            "motohours": data["motohours"],
+                            "motohours_fraud": fraud_value,
+                            "motohours_idle": data["motohours_idle"],
+                            "motohours_active": data["motohours_active"],
+                            "rpm_same_cases": data["rpm_same_cases"],
+                            "rpm_same_cases_time": data["rpm_same_cases_time"],
+                            "motohours_fraud_by_sensor": data["motohours_fraud_by_sensor"],
+                            "unefficient_cases": data["unefficient_cases"],
+                            "unefficient_time": data["unefficient_time"],
+                            "sensor": data["sensor"],
+                            "sensor_check": data["sensor_check"]
+                        }
+                    )
+                    logger.info(
+                        f"Моточасы для машины {car.id} за {current_date.date().isoformat()} сохранены."
+                        f"Итого моточасов: {data['motohours']}, подозрительные моточасы: {fraud_value}"
+                    )
+
+                    if fraud_value is not None and abs(fraud_value) > 0:
+                        save_fraud_alert(
+                            car=car,
+                            organization=provider.org_id,
+                            fraud_km=fraud_value,
+                            event_datetime=current_date,
+                            source_motohours_report=motohours_report,
+                        )
+                else:
+                    logger.error("Статус репорта не успешный")
+            ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"motohours_last_processed": start_date})
+        except Exception as err:
+            logger.error(f"Ошибка при обработке моточасов для машины {car.id}: {err}")
+            ReportService.create_bad_data_record(
+                car, f"Ошибка при обработке моточасов: {err}", None,
+                start_date, end_date,
+                CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MOTOHOURS]
+            )
+
+        save_system_alert(
+            organization=provider.org_id,
+            message=f"Отчёт по моточасам за {start_date.date().isoformat()} завершён (машина {car.id}). Накруток: {anomalies}",
+            event_datetime=datetime.utcnow(),
+        )
+
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинга motohours_one: {e}", exc_info=True)
+        self.update_state(state='FAILURE', meta={'error': str(e)})
+        raise
+
 
 @shared_task(bind=True)
 def parse_cars_motohours_task(
@@ -1106,7 +1270,6 @@ def parse_cars_motohours_task(
         tz = pytz.UTC
         start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         end_date = start_date + timedelta(days=1)
-        last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
         cars = provider.cars.select_related("parsingcar_stats").filter(
@@ -1131,97 +1294,24 @@ def parse_cars_motohours_task(
             )
             return
 
-        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date, "motohours")
-        anomalies = 0
-
-        for car in cars:
-            try:
-                logger.info(f"Обработка моточасов для машины {car.id}")
-                is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(Q(key__key="motohours") | Q(key__key="ign")))
-                # is_already_computed = len(CarMotohoursReport.objects.filter(datetime=start_date, car_id__id=car.id))
-                # if is_already_computed > 0:
-                #     logger.info(f"Моточасы для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработаны, пропускаем")
-                #     parser._skip_car(car)
-                #     continue
-                last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().motohours_last_processed
-                if last_datetime is None or force:
-                    last_datetime = start_date
-                if last_date_manual:
-                    end_date = last_date_manual
-                if is_sensor == 0:
-                    parser._skip_car(car)
-                    continue
-                for i in range((end_date - last_datetime).days):
-                    current_date = last_datetime + timedelta(days=i)
-                    is_no_need_to_parse = len(CarMotohoursReport.objects.filter(datetime=current_date, car_id__id=car.id))
-                    if is_no_need_to_parse > 0:
-                        continue
-                    tmp_end_date = min(current_date + timedelta(days=1), end_date)
-                    result, status = MotohoursCalculationService.calculate_motohours(
-                        car.id, None, current_date, tmp_end_date,
-                        is_save_bad_data=is_save_bad_data
-                    )
-                    data = result["result"]
-                    if status == 200:
-                        fraud_value = data.get("motohours_fraud")
-                        if fraud_value is not None and abs(fraud_value) > 0:
-                            anomalies += 1
-                        motohours_report, _ = CarMotohoursReport.objects.update_or_create(
-                            car_id_id=car.id,
-                            datetime=current_date,
-                            defaults={
-                                "motohours_start": data["motohours_start"],
-                                "motohours_end": data["motohours_end"],
-                                "motohours": data["motohours"],
-                                "motohours_fraud": fraud_value,
-                                "motohours_idle": data["motohours_idle"],
-                                "motohours_active": data["motohours_active"],
-                                "rpm_same_cases": data["rpm_same_cases"],
-                                "rpm_same_cases_time": data["rpm_same_cases_time"],
-                                "motohours_fraud_by_sensor": data["motohours_fraud_by_sensor"],
-                                "unefficient_cases": data["unefficient_cases"],
-                                "unefficient_time": data["unefficient_time"],
-                                "sensor": data["sensor"],
-                                "sensor_check": data["sensor_check"]
-                            }
-                        )
-                        logger.info(
-                            f"Моточасы для машины {car.id} за {current_date.date().isoformat()} сохранены."
-                            f"Итого моточасов: {data['motohours']}, подозрительные моточасы: {fraud_value}"
-                        )
-
-                        if fraud_value is not None and abs(fraud_value) > 0:
-                            save_fraud_alert(
-                                car=car,
-                                organization=provider.org_id,
-                                fraud_km=fraud_value,
-                                event_datetime=current_date,
-                                source_motohours_report=motohours_report,
-                            )
-                    else:
-                        logger.error("Статус репорта не успешный")
-                ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"motohours_last_processed": start_date})
-            except Exception as err:
-                logger.error(f"Ошибка при обработке моточасов для машины {car.id}: {err}")
-                ReportService.create_bad_data_record(
-                    car, f"Ошибка при обработке моточасов: {err}", None,
-                    start_date, end_date,
-                    CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MOTOHOURS]
-                )
-                continue
-
-        save_system_alert(
-            organization=provider.org_id,
-            message=f"Отчёт по моточасам за {start_date.date().isoformat()} завершён. Накруток: {anomalies}",
-            event_datetime=datetime.utcnow(),
-        )
+        tasks = [
+            parse_cars_motohours_task_one.si(
+                provider_name, str(car.id), is_save_bad_data, is_parse_motohours,
+                start_date_manual, last_date_manual, force
+            )
+            for car in cars
+        ]
+        try:
+            chain(*tasks).apply_async()
+        except BaseException as err:
+            logger.error(f"Ошибка при расчёте моточасов {err}")
 
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга motohours: {e}", exc_info=True)
         self.update_state(state='FAILURE', meta={'error': str(e)})
         raise
 
-
+# TODO: не использовать убрать
 @shared_task(bind=True)
 def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_save_bad_data: bool, ignore_last_processed=False):
     provider = DataProvider.objects.get(id=provider_id)
@@ -1281,7 +1371,7 @@ def parse_cars_computed_data_task_one(self, provider_id: str, car_id: str, is_sa
             error_msg = f"Внутренняя ошибка {car.id}"
             ReportService.create_bad_data_record(car, error_msg, report_query, now, now)
             ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
-            self.update_state(state='FAILURE', meta={'error': str(e)})
+            self.update_state(state='FAILURE', meta={'error': str(err)})
 
 
 @shared_task(bind=True)
@@ -1298,50 +1388,16 @@ def parse_cars_computed_data_task(
     now = datetime.now().astimezone(timezone.utc)
 
     if len(cars_for_computing) != 0:
-        for car in cars_for_computing:
-            parser = GlonassGeneralProvider(cars_for_computing, None, provider, now, now)
-            try:
-                last_date_for_processing = car.parsingcar_stats.computed_last_processed if car.parsingcar_stats.computed_last_processed else (now - timedelta(365))
-                datetime_parsing = cast(datetime, last_date_for_processing)
-                datetime_parsing = datetime_parsing.astimezone(pytz.utc)
-
-                report_query, report_details = ReportService.create_report(
-                    str(provider_id),
-                    ReportQuery.ReportType.COMPUTED_DATA
-                )
-                status, data_df, sensors = parser.parse_raw_data("fuel", True, car, datetime_parsing, now)
-                if status and isinstance(data_df, pl.DataFrame):
-                    if data_df.is_empty():
-                        result_msg = f"Нет данных за период {datetime_parsing} {last_date_for_processing}"
-                        result_data = {"result": {}, "empty_data": True, "rows_processed": 0}
-                        ReportService.complete_report_success(report_query, result_data)
-                        logger.warning(result_msg)
-                        continue
-                    primary_df = pl.DataFrame(car.carprimary.primary, schema_overrides={"auto": pl.Categorical})
-                    norms_df = pl.DataFrame(car.consumptions.first().json_data, schema_overrides={"sl_avto": pl.Categorical})
-                    auto_data = CarDataService.prepare_auto_data(car)
-                    leak_service = leaks_service.LeaksService()
-                    leaks_result, _, reports = leak_service.compute_leaks(auto_data, data_df, primary_df, norms_df)
-                    if is_save_bad_data:
-                        ReportService.create_bad_data_record_from_list(car, reports, report_query)
-                    if leaks_result is None or leaks_result.is_empty():
-                        error_msg = f"Не обнаружены данные для машины {car.id}"
-                        logger.error(error_msg)
-                        ReportService.create_bad_data_record(car, error_msg, report_query, datetime_parsing, now)
-                    computed_service = ComputedDataService()
-                    saved_records_amount, _ = computed_service.save_preprocessed_data(leaks_result)
-                    logger.info(f"Сохранено {saved_records_amount} записей для графиков")
-
-            except Exception as err:
-                report_query, report_details = ReportService.create_report(
-                    provider_id=str(provider.id),
-                    report_type=ReportQuery.ReportType.LEAKS,
-                    is_save_bad_data=is_save_bad_data
-                )
-                error_msg = f"Внутренняя ошибка {car.id}"
-                ReportService.create_bad_data_record(car, error_msg, report_query, now, now)
-                ReportService.complete_report_error(report_query, error_msg, cars_skipped=1)
-                continue
+        tasks = [
+            parse_cars_computed_data_task_one.si(
+                str(provider_id), str(car.id), is_save_bad_data
+            )
+            for car in cars_for_computing
+        ]
+        try:
+            chain(*tasks).apply_async()
+        except BaseException as err:
+            logger.error(f"Ошибка при расчёте computed_data {err}")
 
 
 @shared_task(bind=True)

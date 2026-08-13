@@ -133,11 +133,28 @@ class ReportService:
 
         period_info = ""
         created: List[CarBadData] = []
+        seen_keys = set()
         for report in reports:
             severity = report["severity"]
 
             if not is_save_bad_data and severity != CarBadData.Severity.CRITICAL:
                 continue
+
+            # Defense-in-depth: dedupe reports by (event_date, message, category)
+            # to avoid creating duplicate CarBadData rows even if a caller
+            # passes a contaminated list (e.g. due to mutable-default-argument bugs).
+            dedupe_key = (
+                str(report.get("event_date")),
+                report.get("message"),
+                report.get("category"),
+            )
+            if dedupe_key in seen_keys:
+                logger.warning(
+                    f"Пропущен дубликат CarBadData для {car.name}: "
+                    f"{report.get('message')} ({report.get('event_date')})"
+                )
+                continue
+            seen_keys.add(dedupe_key)
 
             tags = report["tags"]
             if tags is None:
@@ -298,8 +315,11 @@ class ReportService:
                     real_last = record["leak_end"]
                     if real_last is None:
                         real_last = record["leak_end"].replace(tzinfo=timezone.utc)
-                    leak = record["leak"]
-
+                    leak = record["leak_display"]
+                    if record["picked_by"] == FuelFilters.BOUNDARY.value:
+                        real_date = record["prev_period"].replace(tzinfo=timezone.utc)
+                        # + т.к. spent_fuel_boundary отрицательный
+                    
 
                     car = Car.objects.get(id=record["auto"])
                     car_reports.append(CarReport(

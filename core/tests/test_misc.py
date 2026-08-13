@@ -75,6 +75,8 @@ def test_leaks_saving():
             'norma_rpm_mean': 0.0,
             'norma_rpm_std': 0.0,
             'norma_rpm_max': 0.0,
+            'norma_fpm_mean': 0.0,
+            'norma_fpm_std': 0.0,
             'period': '2027-03-12T10:39:24.743078',
             'is_special_car': True,
             'max_fuel_right': 4095.0,

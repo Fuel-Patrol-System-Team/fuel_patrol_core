@@ -17,7 +17,7 @@ from django.utils import timezone
 from core.models import Car, DataProvider, SensorsValues
 from core.services.providers.glonass.auth_token_store import glonass_auth_token_store
 from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol, SensorMappingParserType
-from core.services.providers.glonass.glonass_expression_parser import GlonassExpresssionParser
+from core.services.providers.glonass.glonass_expression_parser import GlonassExpresssionParser, _extract_var_names
 from core.services.providers.rate_limiter import global_rate_limiter
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ class GlonassGeneralProvider:
         
         if not self.sensors_mapping_cache:
             right_car = Car.objects.only("id").get(id_in_provider_system=car.id_in_provider_system)
-            sensors = SensorsValues.objects.filter(car_id=right_car.id, is_active=True)
+            sensors = SensorsValues.objects.filter(car_id=right_car.id, is_active=True).order_by("created_at")
             try:
                 sensors_mapping = {sv.key.key: [] for sv in sensors}
                 for sv in sensors:
@@ -120,7 +120,7 @@ class GlonassGeneralProvider:
         }
 
         try:
-            response = requests.post(url, json=payload, timeout=(10, 120))
+            response = requests.post(url, json=payload, timeout=(30, 120))
             response.raise_for_status()
             data = orjson.loads(response.content)
             token = data.get("AuthId")
@@ -311,18 +311,18 @@ class GlonassGeneralProvider:
         if mode == "mileage":
             result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.voltage , GP.speed, GP.speed_gps,GP.mileage, GP.satellites, GP.fuel_consumpt, GP.rpm, GP.ignition, GP.msg_number],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
         elif mode == "fuel":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.event_code, GP.satellites, GP.ignition, GP.msg_number , GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.fuel_consumpt], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.event_code, GP.satellites, GP.rpm, GP.ignition, GP.msg_number , GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.fuel_consumpt], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge),  GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.rpm, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge),  GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
         elif mode == "motohours":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.motohours, GP.msg_number, GP.satellites, GP.rpm, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.motohours, GP.msg_number, GP.satellites, GP.rpm, GP.rpm_active, GP.rpm_idle, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
         elif mode == "raw":
             result = self._process_unmapped(car_to_use, all_messages)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.msg_number, GP.voltage, GP.fuel_level, GP.rpm, GP.ignition, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude, GP.fuel_consumpt, GP.event_code], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.msg_number, GP.voltage, GP.fuel_level, GP.ignition, GP.rpm,  GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude, GP.fuel_consumpt, GP.event_code], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
@@ -523,13 +523,37 @@ class GlonassGeneralProvider:
 
 
     def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, list[SensorMappingParserType]], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
+        # TODO: first collect data from all sensors -> expr -> filter -> loop filters
         use_cols = self._build_use_cols(required_columns, sensors_mapping )
+        
         result = self._process_unmapped(car, messages, use_cols)
         
 
         parameters_count = {}
         expr_parser = GlonassExpresssionParser()
-        variables = expr_parser.make_variables(sensors_mapping)
+
+        # Предсканирование: определяем промежуточные колонки для сенсоров с
+        # выражениями, чтобы псевдонимы в make_variables указывали на
+        # вычисленные результаты, а не на сырые данные.
+        # sensor_key → intermediate_col
+        expr_result_cols_map: dict[str, str] = {}
+        # pseudonym → sensor_key (для построения графа зависимостей)
+        pseudonym_to_sensor_key: dict[str, str] = {}
+        for col in required_columns:
+            param = GLOBAL_GLONASS_PARAMS.get(col)
+            if param and param.is_dynamic:
+                path_to_params = sensors_mapping.get(col.value, [{"value": param.default_key}])
+                path_to_params = [path_to_params] if isinstance(path_to_params, str) else path_to_params
+                for index, sensor in enumerate(path_to_params):
+                    is_metadata = sensor.get("metadata") is not None
+                    if is_metadata and sensor.get("metadata", {}).get("expr"):
+                        result_col = f"_expr_{col.value}_{index}"
+                        expr_result_cols_map[col.value] = result_col
+                    if is_metadata and sensor.get("metadata", {}).get("pseudonym"):
+                        pseudonym_to_sensor_key[sensor["metadata"]["pseudonym"]] = col.value
+
+        variables = expr_parser.make_variables(sensors_mapping, expr_result_cols_map)
+
         # TODO: loop для предзаполнения колонок
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -547,17 +571,18 @@ class GlonassGeneralProvider:
                         path_to_params = [{"value": param.default_key}]
                 for index, sensor in enumerate(path_to_params):
                     path_to_param = sensor["value"]
-                    expr = None
-                    
-                    if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
-                        expr = sensor["metadata"]["expr"]
-                    if ( path_to_param == "" or path_to_param not in result.columns) and not expr:
+                    if ( path_to_param == "" or path_to_param not in result.columns):
                         result = result.with_columns(pl.lit(param.default_on_absence).alias(path_to_param))
                         continue
-                    else:
-                        if expr is not None:
-                            result = expr_parser.parse_expression(param.label, path_to_param, expr, variables, result )
+
         # TODO: loop для парсинга выражений
+        # Результаты выражений сохраняем в уникальные промежуточные колонки,
+        # чтобы не перетирать исходные данные, на которые опираются другие
+        # выражения через variables. Ключ: (col.value, index) -> имя колонки.
+        expr_result_cols: dict[tuple[str, int], str] = {}
+        # Собираем все задачи вычисления выражений для последующей
+        # топологической сортировки по зависимостям через псевдонимы.
+        expr_tasks: list[tuple] = []  # (col, index, sensor, path_to_param, expr, result_col)
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
             if param:
@@ -572,13 +597,54 @@ class GlonassGeneralProvider:
                 for index, sensor in enumerate(path_to_params):
                     path_to_param = sensor["value"]
                     expr = None
-                    
+
                     if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
                         expr = sensor["metadata"]["expr"]
                     if expr is not None:
-                        result = expr_parser.parse_expression(param.label, path_to_param, expr, variables, result )
-                
-                
+                        result_col = f"_expr_{col.value}_{index}"
+                        expr_result_cols[(col.value, index)] = result_col
+                        expr_tasks.append((col, index, sensor, path_to_param, expr, result_col))
+
+        # Топологическая сортировка: если выражение ссылается на псевдоним,
+        # который принадлежит другому сенсору с выражением, то этот сенсор
+        # должен быть вычислен раньше.
+        task_deps: dict[int, set[int]] = {i: set() for i in range(len(expr_tasks))}
+        for i, (col_i, idx_i, sensor_i, path_i, expr_i, result_col_i) in enumerate(expr_tasks):
+            var_names = _extract_var_names(expr_i)
+            for var_name in var_names:
+                dep_sensor_key = pseudonym_to_sensor_key.get(var_name)
+                if dep_sensor_key is not None and dep_sensor_key != col_i.value:
+                    for j, (col_j, idx_j, sensor_j, path_j, expr_j, result_col_j) in enumerate(expr_tasks):
+                        if col_j.value == dep_sensor_key:
+                            task_deps[i].add(j)
+
+        # Алгоритм Кана (Kahn's algorithm) для топологической сортировки
+        ordered: list[int] = []
+        in_degree = {i: len(deps) for i, deps in task_deps.items()}
+        queue = [i for i in range(len(expr_tasks)) if in_degree[i] == 0]
+        while queue:
+            node = queue.pop(0)
+            ordered.append(node)
+            for i in range(len(expr_tasks)):
+                if node in task_deps[i]:
+                    task_deps[i].discard(node)
+                    in_degree[i] -= 1
+                    if in_degree[i] == 0:
+                        queue.append(i)
+
+        if len(ordered) < len(expr_tasks):
+            logger.warning("Circular dependency detected in expression evaluation, falling back to original order")
+            ordered = list(range(len(expr_tasks)))
+
+        # Вычисляем выражения в топологическом порядке
+        for task_idx in ordered:
+            col, index, sensor, path_to_param, expr, result_col = expr_tasks[task_idx]
+            param = GLOBAL_GLONASS_PARAMS.get(col)
+            if param is None:
+                continue
+            result = expr_parser.parse_expression(param.label, result_col, expr, variables, result)
+
+
         # TODO: loop для приведения сырых значений к параметрам из глонасс
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -595,28 +661,23 @@ class GlonassGeneralProvider:
                     if param.default_key in result.columns:
                         path_to_params = [{"value": param.default_key}]
 
-                
+
                 msensor = len(path_to_params) > 1
                 # должен быть один, иначе идем по каждому
                 for index, sensor in enumerate(path_to_params):
-                    
                     path_to_param = sensor["value"]
-                    expr = None
-                    
-                    if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
-                        expr = sensor["metadata"]["expr"]
-
-                    
-                    
-                    true_label = param.label + f"_{index}" if msensor else param.label 
-                    if path_to_param == "" or path_to_param not in result.columns:
+                    true_label = param.label + f"_{index}" if msensor else param.label
+                    # Если для этого сенсора было вычислено выражение, берём
+                    # результат из промежуточной колонки, а не из исходной.
+                    source_col = expr_result_cols.get((col.value, index), path_to_param)
+                    if source_col == "" or source_col not in result.columns:
                         # заменить спец значением весь столбец
-                        
+
                         result = result.with_columns(pl.lit(param.default_on_absence).alias(true_label))
                     else:
                         # переименовываем столбец
-                        
-                        result = result.with_columns(pl.col(path_to_param).alias(true_label))
+
+                        result = result.with_columns(pl.col(source_col).alias(true_label))
                         # result = result.rename({path_to_param: true_label})
                         if param.cast: # если есть каст, кастуем
                             result = param.cast(result, sensors_mapping)

@@ -25,6 +25,8 @@ class CarDataService:
         """
         try:
             # Определяем все колонки топливных датчиков
+            if df.shape[0] == 0:
+                return df
             fuel_cols = [c for c in df.columns if c.startswith("calc_sensors_fuel_level")]
             is_multi = len(fuel_cols) > 1
 
@@ -40,8 +42,7 @@ class CarDataService:
             if "rpm" not in df.columns:
                 df = df.with_columns(pl.lit(65535).alias("rpm"))
 
-            # drop_nulls по всем топливным колонкам
-            df = df.drop_nulls(fuel_cols)
+            # df = df.drop_nulls(fuel_cols)
 
             if df.is_empty():
                 logger.warning("Нет данных после удаления NaN")
@@ -222,6 +223,12 @@ class CarDataService:
                 if sensor.metadata is not None:
                     sensor_grades = sensor.metadata.get("grades")
                 grades_list.append(sensor_grades)
+            degrees_list = []
+            for sensor in fuel_sensors:
+                median_degrees = None
+                if sensor.metadata is not None:
+                    median_degrees = sensor.metadata.get("median_degree")
+                degrees_list.append(median_degrees)
 
             auto_data = {
                 "id": str(car.id),
@@ -229,6 +236,7 @@ class CarDataService:
                 "input": float(car.input) if car.input else 1.0,
                 "output": float(car.output) if car.output else 1.0,
                 "grades": grades,
+                "median_degrees": degrees_list,
                 "grades_list": grades_list,
                 "name": car.name,
                 "engine_type": float(car.engine_type) if car.engine_type else 0.0,

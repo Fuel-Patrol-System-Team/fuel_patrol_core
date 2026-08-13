@@ -179,7 +179,19 @@ RPM_TEST_IDLE = 820
 
 def _compute_motohours_active_idle(df: pl.DataFrame, is_rpm_present: bool, rpm_idle: int | float, col_dtime_idle_checking_period: pl.Expr):
 
-    if is_rpm_present:
+    is_rpm_idle_present = df["rpm_idle"].is_not_null().any()
+    is_rpm_active_present = df["rpm_active"].is_not_null().any()
+    
+    if is_rpm_idle_present or is_rpm_active_present:
+        if is_rpm_idle_present:
+            df = df.with_columns(
+                pl.col("rpm_idle").alias("is_idle")
+            )
+        else:
+            df = df.with_columns(
+                pl.col("rpm_active").ne(1).cast(pl.Int8).alias("is_idle")
+            )
+    elif is_rpm_present:
         # df = df.with_columns(
         #     pl.col("rpm")
         #     .mean()
@@ -187,7 +199,7 @@ def _compute_motohours_active_idle(df: pl.DataFrame, is_rpm_present: bool, rpm_i
         #     .alias("rpm_direct")
         # )
         df = df.with_columns(
-            (pl.col("rpm").is_between(1, rpm_idle) & pl.col("rpm").is_not_null()).cast(pl.Int8).alias("is_idle")
+            (pl.col("rpm").is_between(1, rpm_idle)).cast(pl.Int8).alias("is_idle")
         )
     else:
         df = df.with_columns(pl.lit(0).alias("is_idle"))
@@ -206,6 +218,8 @@ def _compute_motohours_by_motohours(
     col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("10s")
     is_rpm_present = "rpm" in df.columns
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
+    if rpm_idle is None:
+        rpm_idle = RPM_TEST_IDLE
     sensor_check = "motohours"
     # if units == "seconds":
     # df = df.with_columns(pl.col("motohours") / 3600)
@@ -325,12 +339,21 @@ def _compute_motohours_by_motohours(
 def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIOD: int | None):
 
     rpm_idle = stats.get("rpm_idle", RPM_TEST_IDLE)
+    if rpm_idle is None:
+        rpm_idle = RPM_TEST_IDLE
     col_dtime_idle_checking_period = pl.col("timestamp").dt.truncate("1m")
     is_rpm_present = df["rpm"].is_not_null().any()
+    is_ign_present = df["ign"].is_not_null().any()
     df = alg_piece_remove_message_delays(df)
     if df.shape[0] == 0:
         return make_motohours_response_empty(), [] 
     sensor_check = "ign"
+
+    
+    if not is_ign_present:
+        df = df.with_columns(
+            pl.col("rpm").gt(800).cast(pl.Int32).alias("ign")
+        )
     if is_rpm_present:
         df = df.with_columns(pl.when(pl.col("ign").eq(1)).then(pl.col("rpm").fill_null(0)).otherwise(pl.col("rpm")).alias("rpm"))
         sensor_check = "rpm"
