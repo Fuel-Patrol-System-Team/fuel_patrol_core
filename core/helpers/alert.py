@@ -180,7 +180,7 @@ def save_leak_alerts_from_rows(
             logger.warning(f"[LEAK batch] Машина не найдена в car_map: {row['name']}")
             continue
 
-        event_dt = row.get("datetime")
+        event_dt = row.get("timestamp")
         if event_dt is None:
             event_dt = datetime.utcnow()
 
@@ -189,7 +189,7 @@ def save_leak_alerts_from_rows(
             car=car,
             alert_type=Alert.AlertType.LEAK,
             payload={
-                "volume": round(float(row["leak"]), 2),
+                "volume": round(float(row["volume"]), 2),
                 "event_dt": event_dt.isoformat() if hasattr(event_dt, "isoformat") else str(event_dt),
                 "car_name": row["name"],
             },

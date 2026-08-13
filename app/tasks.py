@@ -1542,72 +1542,75 @@ def send_alert_digests(self):
             logger.info("[send_alert_digests] Нет несентованных алертов")
             return
 
-        successfully_sent_ids: set[str] = set()
-
         for subscription in subscriptions:
-            user = subscription.user
-            org = user.org
+            try:
+                user = subscription.user
+                org = user.org
 
-            if org is None:
-                logger.warning(
-                    f"[send_alert_digests] У пользователя {user.username} "
-                    f"нет организации, пропускаем"
-                )
-                continue
+                if org is None:
+                    logger.warning(
+                        f"[send_alert_digests] У пользователя {user.username} "
+                        f"нет организации, пропускаем"
+                    )
+                    continue
 
-            alerts_for_org = org_alerts.get(str(org.id), [])
-            if not alerts_for_org:
-                logger.info(
-                    f"[send_alert_digests] Нет несентованных алертов "
-                    f"для org={org.name}"
-                )
-                continue
-
-            tg_users = get_tg_users_for_org_user(user)
-
-            if not tg_users:
-                logger.warning(
-                    f"[send_alert_digests] Активные TelegramUser не найдены: "
-                    f"user={user.username}"
-                )
-                continue
-
-            message = build_digest_message(subscription, alerts_for_org)
-
-            if message is None:
-                logger.info(
-                    f"[send_alert_digests] После фильтрации алертов нет: "
-                    f"user={user.username}"
-                )
-                continue
-
-            any_success = False
-            for tg_user in tg_users:
-                success = send_telegram_message(tg_user.chat_id, message)
-
-                if success:
-                    any_success = True
+                alerts_for_org = org_alerts.get(str(org.id), [])
+                if not alerts_for_org:
                     logger.info(
-                        f"[send_alert_digests] Дайджест отправлен: "
-                        f"user={user.username}, org={org.name}, chat_id={tg_user.chat_id}"
+                        f"[send_alert_digests] Нет несентованных алертов "
+                        f"для org={org.name}"
                     )
-                else:
-                    logger.error(
-                        f"[send_alert_digests] Ошибка отправки: "
-                        f"user={user.username}, chat_id={tg_user.chat_id}"
+                    continue
+
+                tg_users = get_tg_users_for_org_user(user)
+
+                if not tg_users:
+                    logger.warning(
+                        f"[send_alert_digests] Активные TelegramUser не найдены: "
+                        f"user={user.username}"
+                    )
+                    continue
+
+                message = build_digest_message(subscription, alerts_for_org)
+
+                if message is None:
+                    logger.info(
+                        f"[send_alert_digests] После фильтрации алертов нет: "
+                        f"user={user.username}"
+                    )
+                    continue
+
+                any_success = False
+                for tg_user in tg_users:
+                    success = send_telegram_message(tg_user.chat_id, message)
+
+                    if success:
+                        any_success = True
+                        logger.info(
+                            f"[send_alert_digests] Дайджест отправлен: "
+                            f"user={user.username}, org={org.name}, chat_id={tg_user.chat_id}"
+                        )
+                    else:
+                        logger.error(
+                            f"[send_alert_digests] Ошибка отправки: "
+                            f"user={user.username}, chat_id={tg_user.chat_id}"
+                        )
+
+                if any_success:
+                    sent_count = Alert.objects.filter(
+                        id__in=[a.id for a in alerts_for_org]
+                    ).update(is_sent=True, sent_at=now)
+                    logger.info(
+                        f"[send_alert_digests] Помечено is_sent=True: {sent_count} алертов "
+                        f"(user={user.username}, org={org.name})"
                     )
 
-            if any_success:
-                for alert in alerts_for_org:
-                    successfully_sent_ids.add(str(alert.id))
-
-        if successfully_sent_ids:
-            sent_count = Alert.objects.filter(
-                id__in=successfully_sent_ids
-            ).update(is_sent=True, sent_at=now)
-            logger.info(
-                f"[send_alert_digests] Помечено is_sent=True: {sent_count} алертов"
-            )
+            except Exception as e:
+                logger.error(
+                    f"[send_alert_digests] Ошибка обработки подписки {subscription.id}: {e}",
+                    exc_info=True,
+                )
+                continue
 
     except Exception as e:
         logger.error(f"[send_alert_digests] Ошибка: {e}", exc_info=True)

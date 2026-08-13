@@ -2,42 +2,76 @@ import os
 import logging
 from typing import List, Union
 
-from telebot import TeleBot
+import requests
 
 from core.models import Organization, TelegramUser
-from telebot import apihelper
 
 logger = logging.getLogger(__name__)
 
-def get_telegram_bot() -> TeleBot:
-    if hasattr(get_telegram_bot, 'bot'):
-        return get_telegram_bot.bot
+TELEGRAM_MESSAGE_LIMIT = 4096
 
+
+def _get_bot_token() -> str:
     token = os.getenv('ALERT_BOT_TOKEN')
     if not token:
         logger.error("ALERT_BOT_TOKEN not found in environment variables")
         raise ValueError("ALERT_BOT_TOKEN is required")
+    return token
 
+
+def _get_api_base_url() -> str:
     custom_api_url = os.getenv('TELEGRAM_API_URL')
-    if custom_api_url:
+    return custom_api_url.rstrip('/') if custom_api_url else "https://api.telegram.org"
 
-        apihelper.API_URL = f"{custom_api_url}/bot{{0}}/{{1}}"
-        logger.info(f"Telegram bot using custom API: {custom_api_url}")
 
-    get_telegram_bot.bot = TeleBot(token)
-    logger.info("Telegram bot initialized")
-    return get_telegram_bot.bot
+def _split_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> List[str]:
+    if len(text) <= limit:
+        return [text]
 
-notification_bot = get_telegram_bot()
+    chunks = []
+    while len(text) > limit:
+        split_at = text.rfind("\n", 0, limit)
+        if split_at <= 0:
+            split_at = limit
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    if text:
+        chunks.append(text)
+    return chunks
 
 
 def send_telegram_message(chat_id: Union[str, int], message: str) -> bool:
-    try:
-        notification_bot.send_message(
-            chat_id=int(chat_id),
-            text=message,
-            parse_mode="Markdown",
+    url = f"{_get_api_base_url()}/bot{_get_bot_token()}/sendMessage"
+    chunks = _split_message(message)
+
+    if len(chunks) > 1:
+        logger.info(
+            f"Message for chat_id {chat_id} is {len(message)} chars, "
+            f"splitting into {len(chunks)} messages"
         )
+
+    try:
+        for i, chunk in enumerate(chunks, start=1):
+            if len(chunks) > 1:
+                chunk = f"({i}/{len(chunks)})\n{chunk}"
+
+            response = requests.post(
+                url,
+                json={
+                    "chat_id": int(chat_id),
+                    "text": chunk,
+                    "parse_mode": "Markdown",
+                },
+                timeout=(10, 30),
+            )
+            data = response.json() if response.content else {}
+            if response.status_code != 200 or not data.get("ok"):
+                logger.error(
+                    f"{send_telegram_message.__name__} error for chat_id {chat_id}: "
+                    f"HTTP {response.status_code} {response.text[:300]}"
+                )
+                return False
+
         logger.info(f"Message sent to chat_id {chat_id}")
         return True
     except Exception as e:
