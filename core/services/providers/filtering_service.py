@@ -44,7 +44,7 @@ class FilteringService(BaseFilteringService):
         
         filtered_df, _ = self.pick_by_fpm_std(filtered_df, SIGMAS=3)
         filtered_df, _ = self.pick_by_speed_model(filtered_df, SIGMAS=2.8)
-        filtered_df, _ = self.pick_by_spent_fuel_std(filtered_df, SIGMAS=2.5)
+        # filtered_df, _ = self.pick_by_spent_fuel_std(filtered_df, SIGMAS=2.5)
         filtered_df, _ = self.pick_low_speed(filtered_df)
         filtered_df, _ = self.pick_boundary_spent_fuel(filtered_df)
 
@@ -209,6 +209,7 @@ class FilteringService(BaseFilteringService):
                     pl.lit(0).cast(pl.Float32).alias("z_values_fpm"),
                     pl.lit(0).cast(pl.Float32).alias("sf_m_predicted"),
                     pl.lit(0).cast(pl.Float32).alias("sf_m_diff"),
+                    pl.lit(False).alias("is_spent_speed_legit"),
                     pl.lit(False).alias("is_leak_model_fpm"),
                 ]
             )
@@ -221,11 +222,12 @@ class FilteringService(BaseFilteringService):
                     (pl.col("fpm") - pl.col("fpm_model_predicted") - pl.col("fpm_model_mean"))
                     / pl.col("fpm_model_std")
                 ).alias("z_values_fpm"),
+                pl.col("spent_fuel").mul(0.8).gt(pl.col("sf_m")).alias("is_spent_speed_legit"),
             ]
         )
         result_df = result_df.with_columns(
             [
-            pl.col("z_values_fpm").gt(SIGMAS).alias("is_leak_model_fpm"),
+            (pl.col("z_values_fpm").gt(SIGMAS) & pl.col("is_spent_speed_legit")).alias("is_leak_model_fpm"),
             pl.col("sf_m").sub(pl.col("sf_m_predicted")).clip(lower_bound=0).alias("sf_m_diff")
             ]
         )
@@ -268,7 +270,7 @@ class FilteringService(BaseFilteringService):
         return result_df, result_df
 
     def pick_by_speed_model(
-        self, result_df: pl.DataFrame, SIGMAS: float = 2.5
+        self, result_df: pl.DataFrame, SIGMAS: float = 3, BARRIER_FUEL = 8
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по линейной модели pos_s -> spent_fuel"""
         if result_df["speed_model_std"].max() == 0:
@@ -281,8 +283,8 @@ class FilteringService(BaseFilteringService):
         else:
             result_df = result_df.with_columns(
                 [
-                    pl.col("spent_fuel")
-                    .gt(pl.col("speed_model_predicted").add(pl.col("speed_model_std").mul(SIGMAS)))
+                    ( pl.col("spent_fuel")
+                    .gt(pl.col("speed_model_predicted").add(pl.col("speed_model_std").mul(SIGMAS))) & pl.col("spent_fuel").gt(BARRIER_FUEL) )
                     .alias("is_leak_model_speed"),
                     pl.col("spent_fuel")
                     .sub(pl.col("speed_model_predicted"))

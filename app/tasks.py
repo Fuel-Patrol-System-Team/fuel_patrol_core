@@ -128,7 +128,7 @@ def sync_vehicles_master(self):
     priority=5,
     acks_late=True,
 )
-def sync_vehicles_task(self, provider_id: str, organization_id: str):
+def sync_vehicles_task(self, provider_id: str, organization_id: str, car_id: Optional[str] = None):
     report_query = None
 
     try:
@@ -142,7 +142,7 @@ def sync_vehicles_task(self, provider_id: str, organization_id: str):
         )
 
         sync_service = VehicleSyncService(provider, organization)
-        result = sync_service.sync_vehicles(report_query)
+        result = sync_service.sync_vehicles(report_query, car_id=car_id)
 
         if result["success"]:
             logger.info(

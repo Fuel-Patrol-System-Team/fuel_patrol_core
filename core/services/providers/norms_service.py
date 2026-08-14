@@ -200,7 +200,7 @@ class NormsService:
             (pl.col("pos_s") * (pl.col("dtime") / 3600)).alias("travel")
         )
 
-        logger.info("Группировка по 30-минутным интервалам...")
+        logger.info(f"Группировка по {PERIOD_2_MIN}-минутным интервалам...")
         try:
             result = (
                 anti_bug.group_by_dynamic(

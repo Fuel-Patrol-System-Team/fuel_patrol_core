@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, final
+from typing import Dict, Any, Optional, final
 
 from core.models import Car, DataProvider, Organization
 
@@ -18,7 +18,7 @@ class VehicleSyncService:
         self.organization = organization
         self.provider_instance = None
 
-    def sync_vehicles(self, report_query=None) -> Dict[str, Any]:
+    def sync_vehicles(self, report_query=None, car_id: Optional[str] = None) -> Dict[str, Any]:
         """Основной метод синхронизации с созданием отчета"""
         try:
 
@@ -54,6 +54,8 @@ class VehicleSyncService:
                     "success": False,
                     "error": error_msg
                 }
+            if car_id is not None:
+                vehicles = list(filter(lambda item: item["vehicleGuid"] == car_id , vehicles))
 
             logger.info(f"Получено {len(vehicles)} транспортных средств для обработки")
 

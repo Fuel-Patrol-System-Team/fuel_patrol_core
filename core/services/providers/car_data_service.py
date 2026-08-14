@@ -7,6 +7,7 @@ from pathlib import Path
 from django.conf import settings
 
 from app.tasks import SensorsValues
+from core.helpers.fuel_constants import DAYS_FOR_NORMS_PER_CAR
 from core.models import CarPrimary, Car
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,10 @@ class CarDataService:
             # Определяем все колонки топливных датчиков
             if df.shape[0] == 0:
                 return df
+            days = df["timestamp"].dt.truncate("1d").n_unique()
+            if days < DAYS_FOR_NORMS_PER_CAR:
+                logger.warning(f"Слишком машло данных для машины дней нужно {DAYS_FOR_NORMS_PER_CAR}, кол-во дней {days}")
+                return None
             fuel_cols = [c for c in df.columns if c.startswith("calc_sensors_fuel_level")]
             is_multi = len(fuel_cols) > 1
 

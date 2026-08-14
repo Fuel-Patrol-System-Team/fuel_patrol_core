@@ -121,7 +121,7 @@ def _modify_auto(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping:
 
 
 def _merge_amtr(df: pl.DataFrame, car: Car, mapping: list[str], sensor_mapping: dict[str, list[SensorMappingParserType]]):
-    df = df.with_columns(pl.col("amtr_x").add(pl.col("amtr_y")).add(pl.col("amtr_z")).alias("amtr")) 
+    df = df.with_columns(pl.col("amtr_x").abs().add(pl.col("amtr_y").abs()).add(pl.col("amtr_z").abs()).alias("amtr")) 
     mapping.remove("amtr_x")
     mapping.remove("amtr_y")
     mapping.remove("amtr_z")
@@ -176,14 +176,14 @@ def _chart_preprocess(df: pl.DataFrame, car: Car, mapping: list[str], sensor_map
         #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
         if df.shape[0] == 0:
             return df
-        df, lp, b, slop  = tarify_car_by_sensor(df, {"grades": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"]["grades"] }, sensor)
-    for i, sensor in enumerate(sensors):
         if sensor_mapping["calc_sensors_fuel_level"][i].get("metadata") is not None:
             degrees =sensor_mapping["calc_sensors_fuel_level"][i]["metadata"].get("median_degree")
             if degrees is not None:
                 df = df.with_columns(
                     pl.col(sensor).rolling_median(window_size=degrees)
                 )
+
+        df, lp, b, slop  = tarify_car_by_sensor(df, {"grades": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"]["grades"] }, sensor)
     df = reconcile_multisensor(df, sensor_mapping["calc_sensors_fuel_level"][-1]["multi_type"])
     if "calc_sensors_fuel_level" not in mapping:
         mapping.append("calc_sensors_fuel_level")

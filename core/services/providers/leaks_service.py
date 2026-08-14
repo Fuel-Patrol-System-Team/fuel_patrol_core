@@ -277,7 +277,6 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("ptime"),
                 pl.sum("es"),
                 pl.sum("spent_fuel_boundary"),
-                pl.sum("refuel_eligble"),
                 *aggs
             ]
         )
@@ -336,7 +335,6 @@ class LeaksService(BaseLeaksCalculator):
                 pl.col("energy").sum(),
                 pl.col("rpm_total").sum(),
                 pl.sum("spent_fuel_boundary"),
-                pl.sum("refuel_eligble"),
                 *aggs,
             ]
         )

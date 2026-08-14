@@ -280,6 +280,7 @@ def preprocess_basic_one(
     #     df = df.with_columns(
     #         pl.col(sensor).fill_null(strategy="forward")
     #     )
+    
 
     for sensor in calc_fuel_sensors:
         df = df.with_columns(
@@ -518,65 +519,7 @@ def preprocess_basic_one(
         pl.sum("voltage_diff")
 
     ]
-
-
-
-    df = df.group_by_dynamic(
-        index_column="timestamp", every=f"{ANTI_BUG_TIME_SECONDS}s", group_by="auto"
-    ).agg(
-        [
-            pl.col("calc_sensors_fuel_level").mean(),
-            pl.col("pos_s").mean(),
-            pl.col("pos_s").max().alias("pos_s_max"),
-            pl.col("spent_fuel").sum(),
-            pl.col("spent_fuel_2").sum(),
-            pl.col("fuel_level_standing").first().alias("f1"),
-            pl.col("fuel_level_standing").last().alias("f2"),
-            pl.col("dtime").sum(),
-            pl.col("jumps").sum(),
-            pl.col("amtr").sum(),
-            pl.col("rpm").mean(),
-            pl.col("load").sum(),
-            pl.col("fd").sum(),
-            pl.col("fuel_level_nan").sum(),
-            pl.col("no_sat_data").sum(),
-            pl.col("count").sum(),
-            pl.col("ign").max().alias("ign_max"),
-            pl.col("ign").sum(),
-            pl.col("ptime").sum(),
-            pl.col("dtime_m").sum(),
-            pl.col("rpm_total").sum(),
-            pl.col("energy").sum(),
-            pl.col("es").sum(),
-            pl.sum("spent_fuel_boundary"),
-            pl.sum("fuel_consumpt_spent"),
-            pl.first("fuel_consumpt").alias("fuel_consumpt_first"),
-            pl.last("fuel_consumpt").alias("fuel_consumpt_last"),
-            pl.first("spent_fuel_t"),
-            *aggs,
-        ]
-    )
-
-    # убрано т.к. убивает шум и заправки, занижая слив
-    # df = df.with_columns(
-    #     pl.when(
-    #         (
-    #             (pl.col("pos_s") == 0)
-    #             & (pl.col("spent_fuel") > 0)
-    #         )
-    #     )
-    #     .then(0)
-    #     .otherwise(pl.col("spent_fuel"))
-    #     .alias("spent_fuel")
-    # )
-
-    df = df.with_columns(
-        pl.col("spent_fuel")
-        .rolling_mean_by("timestamp", window_size="30m", closed="both")
-        .alias("spent_fuel_rolling")
-    )
-
-    # Plan B: smoothed signal + rising-span detection (robust to noise).
+        # Plan B: smoothed signal + rising-span detection (robust to noise).
     # 1. Short rolling median of the fuel level → fuel_smooth.
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
@@ -708,11 +651,70 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("is_fall_eligble").mul(pl.col("fall")).alias("fall_eligble")
     )
-    # Drop transient helper columns so they don't leak into downstream consumers.
-    df = df.drop(["_refuel_span_first", "_refuel_span_last"])
     aggs = [
         *aggs,
         pl.sum("fall_eligble"),
+        pl.sum("refuel_eligble")
     ]
+
+
+    df = df.group_by_dynamic(
+        index_column="timestamp", every=f"{ANTI_BUG_TIME_SECONDS}s", group_by="auto"
+    ).agg(
+        [
+            pl.col("calc_sensors_fuel_level").mean(),
+            pl.col("pos_s").mean(),
+            pl.col("pos_s").max().alias("pos_s_max"),
+            pl.col("spent_fuel").sum(),
+            pl.col("spent_fuel_2").sum(),
+            pl.col("fuel_level_standing").first().alias("f1"),
+            pl.col("fuel_level_standing").last().alias("f2"),
+            pl.col("dtime").sum(),
+            pl.col("jumps").sum(),
+            pl.col("amtr").sum(),
+            pl.col("rpm").mean(),
+            pl.col("load").sum(),
+            pl.col("fd").sum(),
+            pl.col("fuel_level_nan").sum(),
+            pl.col("no_sat_data").sum(),
+            pl.col("count").sum(),
+            pl.col("ign").max().alias("ign_max"),
+            pl.col("ign").sum(),
+            pl.col("ptime").sum(),
+            pl.col("dtime_m").sum(),
+            pl.col("rpm_total").sum(),
+            pl.col("energy").sum(),
+            pl.col("es").sum(),
+            pl.sum("spent_fuel_boundary"),
+            pl.sum("fuel_consumpt_spent"),
+            pl.first("fuel_consumpt").alias("fuel_consumpt_first"),
+            pl.last("fuel_consumpt").alias("fuel_consumpt_last"),
+            pl.first("spent_fuel_t"),
+            *aggs,
+        ]
+    )
+
+    # убрано т.к. убивает шум и заправки, занижая слив
+    # df = df.with_columns(
+    #     pl.when(
+    #         (
+    #             (pl.col("pos_s") == 0)
+    #             & (pl.col("spent_fuel") > 0)
+    #         )
+    #     )
+    #     .then(0)
+    #     .otherwise(pl.col("spent_fuel"))
+    #     .alias("spent_fuel")
+    # )
+
+    df = df.with_columns(
+        pl.col("spent_fuel")
+        .rolling_mean_by("timestamp", window_size="30m", closed="both")
+        .alias("spent_fuel_rolling")
+    )
+
+
+    # Drop transient helper columns so they don't leak into downstream consumers.
+    
 
     return df, reports, aggs

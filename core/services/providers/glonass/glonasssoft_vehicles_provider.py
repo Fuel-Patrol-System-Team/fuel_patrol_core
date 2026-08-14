@@ -166,7 +166,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
 
             multi_type = "can"
             if sensor_agg is None:
-                mulit_type = "tank" if "бак" in sensor_name else "can"
+                multi_type = "tank" if "бак" in sensor_name else "can"
             else:
                 multi_type =  "tank" if "SUM" == sensor_agg else "can"
                     
@@ -214,7 +214,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 else:
 
                     sensors_mapping.get("calc_sensors_fuel_level", []).append (
-                        SensorType(f"parameters.{key_part}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        SensorType(f"parameters.{key_part}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
                     )
             elif input_number:
                 if input_type == "Analog":
@@ -223,11 +223,11 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     if match is not None:
                         sensors_mapping.get("calc_sensors_fuel_level", []).append (
                             
-                        SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
                         )
                 else:
                     sensors_mapping.get("calc_sensors_fuel_level", []).append (
-                        SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
                 )
         return sensors_mapping  
         
