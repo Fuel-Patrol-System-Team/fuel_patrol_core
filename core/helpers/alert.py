@@ -189,7 +189,7 @@ def save_leak_alerts_from_rows(
             car=car,
             alert_type=Alert.AlertType.LEAK,
             payload={
-                "volume": round(float(row["volume"]), 2),
+                "volume": round(float(row["leak_display"]), 2),
                 "event_dt": event_dt.isoformat() if hasattr(event_dt, "isoformat") else str(event_dt),
                 "car_name": row["name"],
             },
