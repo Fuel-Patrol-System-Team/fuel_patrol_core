@@ -87,6 +87,8 @@ def prepare_fuel_data(car_report_id: UUID):
         "spent_fuel_boundary": computed.spent_fuel_boundary,
         "leak": leak,
         "ptime": computed.dtime,
+        "is_picked_leak": True,
+        "picked_by": report.picked_by,
     }
 
     logger.info(f"Prepared record for microservice: {record}")

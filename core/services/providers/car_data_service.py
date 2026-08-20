@@ -30,12 +30,12 @@ class CarDataService:
             fuel_cols = [c for c in df.columns if c.startswith("calc_sensors_fuel_level")]
             is_multi = len(fuel_cols) > 1
 
-            # Фильтр значений > 4096 для каждого датчика
             for col in fuel_cols:
                 df = df.with_columns(
                     pl.when(pl.col(col) > 4096)
                     .then(None)
                     .otherwise(pl.col(col))
+                    .cast(pl.Float64)
                     .alias(col)
                 )
 
