@@ -89,6 +89,13 @@ def prepare_fuel_data(car_report_id: UUID):
         "ptime": computed.dtime,
         "is_picked_leak": True,
         "picked_by": report.picked_by,
+        # Это ФИНАЛЬНЫЙ объём, который core реально показывает пользователю
+        # (CarReport.volume). Для критериев low_speed/fpm_model/speed_model/
+        # rpm_model объём считается НЕ из spent_fuel (он там может быть 0 или
+        # вообще не связан с сигналом, который сработал) - если explанировать
+        # по spent_fuel/z_values вместо report.volume, текст будет
+        # противоречить самому себе ("утечка подтверждена, но расход в норме").
+        "volume": report.volume,
     }
 
     logger.info(f"Prepared record for microservice: {record}")
