@@ -17,13 +17,27 @@ from core.serializers import AnalysisRequestSerializer
 
 logger = logging.getLogger(__name__)
 
+MILEAGE_COMPARE_FIELDS = ['mileage_start', 'mileage_end', 'travel', 'fraud', 'ign_miss', 'travel_fraud_jumps']
+MOTOHOURS_COMPARE_FIELDS = [
+    'motohours', 'motohours_idle', 'motohours_active', 'rpm_same_cases',
+    'rpm_same_cases_time', 'unefficient_cases', 'unefficient_time',
+    'sensor', 'sensor_check', 'motohours_fraud_by_sensor',
+]
+
+
+def _values_match(a, b) -> bool:
+    if a is None or b is None:
+        return a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-6
+    return a == b
+
 
 class MLReasoningService:
 
     def __init__(self, request_data: Dict[str, Any]):
         self.request_data = request_data
         self.service = request_data.get('service')
-        self._validate_input()
 
     def _validate_input(self):
         serializer = AnalysisRequestSerializer(data=self.request_data)
@@ -58,8 +72,13 @@ class MLReasoningService:
         payload = {"service": service, "data": data}
         logger.info(f"Sending to microservice: {payload}")
 
+        # ml_core обрабатывает записи пулом из 10 воркеров, каждый вызов
+        # DeepSeek может занимать до 30с (app/core/deepseek_api.py) - при
+        # большом батче нужно несколько раундов, фиксированные 60с не
+        # хватает уже на ~3 неделях данных.
+        request_timeout = max(60, 30 * (len(data) // 10 + 1) + 15)
         try:
-            response = requests.post(url, json=payload, headers=headers, timeout=60)
+            response = requests.post(url, json=payload, headers=headers, timeout=request_timeout)
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
@@ -94,6 +113,11 @@ class MLReasoningService:
             return timezone.make_aware(dt)
         return dt
 
+    @staticmethod
+    def _record_matches_report(service: str, record: Dict, report: Any) -> bool:
+        fields = MILEAGE_COMPARE_FIELDS if service == 'mileage' else MOTOHOURS_COMPARE_FIELDS
+        return all(_values_match(record.get(f), getattr(report, f)) for f in fields)
+
     def _check_existing_ai_responses(self, service: str, data: List[Dict]) -> Optional[Dict[str, Any]]:
         if service == 'fuel':
             return None
@@ -112,6 +136,12 @@ class MLReasoningService:
                 all_have_ok = False
                 break
             if report.ai_response_status != AIResponseStatus.OK:
+                all_have_ok = False
+                break
+            if not self._record_matches_report(service, record, report):
+                # Данные записи с последнего расчёта изменились (например, тот
+                # же день пересчитан в контексте другого диапазона дат) —
+                # старый ai_response для неё больше не валиден.
                 all_have_ok = False
                 break
             results.append(report.ai_response)
@@ -144,20 +174,16 @@ class MLReasoningService:
                         datetime=dt
                     )
                 except CarMileageReport.DoesNotExist:
-                    mileage_report = CarMileageReport(
-                        car_id=car,
-                        datetime=dt,
-                        mileage_start=record.get('mileage_start', 0),
-                        mileage_end=record.get('mileage_end', 0),
-                        travel=record.get('travel', 0),
-                        fraud=record.get('fraud', 0),
-                        ign_miss=record.get('ign_miss', 0),
-                        travel_fraud_jumps=record.get('travel_fraud_jumps', 0),
-                    )
-                if idx < len(results):
-                    update_ai_response(mileage_report, results[idx], ai_status)
-                else:
-                    update_ai_response(mileage_report, result, ai_status)
+                    mileage_report = CarMileageReport(car_id=car, datetime=dt)
+                # Поля данных обновляются каждый раз, а не только при создании -
+                # иначе повторный расчёт того же дня в другом диапазоне дат
+                # оставит в БД устаревшие значения, и следующая сверка в
+                # _check_existing_ai_responses будет вечно давать промах.
+                for field_name in MILEAGE_COMPARE_FIELDS:
+                    setattr(mileage_report, field_name, record.get(field_name, 0))
+                mileage_report.ai_response = results[idx] if idx < len(results) else result
+                mileage_report.ai_response_status = ai_status
+                mileage_report.save()
         elif service == 'motohours':
             results = result.get('results', [])
             for idx, record in enumerate(data):
@@ -169,27 +195,19 @@ class MLReasoningService:
                         datetime=dt
                     )
                 except CarMotohoursReport.DoesNotExist:
-                    motohours_report = CarMotohoursReport(
-                        car_id=car,
-                        datetime=dt,
-                        motohours=record.get('motohours', 0),
-                        motohours_idle=record.get('motohours_idle', 0),
-                        motohours_active=record.get('motohours_active', 0),
-                        rpm_same_cases=record.get('rpm_same_cases', 0),
-                        rpm_same_cases_time=record.get('rpm_same_cases_time', 0),
-                        unefficient_cases=record.get('unefficient_cases', 0),
-                        unefficient_time=record.get('unefficient_time', 0),
-                        sensor=record.get('sensor', 'none'),
-                        sensor_check=record.get('sensor_check', 'none'),
-                        motohours_fraud_by_sensor=record.get('motohours_fraud_by_sensor', 0),
-                    )
-                if idx < len(results):
-                    update_ai_response(motohours_report, results[idx], ai_status)
-                else:
-                    update_ai_response(motohours_report, result, ai_status)
+                    motohours_report = CarMotohoursReport(car_id=car, datetime=dt)
+                # См. комментарий в ветке mileage выше - поля данных обновляются
+                # каждый раз, а не только при создании записи.
+                for field_name in MOTOHOURS_COMPARE_FIELDS:
+                    default = 'none' if field_name in ('sensor', 'sensor_check') else 0
+                    setattr(motohours_report, field_name, record.get(field_name, default))
+                motohours_report.ai_response = results[idx] if idx < len(results) else result
+                motohours_report.ai_response_status = ai_status
+                motohours_report.save()
 
     def process(self) -> Dict[str, Any]:
         try:
+            self._validate_input()
             service, data, model_instance = self._prepare_payload()
 
             if service == 'fuel' and model_instance and model_instance.ai_response_status == AIResponseStatus.OK:
