@@ -93,11 +93,15 @@ def tarify_car_by_sensor(
     column="calc_sensors_fuel_level",
     grading="grades",
 ):
-    grades = cars["grades"]
+    grades = cars[grading]
     unique = list({tuple(sorted(d.items())): d for d in grades}.values())
     pairs = list(zip(unique, unique[1:]))
     mp = unique[0]
     lp = unique[-1]
+    df = df.with_columns(
+        pl.when(pl.col(column).le(mp["input"])).then(mp["output"]).otherwise(pl.col(column)).alias(column)
+    )
+        
     for fp, sp in pairs:
         slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
         b = fp["output"] - slope * fp["input"]
