@@ -267,10 +267,20 @@ class CarDataService:
             logger.error(f"Ошибка подготовки auto данных: {e}")
             raise
 
+    @staticmethod
+    def get_car_sensors(car: Car):
+        right_car = Car.objects.only("id").get(id_in_provider_system=car.id_in_provider_system)
+        sensors = SensorsValues.objects.filter(car_id=right_car.id, is_active=True).order_by("created_at")
+        sensors_mapping = {sv.key.key: [] for sv in sensors}
+        for sv in sensors:
+            if sv.key.key in sensors_mapping:
+                sensors_mapping[sv.key.key].append({"value": sv.value, "metadata": sv.metadata, "is_multi": sv.multi, "multi_type": sv.multi_type})
+        return sensors_mapping
+
 
     @staticmethod
-    def save_primary_to_db(car: Car, primary_df: pl.DataFrame, start_date: datetime = None,
-                           end_date: datetime = None) -> bool:
+    def save_primary_to_db(car: Car, primary_df: pl.DataFrame, start_date: datetime | None = None,
+                           end_date: datetime | None = None) -> bool:
         """
         Сохраняет первичные показатели в модель CarPrimary
         """

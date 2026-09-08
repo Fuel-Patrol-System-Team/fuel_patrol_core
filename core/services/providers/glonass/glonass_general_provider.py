@@ -16,7 +16,7 @@ from django.utils import timezone
 
 from core.models import Car, DataProvider, SensorsValues
 from core.services.providers.glonass.auth_token_store import glonass_auth_token_store
-from core.services.providers.glonass.constants import GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol, SensorMappingParserType
+from core.services.providers.glonass.constants import ALL_COLUMNS, FUEL_COLUMNS, GL_ACTION_KEYS, GL_PARAM_KEYS as GP, GLOBAL_GLONASS_ACTIONS, GLOBAL_GLONASS_PARAMS, GlonassAfterParsingProtocol, SensorMappingParserType
 from core.services.providers.glonass.glonass_expression_parser import GlonassExpresssionParser, _extract_var_names
 from core.services.providers.rate_limiter import global_rate_limiter
 
@@ -311,7 +311,7 @@ class GlonassGeneralProvider:
         if mode == "mileage":
             result = self._process_general(car_to_use,all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.voltage , GP.speed, GP.speed_gps,GP.mileage, GP.satellites, GP.fuel_consumpt, GP.rpm, GP.ignition, GP.msg_number],[GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)],  return_df=return_df)
         elif mode == "fuel":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.fuel_level, GP.event_code, GP.satellites, GP.rpm, GP.ignition, GP.msg_number , GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.fuel_consumpt], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, FUEL_COLUMNS, [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.rpm, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge),  GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
         elif mode == "motohours":
@@ -322,7 +322,7 @@ class GlonassGeneralProvider:
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
         elif mode == "raw_mapped":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.motohours, GP.mileage, GP.satellites, GP.msg_number, GP.voltage, GP.fuel_level, GP.ignition, GP.rpm,  GP.amtr_x, GP.amtr_y, GP.amtr_z, GP.longitude, GP.latitude, GP.fuel_consumpt, GP.event_code], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=True)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, ALL_COLUMNS, [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=True)
             if isinstance(result, pl.DataFrame):
                 _, path = self._save_to_csv(result, car_to_use)
                 self._archive_csv_file(path)
@@ -427,7 +427,7 @@ class GlonassGeneralProvider:
             logger.error(f"Ошибка запроса данных для {vehicle_id}: {e}")
             return None
 
-    def _build_use_cols(self, required_columns, sensors_mapping: Dict[str, list[SensorMappingParserType]] ):
+    def _build_use_cols(self, required_columns, sensors_mapping: Dict[str, list[SensorMappingParserType]], variables: dict[str, str] | None = None):
         usecols = ["auto"]
         for col in required_columns:
             param = GLOBAL_GLONASS_PARAMS.get(col)
@@ -442,6 +442,35 @@ class GlonassGeneralProvider:
                     usecols.extend(mapping)
                     continue
                 usecols.append(path_to_param)
+
+        # Колонки, на которые ссылаются выражения сенсоров, но которые не
+        # являются собственными path_to_param этих сенсоров. Без них
+        # filter_parameters отбросит нужные сырые данные, и вычисление
+        # выражений упадёт с ColumnNotFoundError.
+        if variables is not None:
+            for col in required_columns:
+                sensors = sensors_mapping.get(col.value)
+                if not sensors:
+                    continue
+                sensors = [sensors] if isinstance(sensors, str) else sensors
+                for sensor in sensors:
+                    meta = sensor.get("metadata")
+                    if not meta or not meta.get("expr"):
+                        continue
+                    for name in _extract_var_names(meta["expr"]):
+                        target = variables.get(name)
+                        # Неразрешённое имя: парсер fallback'нет на pl.col(name),
+                        # что легитимно вызовет ошибку при вычислении — не маскируем.
+                        if target is not None and target.startswith("adc"):
+                            target = f"flex_{target}"
+                        if target is None:
+                            continue
+                        # Промежуточная колонка вычисляется в loop'е выражений,
+                        # это не сырые данные — не запрашиваем у filter_parameters.
+                        if target.startswith("_expr_"):
+                            continue
+                        if target not in usecols:
+                            usecols.append(target)
         return usecols
 
     def _save_to_csv(self, df: pl.DataFrame, car: Car) -> tuple[bool, Path]:
@@ -501,6 +530,7 @@ class GlonassGeneralProvider:
 
         return messages
     def _process_unmapped(self, car: Car, messages: List[Dict[str, Any]], parameters: list[str] | None = None) -> pl.DataFrame:
+        # TODO: unnest then work on params, then do the filtering
         if parameters is not None:
             messages = self.filter_parameters(messages, parameters)
         # TODO: нужно что-то делать с этим магическим числом, если очень редко появляется сенсор, его система может пропустить
@@ -524,11 +554,6 @@ class GlonassGeneralProvider:
 
     def _process_general(self, car: Car, messages: List[Dict[str, Any]], sensors_mapping: Dict[str, list[SensorMappingParserType]], required_columns: List[GP], required_actions: List[GlonassAfterParsingProtocol | None] | None = None, return_df=False) -> pl.DataFrame | list[dict[str, Any]]:
         # TODO: first collect data from all sensors -> expr -> filter -> loop filters
-        use_cols = self._build_use_cols(required_columns, sensors_mapping )
-        
-        result = self._process_unmapped(car, messages, use_cols)
-        
-
         parameters_count = {}
         expr_parser = GlonassExpresssionParser()
 
@@ -552,7 +577,14 @@ class GlonassGeneralProvider:
                     if is_metadata and sensor.get("metadata", {}).get("pseudonym"):
                         pseudonym_to_sensor_key[sensor["metadata"]["pseudonym"]] = col.value
 
+        # Карта переменных выражений должна быть построена до _build_use_cols,
+        # т.к. теперь _build_use_cols извлекает колонки, на которые ссылаются
+        # выражения, и разрешает их через эту карту.
         variables = expr_parser.make_variables(sensors_mapping, expr_result_cols_map)
+
+        use_cols = self._build_use_cols(required_columns, sensors_mapping, variables)
+
+        result = self._process_unmapped(car, messages, use_cols)
 
         # TODO: loop для предзаполнения колонок
         for col in required_columns:
@@ -574,6 +606,18 @@ class GlonassGeneralProvider:
                     if ( path_to_param == "" or path_to_param not in result.columns):
                         result = result.with_columns(pl.lit(param.default_on_absence).alias(path_to_param))
                         continue
+
+        # Колонки, на которые ссылаются выражения, могли отсутствовать в данных
+        # сообщения (редкий сенсор, который ни разу не пришёл в этом батче).
+        # Polars безопасно авто-кастует Null-колонку к типу ко-операнда в
+        # coalesce/if/арифметике/shift, поэтому добавляем отсутствующие колонки
+        # из use_cols как null, чтобы вычисление выражений не падало с
+        # ColumnNotFoundError. Запускаем ПОСЛЕ предзаполнения: сенсоры, для
+        # которых действует default_on_absence, уже заполнены типизированным
+        # значением и здесь не считаются отсутствующими.
+        missing = [c for c in use_cols if c not in result.columns]
+        if missing:
+            result = result.with_columns([pl.lit(None).alias(c) for c in missing])
 
         # TODO: loop для парсинга выражений
         # Результаты выражений сохраняем в уникальные промежуточные колонки,

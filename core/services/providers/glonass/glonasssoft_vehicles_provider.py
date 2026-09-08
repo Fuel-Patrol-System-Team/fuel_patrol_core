@@ -214,7 +214,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 else:
 
                     sensors_mapping.get("calc_sensors_fuel_level", []).append (
-                        SensorType(f"parameters.{key_part}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        SensorType(f"parameters.{key_part}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
                     )
             elif input_number:
                 if input_type == "Analog":
@@ -223,11 +223,11 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     if match is not None:
                         sensors_mapping.get("calc_sensors_fuel_level", []).append (
                             
-                        SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
                         )
                 else:
                     sensors_mapping.get("calc_sensors_fuel_level", []).append (
-                        SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
+                        SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades, **metadata_postfix}, priority_default, is_disabled, is_multi=True, multi_type=multi_type)
                 )
         return sensors_mapping  
         
@@ -346,7 +346,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     else:
 
                         sensors_mapping.get("calc_sensors_fuel_level", []).append (
-                            SensorType(f"parameters.{key_part}", {"grades": sensor_grades}, 3, is_disabled)
+                            SensorType(f"parameters.{key_part}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                         )
                 elif input_number:
                     if input_type == "Analog":
@@ -355,11 +355,11 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         if match is not None:
                             sensors_mapping.get("calc_sensors_fuel_level", []).append (
                                 
-                            SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades}, 3, is_disabled)
+                            SensorType(f"parameters.{match.group(0)}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                             )
                     else:
                         sensors_mapping.get("calc_sensors_fuel_level", []).append (
-                            SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades}, 3, is_disabled)
+                            SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                     )
 
             elif sensor_type == "EngineRPM" or sensor_name.startswith("Обороты"):

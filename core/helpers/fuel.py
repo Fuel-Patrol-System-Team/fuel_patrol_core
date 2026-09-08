@@ -86,7 +86,6 @@ def fuel_spent_calculate(
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
-
 def tarify_car_by_sensor(
     df: pl.DataFrame,
     cars: dict[str, Any],
@@ -101,6 +100,11 @@ def tarify_car_by_sensor(
     df = df.with_columns(
         pl.when(pl.col(column).le(mp["input"])).then(mp["output"]).otherwise(pl.col(column)).alias(column)
     )
+    # Нормализация через медиану, ранее была отдельно из-за низких периодов которые не сильно влияли на результаты
+    degrees = cars.get("degrees", None)
+    if degrees is not None:
+        df = df.with_columns(pl.col(column).rolling_median(window_size=degrees))
+
         
     for fp, sp in pairs:
         slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
@@ -116,7 +120,8 @@ def tarify_car_by_sensor(
         .then(pl.col(column).mul(slope).add(b))
         .otherwise(pl.col(column))
     )
-    df = df.filter(pl.col(column).ge(mp["output"]))
+    # TODO: подумать если ли кейс при котором это условие может быть полезно и адаптировать для всех видов тарировок
+    # df = df.filter(pl.col(column).ge(mp["output"]))
 
     df = df.with_columns(
         pl.when(pl.col(column).gt(lp["input"]))
@@ -360,8 +365,11 @@ def preprocess_basic_one(
                 print("Car has problems")
     for i, sensor in enumerate(calc_fuel_sensors):
         degrees = cars.get("median_degrees")
-        if len(degrees) != 0 and degrees is not None and degrees[i] is not None:
-            df = df.with_columns(pl.col(sensor).rolling_median(window_size=degrees[i]))
+        try:
+            if len(degrees) != 0 and degrees is not None and degrees[i] is not None:
+                df = df.with_columns(pl.col(sensor).rolling_median(window_size=degrees[i]))
+        except IndexError:
+            pass
 
     df = reconcile_multisensor(df, cars["fuel_sensor_multi_type"])
     if not is_fuel_processing:

@@ -11,7 +11,7 @@ from celery import chain, shared_task
 from app.celery import app as celery_app
 
 from app.settings import DEBUG
-from core.admin import CarPrimary, SensorsValues
+from core.admin import SensorsValues
 from core.helpers.alert import get_tg_users_for_org_user, get_unsent_alerts_by_org, build_digest_message, \
     save_bad_data_alerts_bulk
 from core.helpers.fuel import fuel_spent_calculate
@@ -128,7 +128,7 @@ def sync_vehicles_master(self):
     priority=5,
     acks_late=True,
 )
-def sync_vehicles_task(self, provider_id: str, organization_id: str):
+def sync_vehicles_task(self, provider_id: str, organization_id: str, car_id: str | None = None):
     report_query = None
 
     try:
@@ -142,7 +142,7 @@ def sync_vehicles_task(self, provider_id: str, organization_id: str):
         )
 
         sync_service = VehicleSyncService(provider, organization)
-        result = sync_service.sync_vehicles(report_query)
+        result = sync_service.sync_vehicles(report_query, car_id)
 
         if result["success"]:
             logger.info(

@@ -18,7 +18,7 @@ class VehicleSyncService:
         self.organization = organization
         self.provider_instance = None
 
-    def sync_vehicles(self, report_query=None) -> Dict[str, Any]:
+    def sync_vehicles(self, report_query=None, specific_car=None) -> Dict[str, Any]:
         """Основной метод синхронизации с созданием отчета"""
         try:
 
@@ -54,6 +54,11 @@ class VehicleSyncService:
                     "success": False,
                     "error": error_msg
                 }
+            
+            if specific_car is not None:
+                vehicles = list(filter(lambda v: v["vehicleGuid"] == specific_car, vehicles))
+                logger.warning("Для синхронизация была выбрана конкретная машина.")
+
 
             logger.info(f"Получено {len(vehicles)} транспортных средств для обработки")
 

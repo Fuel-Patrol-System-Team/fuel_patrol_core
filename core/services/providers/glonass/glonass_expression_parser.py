@@ -7,14 +7,20 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Ключевые слова грамматики, которые не являются именами переменных
-_GRAMMAR_KEYWORDS = {"AND", "OR", "NOT"}
+# Ключевые слова грамматики, которые не являются именами переменных.
+# Хранятся в нижнем регистре, т.к. грамматика регистронезависима для логических
+# операторов (AND/OR/NOT могут быть записаны в любом регистре).
+_GRAMMAR_KEYWORDS = {"and", "or", "not"}
+
+# Поддерживаемые функции (в нижнем регистре). Используются для исключения
+# имён функций из списка переменных, а также для диспетчеризации в трансформере.
+_GRAMMAR_FUNCTIONS = {"if", "coalesce", "prev"}
 
 
 def _extract_var_names(expr: str) -> set[str]:
-    """Извлекает имена переменных из выражения, исключая ключевые слова грамматики."""
+    """Извлекает имена переменных из выражения, исключая ключевые слова грамматики и имена функций."""
     names = set(re.findall(r"[a-zA-Z_]\w*", expr))
-    return names - _GRAMMAR_KEYWORDS
+    return names - _GRAMMAR_KEYWORDS - _GRAMMAR_FUNCTIONS
 
 
 class GlonassExpresssionParser:
@@ -53,15 +59,55 @@ class GlonassExpresssionParser:
                         else:
                             variables[ps] = sensor["value"]
                 if sensor.get("value") is not None and sensor.get("value") != "":
-                    variables[sensor["value"].replace("parameters.", "")] = sensor["value"]
+                    raw = sensor["value"]
+                    short = raw.replace("parameters.", "")
+                    variables[short] = raw
+                    # Glonass допускает обращение к flex_adcN по короткому имени
+                    # adcN в выражениях (напр. `adc3` вместо `flex_adc3`). Если
+                    # сырая колонка — `flex_adcN`, регистрируем алиас `adcN`,
+                    # чтобы такие ссылки разрешались в реальную колонку. Алиас
+                    # не перетирает уже зарегистрированное имя (явный сенсор
+                    # `adcN` имеет приоритет), а также не перетирается сам, т.к.
+                    # добавляется до обработки последующих сенсоров.
+                    flex_match = re.search(r"^flex_adc(\d+)$", short)
+                    if flex_match is not None:
+                        alias = f"adc{flex_match.group(1)}"
+                        if alias not in variables:
+                            variables[alias] = raw
         return variables
 
     def parse_expression(self, sensor_name: str, sensor_param: str,  expr: str, variables: dict[str, str], df: pl.DataFrame ):
         parser = self._build_language_parser(variables)
         try:
+            # Guardrail: для каждой переменной, упомянутой в выражении, разрешаем
+            # целевую колонку (через variables, иначе — само имя) и если её нет в
+            # DataFrame, добавляем временную null-колонку, чтобы выражение
+            # вычислялось, а не падало с ColumnNotFoundError. Отсутствующие
+            # параметры (напр. adcN / flex_adcN, которых нет в терминальных
+            # данных) дают null, корректно обрабатываемый coalesce/if/prev.
+            # Временные null-колонки удаляются после вычисления — схема
+            # возвращаемого DataFrame остаётся прежней (+ только sensor_param).
+            missing_pairs: list[tuple[str, str]] = []
+            seen: set[str] = set()
+            for v in _extract_var_names(expr):
+                col = variables.get(v, v)
+                if col not in df.columns and col not in seen:
+                    seen.add(col)
+                    missing_pairs.append((v, col))
+            work_df = df
+            if missing_pairs:
+                logger.warning(
+                    "parse_expression: отсутствуют колонки для выражения "
+                    "sensor=%r param=%r expr=%r — добавлены null-колонки: %s",
+                    sensor_name, sensor_param, expr,
+                    ", ".join(f"{v}->{c}" for v, c in missing_pairs),
+                )
+                work_df = df.with_columns([pl.lit(None).alias(c) for _, c in missing_pairs])
             expression = cast(pl.Expr, parser.parse(expr) )
-            copy = df.with_columns(expression.alias(sensor_param))
-            return copy
+            result = work_df.with_columns(expression.alias(sensor_param))
+            if missing_pairs:
+                result = result.drop([c for _, c in missing_pairs])
+            return result
         except BaseException as exception:
             logger.error(f"Exception when trying to parse expresssion: {exception!r} expr={expr!r}")
             return df
@@ -70,9 +116,9 @@ class GlonassExpresssionParser:
     grammar = r"""
         ?start: expr
 
-        ?expr: expr "AND" expr   -> and_op
-            | expr "OR" expr    -> or_op
-            | "NOT" expr        -> not_op
+        ?expr: expr _AND expr   -> and_op
+            | expr _OR expr    -> or_op
+            | _NOT expr        -> not_op
             | comparison
             | arith
 
@@ -86,11 +132,28 @@ class GlonassExpresssionParser:
             | term "/" factor   -> div_op
             | factor
 
-        ?factor: NAME           -> var
+        ?factor: func
+            | NAME           -> var
             | NUMBER           -> number
             | STRING           -> string
             | "-" factor       -> neg_op
             | "(" expr ")"
+
+        func: NAME "(" [args] ")"
+
+        args: expr ("," expr)*
+
+        // Логические операторы регистронезависимы (AND/and/And и т.д.).
+        // Классы символов вместо встроенного флага (?i), т.к. lark объединяет
+        // все терминалы-regex в один шаблон, где inline-флаги ломают компиляцию.
+        // Приоритет выше, чем у NAME, чтобы `and`/`or`/`not` распознавались
+        // как операторы, а не как имена переменных (при равной длине лексемы).
+        // Префикс `_` фильтрует терминал из дерева разбора: lark не передаёт
+        // такие токены в трансформер, поэтому and_op/or_op/not_op получают
+        // только операнды (как это было со строковыми литералами ранее).
+        _AND.10: /[Aa][Nn][Dd]/
+        _OR.10:  /[Oo][Rr]/
+        _NOT.10: /[Nn][Oo][Tt]/
 
         NAME: /[a-zA-Z_]\w*/
         OP: ">" | "<" | ">=" | "<=" | "==" | "!="
@@ -153,6 +216,40 @@ class GlonassExpresssionParser:
 
         def not_op(self, items):
             return ~items[0]
+
+        def args(self, items):
+            """Список аргументов функции (литерал-запятые отфильтровываются lark)."""
+            return list(items)
+
+        def func(self, items):
+            """Диспетчеризация вызова функции по имени (регистронезависимо)."""
+            name = str(items[0]).lower()
+            args = items[1] if len(items) > 1 else []
+
+            if name == "if":
+                if len(args) != 3:
+                    raise ValueError(
+                        f"if() expects exactly 3 arguments (cond, then, else), got {len(args)}"
+                    )
+                cond, then, otherwise = args
+                return pl.when(cond).then(then).otherwise(otherwise)
+
+            if name == "coalesce":
+                if not args:
+                    raise ValueError("coalesce() expects at least one argument")
+                return pl.coalesce(args)
+
+            if name == "prev":
+                if len(args) != 1:
+                    raise ValueError(
+                        f"prev() expects exactly 1 argument (column), got {len(args)}"
+                    )
+                # Значение колонки из предыдущей строки (shift на -1):
+                # для первой строки возвращает null, что корректно
+                # распространяется через if/and в otherwise().
+                return args[0].shift(-1)
+
+            raise ValueError(f"Unknown function: {name!r}")
 
 
 
