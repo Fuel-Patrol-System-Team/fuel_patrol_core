@@ -265,6 +265,7 @@ class CarConsumption(models.Model):
     max_fuel = models.FloatField(default=2000.0)
     valid_period = models.DateField(**NULLABLE)
     json_data = models.JSONField(**NULLABLE)
+    metadata = models.JSONField(**NULLABLE)
 
     class Meta:
         verbose_name = "Car Consumption"

@@ -39,7 +39,8 @@ class CarConsumptionService:
                     'speed_etalon': norm_data.get('speed_etalon', 60.0),
                     'max_fuel': norm_data.get('max_fuel', 2000.0),
                     'valid_period': timezone.now().date() + timedelta(days=365),
-                    'json_data': norm_data
+                    'json_data': norm_data,
+                    'metadata': None
                 }
             )
 

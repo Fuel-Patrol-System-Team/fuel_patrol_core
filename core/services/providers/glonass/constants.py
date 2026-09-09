@@ -204,7 +204,7 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
         True, "", "fuel_consumpt", None, False, 0, 0
     ),
     GL_PARAM_KEYS.temp: GlonassParameter(
-        True, "temp1", "temp", None, False, None, None
+        True, "parameters.temp1", "temp", None, False, None, None
     ),
     GL_PARAM_KEYS.course: GlonassParameter(
         True, "course", "course", None, False, None, None

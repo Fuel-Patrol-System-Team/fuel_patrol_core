@@ -493,6 +493,7 @@ def preprocess_basic_one(
             .otherwise(0)
             .cast(pl.Int16)
             .alias("jumps"),
+            
         ]
     )
 
@@ -527,7 +528,8 @@ def preprocess_basic_one(
     aggs = [
         *aggs,
         pl.sum("_fc_sign"),
-        pl.sum("voltage_diff")
+        pl.sum("voltage_diff"),
+        pl.mean("temp")
 
     ]
 
