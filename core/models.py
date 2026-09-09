@@ -192,8 +192,35 @@ class CoreNotification(models.Model):
     def __str__(self):
         return f"{self.target} - {self.type}"
 
+class CarModel(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        verbose_name = "Car model"
+        verbose_name_plural = "Car models"
+        ordering = ["label"]
+    
+    def __str__(self) -> str:
+        return self.label
+
+class CarModelSpecification(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    label = models.CharField(max_length=255)
+
+    class Meta:
+        verbose_name = "Car model specification"
+        verbose_name_plural = "Car model specifications"
+        ordering = ["label"]
+    
+    def __str__(self) -> str:
+        return self.label
 
 class Car(models.Model):
+    class FuelType(models.TextChoices):
+        DIESEL = "Дизель", "Дизель"
+        PETROL = "Бензин", "Бензин"
+        GAS = "Газ", "Газ"
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     id_in_provider_system = models.IntegerField(default=0)
     car_unit = models.ForeignKey("CarUnit", on_delete=models.SET_NULL, **NULLABLE)
@@ -208,6 +235,10 @@ class Car(models.Model):
     is_tarrified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     list_id = models.ForeignKey("UserCarList", on_delete=models.SET_NULL, **NULLABLE)
+    model = models.ForeignKey("CarModel", on_delete=models.SET_NULL, **NULLABLE)
+    model_specs = models.ForeignKey("CarModelSpecification", on_delete=models.SET_NULL, **NULLABLE)
+    engine_power = models.IntegerField(null=True, blank=True)
+    fuel_type = models.CharField(null=True, blank=True, choices=FuelType.choices)
 
     class Meta:
         verbose_name = "Car"
