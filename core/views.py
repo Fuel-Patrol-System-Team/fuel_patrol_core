@@ -15,6 +15,7 @@ from celery import group
 
 from django.shortcuts import render
 
+import django_filters
 from django_filters.rest_framework import DjangoFilterBackend
 from drf_yasg import openapi
 
@@ -37,7 +38,6 @@ from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
-from .filters import CarFilter
 from .helpers.agg import validate_agg
 from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
@@ -60,7 +60,6 @@ from .models import CarMotohoursReport, ComputedData, Organization, ParsingCarSt
     CarFuelReport, \
     APICalculationLog, CarModel, CarModelSpecification
 from core.helpers.pagination import StandardResultsSetPagination
-from core.filters import CarFilter
 from core.helpers.rest import (
     CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, FUELREPORT_REQUEST_SCHEMA,
     LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -158,6 +157,34 @@ def _fuel_leaked_annotation():
         output_field=IntegerField(),
     )
     return Coalesce(leaked_sum, 0)
+
+
+class CarFilter(django_filters.FilterSet):
+    name = django_filters.CharFilter(field_name="name", lookup_expr="exact")
+    model = django_filters.UUIDFilter(field_name="model_id")
+    model_specs = django_filters.UUIDFilter(field_name="model_specs_id")
+    model_label = django_filters.CharFilter(field_name="model__label", lookup_expr="icontains")
+    model_specs_label = django_filters.CharFilter(field_name="model_specs__label", lookup_expr="icontains")
+    fuel_type = django_filters.ChoiceFilter(choices=Car.FuelType.choices)
+    engine_power = django_filters.NumberFilter(field_name="engine_power", lookup_expr="exact")
+    engine_power_min = django_filters.NumberFilter(field_name="engine_power", lookup_expr="gte")
+    engine_power_max = django_filters.NumberFilter(field_name="engine_power", lookup_expr="lte")
+
+    class Meta:
+        model = Car
+        fields = [
+            "name",
+            "is_active",
+            "is_tarrified",
+            "model",
+            "model_specs",
+            "model_label",
+            "model_specs_label",
+            "fuel_type",
+            "engine_power",
+            "engine_power_min",
+            "engine_power_max",
+        ]
 
 
 class DailyLeaksCountAPIView(APIView):
