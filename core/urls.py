@@ -19,7 +19,9 @@ from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, Ca
     StartTerminalMessagesParsingView, CarUnitListAPIView, UserCarListListView, UserCarListDetailView, \
     CarSensorsRawDataAPIView, CarMileageReportListAPIView, CarMileageReportDetailAPIView, TelegramRegisterAPIView, \
     CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView, \
-    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView, MLReasoningView, StopsMileageAPIView
+    CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView, MLReasoningView, StopsMileageAPIView, \
+    CarModelListCreateAPIView, CarModelDetailAPIView, CarModelSpecificationListCreateAPIView, \
+    CarModelSpecificationDetailAPIView
 
 urlpatterns = [
 
@@ -50,6 +52,11 @@ urlpatterns = [
     path('org-users/<uuid:pk>', OrgUserDetailAPIView.as_view(), name='orguser-detail'),
     path("cars/bySensorGroup", CarListBySensorGroupAPIView.as_view(), name="car-sensor-list"),
     path('cars', CarListAPIView.as_view(), name='car-list'),
+
+    path('cars/models', CarModelListCreateAPIView.as_view(), name='car-model-list'),
+    path('cars/models/<uuid:pk>', CarModelDetailAPIView.as_view(), name='car-model-detail'),
+    path('cars/model-specs', CarModelSpecificationListCreateAPIView.as_view(), name='car-model-specs-list'),
+    path('cars/model-specs/<uuid:pk>', CarModelSpecificationDetailAPIView.as_view(), name='car-model-specs-detail'),
 
     path('cars/<uuid:pk>', CarDetailAPIView.as_view(), name='car-detail'),
     path('cars/car-units', CarUnitListAPIView.as_view(), name='car-units'),

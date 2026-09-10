@@ -194,25 +194,25 @@ class CoreNotification(models.Model):
 
 class CarModel(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    label = models.CharField(max_length=255, unique=True)
+    label = models.CharField(max_length=255, unique=True, verbose_name="Марка")
 
     class Meta:
-        verbose_name = "Car model"
-        verbose_name_plural = "Car models"
+        verbose_name = "Марка автомобиля"
+        verbose_name_plural = "Марки автомобилей"
         ordering = ["label"]
-    
+
     def __str__(self) -> str:
         return self.label
 
 class CarModelSpecification(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    label = models.CharField(max_length=255)
+    label = models.CharField(max_length=255, verbose_name="Модель")
 
     class Meta:
-        verbose_name = "Car model specification"
-        verbose_name_plural = "Car model specifications"
+        verbose_name = "Модель автомобиля"
+        verbose_name_plural = "Модели автомобилей"
         ordering = ["label"]
-    
+
     def __str__(self) -> str:
         return self.label
 
@@ -235,10 +235,18 @@ class Car(models.Model):
     is_tarrified = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
     list_id = models.ForeignKey("UserCarList", on_delete=models.SET_NULL, **NULLABLE)
-    model = models.ForeignKey("CarModel", on_delete=models.SET_NULL, **NULLABLE)
-    model_specs = models.ForeignKey("CarModelSpecification", on_delete=models.SET_NULL, **NULLABLE)
-    engine_power = models.IntegerField(null=True, blank=True)
-    fuel_type = models.CharField(null=True, blank=True, choices=FuelType.choices)
+    model = models.ForeignKey(
+        "CarModel", on_delete=models.SET_NULL, related_name="cars",
+        verbose_name="Марка", **NULLABLE
+    )
+    model_specs = models.ForeignKey(
+        "CarModelSpecification", on_delete=models.SET_NULL, related_name="cars",
+        verbose_name="Модель", **NULLABLE
+    )
+    engine_power = models.IntegerField(null=True, blank=True, verbose_name="Мощность двигателя, л.с.")
+    fuel_type = models.CharField(
+        max_length=16, null=True, blank=True, choices=FuelType.choices, verbose_name="Тип топлива"
+    )
 
     class Meta:
         verbose_name = "Car"

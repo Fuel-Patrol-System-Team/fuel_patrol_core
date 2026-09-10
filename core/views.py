@@ -5,7 +5,8 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 import polars as pl
 from django.core.exceptions import ObjectDoesNotExist, ValidationError, PermissionDenied
-from django.db.models import F, Q, Count, Prefetch, Subquery, OuterRef
+from django.db.models import F, Q, Count, Prefetch, Subquery, OuterRef, Sum, IntegerField
+from django.db.models.functions import Coalesce
 
 import pandas
 import polars
@@ -23,7 +24,7 @@ from rest_framework.response import Response
 
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView, RetrieveUpdateDestroyAPIView, \
-    ListCreateAPIView
+    ListCreateAPIView, RetrieveUpdateAPIView
 
 from rest_framework import status
 import logging
@@ -36,6 +37,7 @@ from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
+from .filters import CarFilter
 from .helpers.agg import validate_agg
 from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
@@ -56,8 +58,9 @@ from .models import CarMotohoursReport, ComputedData, Organization, ParsingCarSt
     Driver, DataProvider, \
     CarBadData, Language, CarUnit, SensorsValues, SensorsKeyLocalization, UserCarList, CarMileageReport, TelegramUser, \
     CarFuelReport, \
-    APICalculationLog
+    APICalculationLog, CarModel, CarModelSpecification
 from core.helpers.pagination import StandardResultsSetPagination
+from core.filters import CarFilter
 from core.helpers.rest import (
     CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, FUELREPORT_REQUEST_SCHEMA,
     LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
@@ -77,7 +80,7 @@ from .serializers import (
     UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
-    CarOutputSerializer,
+    CarOutputSerializer, CarSpecsUpdateSerializer, CarModelSerializer, CarModelSpecificationSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
     DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
@@ -142,6 +145,19 @@ def _car_prefetch(language_code: str, prefix: str = ''):
 
 def _get_language_code(user) -> str:
     return user.active_language.code if getattr(user, 'active_language', None) else 'ru'
+
+
+def _fuel_leaked_annotation():
+    leaked_sum = Subquery(
+        CarReport.objects.filter(
+            car_id=OuterRef('car_id'),
+            status=True,
+            datetime__gte=OuterRef('start_moment'),
+            datetime__lte=OuterRef('end_moment'),
+        ).values('car_id').annotate(total=Sum('volume')).values('total')[:1],
+        output_field=IntegerField(),
+    )
+    return Coalesce(leaked_sum, 0)
 
 
 class DailyLeaksCountAPIView(APIView):
@@ -761,8 +777,8 @@ class CarListAPIView(ListAPIView):
     serializer_class = CarOutputSerializer
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, SearchFilter]
-    filterset_fields = ['name', 'is_active', 'is_tarrified']
-    search_fields = ['name', 'description', 'car_unit__name']
+    filterset_class = CarFilter
+    search_fields = ['name', 'description', 'car_unit__name', 'model__label', 'model_specs__label']
 
     def get_queryset(self):
         if _ANON_GUARD(self):
@@ -771,7 +787,7 @@ class CarListAPIView(ListAPIView):
         language_code = _get_language_code(user)
         return Car.objects.filter(
             data_providers__org_id=user.org.id
-        ).select_related('car_unit').prefetch_related(
+        ).select_related('car_unit', 'model', 'model_specs').prefetch_related(
             *_car_prefetch(language_code)
         ).distinct().order_by('id')
 
@@ -918,10 +934,15 @@ class ParsingStatsUpdateRpm(APIView):
         return success_response({"updated": result}, 200)
 
 
-class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
-    permission_classes = [IsOrgMember]
-    serializer_class = CarOutputSerializer
+class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateAPIView):
+    permission_classes = [IsDemoUser, IsOrgMember]
     lookup_field = 'pk'
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_serializer_class(self):
+        if self.request and self.request.method == 'PATCH':
+            return CarSpecsUpdateSerializer
+        return CarOutputSerializer
 
     def get_queryset(self):
         if _ANON_GUARD(self):
@@ -929,7 +950,7 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
         language_code = _get_language_code(self.request.user)
         return Car.objects.filter(
             data_providers__org_id=self.request.user.org
-        ).select_related('car_unit').prefetch_related(
+        ).select_related('car_unit', 'model', 'model_specs').prefetch_related(
             *_car_prefetch(language_code)
         ).distinct()
 
@@ -951,6 +972,58 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
                 'name': car.car_unit.name
             }
         return context
+
+
+class CarModelListCreateAPIView(ListCreateAPIView):
+    permission_classes = [IsDemoUser, IsAuthenticated]
+    serializer_class = CarModelSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['label']
+    search_fields = ['label']
+
+    def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarModel.objects.none()
+        return CarModel.objects.all().order_by('label')
+
+
+class CarModelDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateAPIView):
+    permission_classes = [IsDemoUser, IsAuthenticated]
+    serializer_class = CarModelSerializer
+    lookup_field = 'pk'
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarModel.objects.none()
+        return CarModel.objects.all()
+
+
+class CarModelSpecificationListCreateAPIView(ListCreateAPIView):
+    permission_classes = [IsDemoUser, IsAuthenticated]
+    serializer_class = CarModelSpecificationSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ['label']
+    search_fields = ['label']
+
+    def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarModelSpecification.objects.none()
+        return CarModelSpecification.objects.all().order_by('label')
+
+
+class CarModelSpecificationDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateAPIView):
+    permission_classes = [IsDemoUser, IsAuthenticated]
+    serializer_class = CarModelSpecificationSerializer
+    lookup_field = 'pk'
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_queryset(self):
+        if _ANON_GUARD(self):
+            return CarModelSpecification.objects.none()
+        return CarModelSpecification.objects.all()
 
 
 class CarUnitListAPIView(ListAPIView):
@@ -986,7 +1059,7 @@ class CarConsumptionListAPIView(ListAPIView):
         language_code = _get_language_code(user)
         return CarConsumption.objects.filter(
             car_id__data_providers__org_id=user.org
-        ).select_related('car_id__car_unit').prefetch_related(
+        ).select_related('car_id__car_unit', 'car_id__model', 'car_id__model_specs').prefetch_related(
             *_car_prefetch(language_code, prefix='car_id__')
         ).order_by('id')
 
@@ -1041,7 +1114,7 @@ class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
         language_code = _get_language_code(self.request.user)
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
-        ).select_related('car_id__car_unit').prefetch_related(
+        ).select_related('car_id__car_unit', 'car_id__model', 'car_id__model_specs').prefetch_related(
             *_car_prefetch(language_code, prefix='car_id__')
         ).order_by('datetime')
 
@@ -1062,7 +1135,7 @@ class CarReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConverte
             return CarReport.objects.none()
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
-        ).select_related('car_id__car_unit')
+        ).select_related('car_id__car_unit', 'car_id__model', 'car_id__model_specs')
 
     def retrieve(self, request, *args, **kwargs):
         response = super().retrieve(request, *args, **kwargs)
@@ -1083,7 +1156,9 @@ class CarFuelReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
             return CarFuelReport.objects.none()
         return CarFuelReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
-        ).select_related('car_id').distinct().order_by('-start_moment')
+        ).select_related('car_id').annotate(
+            fuel_leaked=_fuel_leaked_annotation()
+        ).distinct().order_by('-start_moment')
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -1101,7 +1176,9 @@ class CarFuelReportDetailAPIView(SwaggerSafeQuerysetMixin, TimestampTimezoneConv
             return CarFuelReport.objects.none()
         return CarFuelReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org.id
-        ).select_related('car_id').distinct()
+        ).select_related('car_id').annotate(
+            fuel_leaked=_fuel_leaked_annotation()
+        ).distinct()
 
     def retrieve(self, request, *args, **kwargs):
         response = super().retrieve(request, *args, **kwargs)
@@ -1184,7 +1261,7 @@ class DriverListAPIView(ListAPIView):
             return Driver.objects.none()
         return Driver.objects.filter(
             driver_cars__car_id__data_providers__org_id=self.request.user.org
-        ).prefetch_related('driver_cars__car_id').order_by('id')
+        ).prefetch_related('driver_cars__car_id', 'driver_cars__car_id__model', 'driver_cars__car_id__model_specs').order_by('id')
 
 
 class DriverDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveAPIView):
@@ -1264,7 +1341,7 @@ class CarLeaksAPIView(ListAPIView):
         return CarReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org,
             status=True
-        ).select_related('car_id__car_unit').prefetch_related(
+        ).select_related('car_id__car_unit', 'car_id__model', 'car_id__model_specs').prefetch_related(
             *_car_prefetch(language_code, prefix='car_id__')
         ).order_by('-datetime')
 

@@ -22,7 +22,7 @@ from core.models import (
     SensorsKey, SensorsValues, SensorsKeyLocalization, ReportQueryDetails,
     UnitService, CarUnit, UserCarList, CarPrimary, CarMileageReport,
     TelegramUser, CarFuelReport, CoreNotification, ParsingCarStats, ComputedData, AlertSubscription, Alert,
-    APICalculationLog, CarMotohoursReport,
+    APICalculationLog, CarMotohoursReport, CarModel, CarModelSpecification,
 )
 from core.helpers.widgets import UnfoldExportForm, UnfoldImportForm, UnfoldPeriodicTaskForm
 from django.utils import timezone
@@ -585,18 +585,72 @@ class CoreNotificationAdmin(ImportExportMixin, ModelAdmin):
 
 
 # ─────────────────────────────────────────────────────────────
+# CarModel / CarModelSpecification (марка и модель)
+# ─────────────────────────────────────────────────────────────
+@admin.register(CarModel)
+class CarModelAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('label', 'cars_count_display')
+    search_fields = ('label',)
+    ordering = ('label',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    list_per_page = 50
+    fields = ('label',)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(total_cars=Count('cars', distinct=True))
+
+    def cars_count_display(self, obj):
+        count = getattr(obj, 'total_cars', 0)
+        if count:
+            url = reverse('admin:core_car_changelist') + f'?model__id__exact={obj.id}'
+            return _link(url, f'{count} машин(ы)')
+        return '0'
+
+    cars_count_display.short_description = "Машин с этой маркой"
+    cars_count_display.admin_order_field = 'total_cars'
+
+
+@admin.register(CarModelSpecification)
+class CarModelSpecificationAdmin(ImportExportMixin, ModelAdmin):
+    list_display = ('label', 'cars_count_display')
+    search_fields = ('label',)
+    ordering = ('label',)
+    export_form_class = UnfoldExportForm
+    import_form_class = UnfoldImportForm
+    list_per_page = 50
+    fields = ('label',)
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).annotate(total_cars=Count('cars', distinct=True))
+
+    def cars_count_display(self, obj):
+        count = getattr(obj, 'total_cars', 0)
+        if count:
+            url = reverse('admin:core_car_changelist') + f'?model_specs__id__exact={obj.id}'
+            return _link(url, f'{count} машин(ы)')
+        return '0'
+
+    cars_count_display.short_description = "Машин с этой моделью"
+    cars_count_display.admin_order_field = 'total_cars'
+
+
+# ─────────────────────────────────────────────────────────────
 # Car
 # ─────────────────────────────────────────────────────────────
 @admin.register(Car)
 class CarAdmin(ImportExportMixin, ModelAdmin):
     list_display = (
         'id', 'name', 'id_in_provider_system', 'car_unit_display',
+        'model_display', 'model_specs_display', 'fuel_type', 'engine_power',
         'is_active_display', 'is_tarrified_display',
         'data_providers_display', 'last_processed_date',
     )
-    list_filter = ('is_active', 'is_tarrified', 'engine_type', 'car_unit')
-    search_fields = ('name', 'description', 'id_in_provider_system')
+    list_filter = ('is_active', 'is_tarrified', 'engine_type', 'car_unit', 'fuel_type', 'model', 'model_specs')
+    search_fields = ('name', 'description', 'id_in_provider_system', 'model__label', 'model_specs__label')
     ordering = ('name',)
+    list_select_related = ('car_unit', 'model', 'model_specs')
+    autocomplete_fields = ('model', 'model_specs')
     export_form_class = UnfoldExportForm
     import_form_class = UnfoldImportForm
     list_per_page = 30
@@ -610,11 +664,24 @@ class CarAdmin(ImportExportMixin, ModelAdmin):
     actions = ['export_selected', 'activate_selected', 'deactivate_selected']
     fieldsets = (
         ('Основное', {'fields': ('name', 'description', 'id_in_provider_system', 'car_unit', 'list_id')}),
+        ('Марка и модель', {'fields': ('model', 'model_specs', 'engine_power', 'fuel_type')}),
         ('Технические параметры', {'fields': ('engine_type', 'input', 'output', 'grades')}),
         ('Статус', {'fields': ('is_active', 'is_tarrified')}),
         ('Даты', {'fields': ('created_at', 'last_processed_date'), 'classes': ('collapse',)}),
     )
     readonly_fields = ('created_at',)
+
+    def model_display(self, obj):
+        return obj.model.label if obj.model else "—"
+
+    model_display.short_description = "Марка"
+    model_display.admin_order_field = 'model__label'
+
+    def model_specs_display(self, obj):
+        return obj.model_specs.label if obj.model_specs else "—"
+
+    model_specs_display.short_description = "Модель"
+    model_specs_display.admin_order_field = 'model_specs__label'
 
     def car_unit_display(self, obj):
         if obj.car_unit:

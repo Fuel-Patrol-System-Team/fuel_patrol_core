@@ -19,6 +19,7 @@ from .models import (
     SensorsValues,
     Language,
     CarUnit, UserCarList, CarMileageReport, TelegramUser, CarFuelReport, APICalculationLog, AlertSubscription,
+    CarModel, CarModelSpecification,
 )
 
 
@@ -50,10 +51,44 @@ class CarByGroupSensorsValuesOutputSerializer(serializers.ModelSerializer):
         ]
 
 
+class CarModelSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CarModel
+        fields = ["id", "label"]
+
+
+class CarModelSpecificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CarModelSpecification
+        fields = ["id", "label"]
+
+
+class CarSpecsUpdateSerializer(serializers.ModelSerializer):
+    model = serializers.PrimaryKeyRelatedField(
+        queryset=CarModel.objects.all(), allow_null=True, required=False
+    )
+    model_specs = serializers.PrimaryKeyRelatedField(
+        queryset=CarModelSpecification.objects.all(), allow_null=True, required=False
+    )
+
+    class Meta:
+        model = Car
+        fields = ["model", "model_specs", "engine_power", "fuel_type"]
+        extra_kwargs = {
+            "engine_power": {"required": False, "allow_null": True},
+            "fuel_type": {"required": False, "allow_null": True},
+        }
+
+    def to_representation(self, instance):
+        return CarOutputSerializer(instance, context=self.context).data
+
+
 class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
     car_unit = serializers.SerializerMethodField()
     parsing_stats = serializers.SerializerMethodField()
+    model = CarModelSerializer(read_only=True)
+    model_specs = CarModelSpecificationSerializer(read_only=True)
 
     class Meta:
         model = Car
@@ -71,7 +106,11 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "is_tarrified",
             "is_active",
             "sensors",
-            "parsing_stats"
+            "parsing_stats",
+            "model",
+            "model_specs",
+            "engine_power",
+            "fuel_type",
         ]
 
     def get_car_unit(self, obj):
@@ -172,12 +211,13 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
 
 class CarFuelReportSerializer(serializers.ModelSerializer):
     car_name = serializers.CharField(source='car_id.name', read_only=True)
+    fuel_leaked = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = CarFuelReport
         fields = [
             'id', 'car_id', 'car_name', 'start_moment',
-            'end_moment', 'fuel_start', 'fuel_end', 'fuel_filled'
+            'end_moment', 'fuel_start', 'fuel_end', 'fuel_filled', 'fuel_leaked'
         ]
 
 
