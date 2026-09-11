@@ -17,6 +17,10 @@ PUBLIC_PATHS_WHITELIST = {
     "/cars/bad-data",
     "/cars/bad-data/{id}",
     "/cars/bySensorGroup",
+    "/cars/models",
+    "/cars/models/{id}",
+    "/cars/model-specs",
+    "/cars/model-specs/{id}",
     "/car-consumptions",
     "/car-consumptions/{id}",
     "/car-reports",
@@ -164,8 +168,8 @@ class PublicSchemaGenerator(OpenAPISchemaGenerator):
 
 
 class PrivateSchemaGenerator(OpenAPISchemaGenerator):
-    """Полная схема без фильтрации. Для /api/v1/docs/private/"""
-    pass
+    def get_schema(self, request=None, public=False):
+        return super().get_schema(request=request, public=True)
 
 
 class SpotlightSchemaGenerator(OpenAPISchemaGenerator):

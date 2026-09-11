@@ -25,7 +25,7 @@ from rest_framework.response import Response
 
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView, RetrieveAPIView, RetrieveUpdateDestroyAPIView, \
-    ListCreateAPIView, RetrieveUpdateAPIView, UpdateAPIView
+    ListCreateAPIView, RetrieveUpdateAPIView
 
 from rest_framework import status
 import logging
@@ -79,7 +79,7 @@ from .serializers import (
     UserRegistrationSerializer,
     OrganizationOutputSerializer,
     OrgUserOutputSerializer,
-    CarOutputSerializer, CarSpecsUpdateSerializer, CarEngineSpecsUpdateSerializer, CarModelSerializer,
+    CarOutputSerializer, CarSpecsUpdateSerializer, CarModelSerializer,
     CarModelSpecificationSerializer,
     CarConsumptionOutputSerializer, ReportQueryOutputSerializer,
     CarReportOutputSerializer, DriverOutputSerializer, UserOutputSerializer,
@@ -1000,24 +1000,6 @@ class CarDetailAPIView(SwaggerSafeQuerysetMixin, RetrieveUpdateAPIView):
                 'name': car.car_unit.name
             }
         return context
-
-
-class CarEngineSpecsAPIView(SwaggerSafeQuerysetMixin, UpdateAPIView):
-    permission_classes = [IsDemoUser, IsOrgMember]
-    serializer_class = CarEngineSpecsUpdateSerializer
-    lookup_field = 'pk'
-    http_method_names = ['patch', 'head', 'options']
-
-    def get_queryset(self):
-        if _ANON_GUARD(self):
-            return Car.objects.none()
-        return Car.objects.filter(
-            data_providers__org_id=self.request.user.org
-        ).distinct()
-
-    def partial_update(self, request, *args, **kwargs):
-        kwargs['partial'] = False
-        return self.update(request, *args, **kwargs)
 
 
 class CarModelListCreateAPIView(ListCreateAPIView):
