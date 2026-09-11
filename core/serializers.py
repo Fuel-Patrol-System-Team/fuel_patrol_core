@@ -83,6 +83,18 @@ class CarSpecsUpdateSerializer(serializers.ModelSerializer):
         return CarOutputSerializer(instance, context=self.context).data
 
 
+class CarEngineSpecsUpdateSerializer(serializers.ModelSerializer):
+    engine_power = serializers.IntegerField(required=True, allow_null=False)
+    fuel_type = serializers.ChoiceField(choices=Car.FuelType.choices, required=True, allow_null=False)
+
+    class Meta:
+        model = Car
+        fields = ["engine_power", "fuel_type"]
+
+    def to_representation(self, instance):
+        return CarOutputSerializer(instance, context=self.context).data
+
+
 class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
     car_unit = serializers.SerializerMethodField()
