@@ -2,29 +2,279 @@ import json
 import logging
 import re
 import polars as pl
-from typing import Any, Optional, Tuple, Dict
+from math import ceil
+from typing import Any, List, Literal, Optional, Tuple, Dict
 from datetime import datetime, timedelta
 from pathlib import Path
 from django.conf import settings
 from sklearn.linear_model import Lasso
 
-from core.helpers.alg_utils import alg_piece_remove_message_delays, alg_piece_remove_skipped_messages
+from core.helpers.alg_utils import (
+    alg_piece_remove_message_delays,
+    alg_piece_remove_skipped_messages,
+)
 from core.helpers.fuel import compute_data_standing, tarify_car_by_sensor, _get_postfix
-from core.helpers.fuel_constants import SATELLITES_COVERAGE
+from core.helpers.fuel_constants import (
+    HORSE_POWER_SEPARATION_BRACKET,
+    NORMS_MIN_DAYS,
+    SATELLITES_COVERAGE,
+)
+from core.models import Car, CarConsumption
 from core.services.providers.glonass.constants import reconcile_multisensor
 
 logger = logging.getLogger(__name__)
+
+POWER_GROUP_DISTANCE_CONSTANT = -99
 
 
 class NormsService:
     """Сервис для расчета норм расхода топлива"""
 
     @staticmethod
-    def calculate_norms_single(
-            raw_df: pl.DataFrame,
-            primary_df: pl.DataFrame,
-            auto_df: pl.DataFrame
+    def _prepare_consumptions_for_lines():
+        cars = Car.objects.prefetch_related("consumptions").filter(
+            consumptions__isnull=False
+        )
+        mapping = []
+        for car in cars:
+            consumption = car.consumptions.first()
+            json_data = {} if consumption.json_data is None else consumption.json_data
+            metadata = (
+                {"fpm_model_premade": False, "speed_model_premade": False}
+                if consumption.metadata is None
+                else consumption.metadata
+            )
+            mapping.append(
+                {
+                    "id": consumption.id,
+                    "car_id": car.id,
+                    "model": car.model.label if car.model else None,
+                    "model_specification": (
+                        car.model_specs.label if car.model_specs else None
+                    ),
+                    "fuel_type": car.fuel_type,
+                    "engine_power": car.engine_power,
+                    **json_data,
+                    **metadata,
+                }
+            )
+
+        cars_mapping = pl.DataFrame(mapping)
+        return cars_mapping
+
+    @staticmethod
+    def _get_engine_power_group(engine_power: Optional[int]) -> int:
+        """Группа мощности двигателя (номер брикета), -99 для неизвестной мощности."""
+        if engine_power is None:
+            return POWER_GROUP_DISTANCE_CONSTANT
+        return ceil(engine_power / HORSE_POWER_SEPARATION_BRACKET)
+
+    # TODO: добавить наличие rpm как группы для rpm_model
+    @staticmethod
+    def _pick_closest_group(
+        consumptions: pl.DataFrame, car: Car
     ) -> Optional[pl.DataFrame]:
+        """Выбирает группу consumptions, ближайшую к машине по каскаду признаков.
+
+        Каскад (возвращается первый непустой уровень):
+          1. точное совпадение model_specification и fuel_type
+          2. точное совпадение model_specification, любой fuel_type
+          3. точное совпадение fuel_type, любая model_specification
+          4. любая спецификация и топливо (уровень модели)
+
+        Внутри уровня группа выбирается по минимальной разнице групп
+        engine_power, при равенстве — по наибольшему количеству строк.
+        """
+        car_power_group = NormsService._get_engine_power_group(car.engine_power)
+
+        if "engine_power_group" not in consumptions.columns:
+            consumptions = consumptions.with_columns(
+                pl.col("engine_power")
+                .fill_null(POWER_GROUP_DISTANCE_CONSTANT)
+                .cast(pl.Int32)
+                .alias("engine_power_group")
+            )
+
+        partitions = consumptions.partition_by(
+            ["model_specification", "engine_power_group", "fuel_type"],
+            as_dict=True,
+        )
+        if not partitions:
+            return None
+
+        def distance(group: pl.DataFrame) -> int:
+            group_power = group["engine_power_group"][0]
+            if (
+                group_power == POWER_GROUP_DISTANCE_CONSTANT
+                and car_power_group == POWER_GROUP_DISTANCE_CONSTANT
+            ):
+                return 0
+            if (
+                group_power == POWER_GROUP_DISTANCE_CONSTANT
+                or car_power_group == POWER_GROUP_DISTANCE_CONSTANT
+            ):
+                return 10**9
+            return abs(group_power - car_power_group)
+
+        car_spec = car.model_specs.label if car.model_specs else None
+        car_fuel = car.fuel_type
+
+        def pick(candidates: List[pl.DataFrame]) -> Optional[pl.DataFrame]:
+            if not candidates:
+                return None
+            best = min(
+                candidates,
+                key=lambda g: (distance(g), -g.height),
+            )
+            return best
+
+        tier_1 = [
+            g
+            for key, g in partitions.items()
+            if key[0] == car_spec and key[2] == car_fuel
+        ]
+        tier_2 = [g for key, g in partitions.items() if key[0] == car_spec]
+        tier_3 = [g for key, g in partitions.items() if key[2] == car_fuel]
+        tier_4 = list(partitions.values())
+
+        for tier, candidates in enumerate((tier_1, tier_2, tier_3, tier_4), start=1):
+            best = pick(candidates)
+            if best is not None:
+                group_key = (
+                    best["model_specification"][0],
+                    best["engine_power_group"][0],
+                    best["fuel_type"][0],
+                )
+                logger.info(
+                    f"Машина {car.id}: выбрана группа (уровень {tier}) "
+                    f"spec={group_key[0]}, power_group={group_key[1]}, fuel={group_key[2]}, "
+                    f"строк={best.height}"
+                )
+                return best
+
+        return None
+
+    @staticmethod
+    def _fit_average_line_from_data(
+        raw_df: pl.DataFrame,
+        group_df: pl.DataFrame,
+        car: Car,
+        model: Literal["fpm"] | Literal["speed"] | Literal["rpm"],
+    ) -> Optional[pl.DataFrame]:
+        """Строит среднюю линию (Lasso) по выбранной группе consumptions.
+
+        Возвращает однострочный DataFrame с коэффициентами модели либо None.
+        """
+        try:
+            max_speed = raw_df["pos_s"].quantile(0.75)
+            if max_speed is None or max_speed < 0.1:
+                logger.warning("Невозможно построить линию, найдено остуствие каких-либо данных по топливу")
+                return None
+            if group_df is None or group_df.is_empty():
+                return None
+
+            mean_keys = {
+                key: group_df[key].mean()
+                for key in [
+                    "fpm_model_coef",
+                    "fpm_model_intercept",
+                    "fpm_model_mean",
+                    "fpm_model_std",
+                    "speed_model_intercept",
+                    "speed_model_coef",
+                    "speed_model_std",
+                    "rpm_model_intercept",
+                    "rpm_model_coef",
+                    "rpm_model_std"
+                ]
+            }
+            metadata = {
+                "created_at": datetime.now().isoformat(),
+                "rpm_model_artificial": True,
+                "speed_model_artificial": True,
+                "fpm_model_artificial": True
+            }
+            norms_df = pl.DataFrame(
+                {
+                    "period": datetime.now().isoformat(),
+                    "sl_avto": str(car.id),
+                    "max_fuel": None, # add
+                    "norma_mean": group_df["norma_mean"].mean(),
+                    "norma_std": group_df["norma_std"].mean(),
+                    "speed_etalon": group_df["speed_etalon"].mean(),
+                    **mean_keys,
+                    "is_special_car": False,
+                    "norma_rasx_summer": group_df["norma_rasx_summer"].mean(),
+                    "norma_rasx_winter": group_df["norma_rasx_winter"].mean(),
+                    "metadata": metadata
+                }
+            ) 
+            
+
+            return norms_df
+        except Exception as e:
+            logger.warning(f"Машина {car.id}: ошибка построения средней линии: {e}")
+            return None
+
+    @staticmethod
+    def calculte_new_average_line(
+        raw_df: pl.DataFrame,
+        car: Car, model: Literal["fpm"] | Literal["speed"] | Literal["rpm"]
+    ) -> Optional[pl.DataFrame]:
+        try:
+            consumptions = NormsService._prepare_consumptions_for_lines()
+            if car.model is None:
+                logger.warning(
+                    f"Машина {car.id}: не указана модель, невозможно построить линию"
+                )
+                return None
+            if consumptions.shape[0] == 0:
+                logger.warning(
+                    f"Нет данных в базе данных для построения линий для машины {car.id}"
+                )
+                return None
+            consumptions = consumptions.filter(
+                pl.col("model").eq(car.model.label) & pl.col("model").is_not_null()
+            )
+            if consumptions.shape[0] == 0:
+                logger.warning("Нет заполненных данных о моделях для построения линии")
+                return None
+            consumptions = consumptions.filter(
+                pl.col(f"{model}_model_premade").eq(False)
+            )
+            if consumptions.shape[0] == 0:
+                logger.warning(
+                    "Нет данных с непересчитанными моделями для построения линии"
+                )
+                return None
+            consumptions = consumptions.with_columns(
+                pl.when(pl.col("engine_power").is_not_null())
+                .then(
+                    pl.col("engine_power")
+                    .truediv(HORSE_POWER_SEPARATION_BRACKET)
+                    .ceil()
+                    .cast(pl.Int32)
+                )
+                .otherwise(POWER_GROUP_DISTANCE_CONSTANT)
+                .alias("engine_power_group")
+            )
+            group_df = NormsService._pick_closest_group(consumptions, car)
+            if group_df is None or group_df.is_empty():
+                logger.warning(
+                    f"Машина {car.id}: не найдена подходящая группа для линии"
+                )
+                return None
+
+            line_df = NormsService._fit_average_line_from_data(raw_df, group_df, car, model)
+            return line_df
+        except BaseException as err:
+            logger.warning(f"Невозможно создать сренюю прямую для {car.id} {err}")
+            return None
+
+    @staticmethod
+    def calculate_norms_single(
+        raw_df: pl.DataFrame, primary_df: pl.DataFrame, auto_df: pl.DataFrame
+    ) -> Tuple[Optional[pl.DataFrame], Literal["skip"] | Literal["line"]]:
         """
         Вычисляет нормы расхода топлива для одной машины
         """
@@ -37,7 +287,6 @@ class NormsService:
             logger.info(f"Размер auto_df: {auto_df.shape}")
             logger.info(f"Колонки auto_df: {auto_df.columns}")
 
-
             cars_dict = NormsService._prepare_cars_dict(auto_df)
             primary_dict = NormsService._prepare_primary_dict(primary_df)
 
@@ -46,29 +295,36 @@ class NormsService:
 
             if not cars_dict:
                 logger.error("Не удалось подготовить словарь машин")
-                return None
+                return None, "skip"
 
             if not primary_dict:
                 logger.error("Не удалось подготовить словарь первичных показателей")
-                return None
-
+                return None, "skip"
 
             logger.info("Начало предобработки данных...")
-            processed_df = NormsService._preprocess_norms(raw_df, cars_dict, primary_dict)
+            processed_df = NormsService._preprocess_norms(
+                raw_df, cars_dict, primary_dict
+            )
 
             logger.info(f"Результат предобработки: {processed_df.shape}")
             if processed_df.is_empty():
                 logger.warning("Нет данных после предобработки")
-                return None
-
-
+                return None, "skip"
+            days = processed_df["timestamp"].dt.truncate("1d").n_unique()
+            if days < NORMS_MIN_DAYS:
+                logger.warning("Мало данных после обработки")
+                return None, "line"
             logger.info("Начало постобработки...")
-            filtered_df, filter_reason = NormsService._fuel_afterprocess_norms(processed_df, cars_dict)
+            filtered_df, filter_reason = NormsService._fuel_afterprocess_norms(
+                processed_df, cars_dict
+            )
 
-            logger.info(f"Результат фильтрации: {filtered_df.shape}, причина: {filter_reason}")
+            logger.info(
+                f"Результат фильтрации: {filtered_df.shape}, причина: {filter_reason}"
+            )
             if filtered_df.is_empty():
                 logger.warning(f"Нет данных после фильтрации: {filter_reason}")
-                return None
+                return None, "skip"
 
             logger.info("Расчет финальных норм...")
             result_df = NormsService._calculate_by_car(filtered_df, cars_dict)
@@ -76,14 +332,14 @@ class NormsService:
             logger.info(f"Финальный результат: {result_df.shape}")
             if result_df.is_empty():
                 logger.warning("Не удалось рассчитать нормы")
-                return None
+                return None, "skip"
 
             logger.info(f"=== РАСЧЕТ НОРМ ЗАВЕРШЕН: {len(result_df)} машин ===")
-            return result_df
+            return result_df, "skip"
 
         except Exception as e:
             logger.error(f"Ошибка в calculate_norms_single: {e}", exc_info=True)
-            return None
+            return None, "skip"
 
     @staticmethod
     def _prepare_cars_dict(auto_df: pl.DataFrame) -> Dict[str, Dict[str, float]]:
@@ -92,20 +348,21 @@ class NormsService:
         """
         cars_dict = {}
         for row in auto_df.to_dicts():
-            auto_id = row['auto']
+            auto_id = row["auto"]
             cars_dict[auto_id] = {
-                'input': float(row['input']) if row['input'] is not None else 1.0,
-                'grades': row['grades'],
-                'fuel_sensor': row['fuel_sensor'],
-                'output': float(row['output']) if row['output'] is not None else 1.0,
-                'fuel_sensor_multi_type': row.get('fuel_sensor_multi_type', 'none'),
+                "input": float(row["input"]) if row["input"] is not None else 1.0,
+                "grades": row["grades"],
+                "fuel_sensor": row["fuel_sensor"],
+                "output": float(row["output"]) if row["output"] is not None else 1.0,
+                "fuel_sensor_multi_type": row.get("fuel_sensor_multi_type", "none"),
             }
             # Добавляем grades_N для каждого датчика (если есть)
             for key, val in row.items():
                 if key.startswith("grades_") and val is not None:
                     cars_dict[auto_id][key] = val
             logger.debug(
-                f"Машина {auto_id}: input={cars_dict[auto_id]['input']}, output={cars_dict[auto_id]['output']}")
+                f"Машина {auto_id}: input={cars_dict[auto_id]['input']}, output={cars_dict[auto_id]['output']}"
+            )
         return cars_dict
 
     @staticmethod
@@ -115,33 +372,37 @@ class NormsService:
         """
         primary_dict = {}
         for row in primary_df.to_dicts():
-            auto_id = row['auto']
+            auto_id = row["auto"]
             primary_dict[auto_id] = {
-                'max_fuel': float(row['max_fuel']) if row['max_fuel'] is not None else 100.0,
-                'is_special_car': bool(row.get('is_special_car', True)),
-                'ign_working': bool(row.get('ign_working', False)),
+                "max_fuel": (
+                    float(row["max_fuel"]) if row["max_fuel"] is not None else 100.0
+                ),
+                "is_special_car": bool(row.get("is_special_car", True)),
+                "ign_working": bool(row.get("ign_working", False)),
             }
             # Добавляем max_fuel_N для каждого датчика (если есть)
             for key, val in row.items():
                 if key.startswith("max_fuel_") and val is not None:
                     primary_dict[auto_id][key] = float(val)
-            logger.debug(f"Первичные показатели {auto_id}: max_fuel={primary_dict[auto_id]['max_fuel']}")
+            logger.debug(
+                f"Первичные показатели {auto_id}: max_fuel={primary_dict[auto_id]['max_fuel']}"
+            )
         return primary_dict
 
     @staticmethod
     def _preprocess_norms(
-            df: pl.DataFrame,
-            cars_dict: Dict[str, Dict[str, float]],
-            primary_dict: Dict[str, Dict[str, float]],
-            ANTI_BUG_TIME_SECONDS: int = 10,
-            PRE_PERIOD_TIME: int = 3,
-            PERIOD_2_MIN: int = 60, 
-            VOLTAGE_LIMIT: float = 0.16,
-            REFUELING_LIMIT: int = 4000,
-            FUEL_JUMP_BARRIER_PERC: float = 0.05,
-            AMTR_IGNORE_LIMIT: int = 3,
-            RPM_DRIVING_VALUE: int = 20,
-            is_debug: bool = False,
+        df: pl.DataFrame,
+        cars_dict: Dict[str, Dict[str, float]],
+        primary_dict: Dict[str, Dict[str, float]],
+        ANTI_BUG_TIME_SECONDS: int = 10,
+        PRE_PERIOD_TIME: int = 3,
+        PERIOD_2_MIN: int = 60,
+        VOLTAGE_LIMIT: float = 0.16,
+        REFUELING_LIMIT: int = 4000,
+        FUEL_JUMP_BARRIER_PERC: float = 0.05,
+        AMTR_IGNORE_LIMIT: int = 3,
+        RPM_DRIVING_VALUE: int = 20,
+        is_debug: bool = False,
     ) -> pl.DataFrame:
         """Предобработка данных для расчета норм"""
 
@@ -165,13 +426,10 @@ class NormsService:
 
         logger.info("Группировка по 3-минутным интервалам...")
         try:
-            anti_bug = (
-                anti_bug.group_by_dynamic(
-                    index_column="timestamp",
-                    every=f"{PRE_PERIOD_TIME}m",
-                    group_by="auto"
-                )
-                .agg([
+            anti_bug = anti_bug.group_by_dynamic(
+                index_column="timestamp", every=f"{PRE_PERIOD_TIME}m", group_by="auto"
+            ).agg(
+                [
                     pl.col("pos_s").median(),
                     pl.col("spent_fuel").sum(),
                     pl.col("dtime_moving").sum(),
@@ -189,7 +447,7 @@ class NormsService:
                     pl.col("fuel_level_nan").max(),
                     pl.col("no_sat_data").sum(),
                     pl.col("ign").sum(),
-                ])
+                ]
             )
             logger.info(f"После 3-минутной группировки: {anti_bug.shape}")
         except Exception as e:
@@ -204,30 +462,30 @@ class NormsService:
         try:
             result = (
                 anti_bug.group_by_dynamic(
-                    index_column="timestamp",
-                    every=f"{PERIOD_2_MIN}m",
-                    group_by="auto"
+                    index_column="timestamp", every=f"{PERIOD_2_MIN}m", group_by="auto"
                 )
-                .agg([
-                    pl.col("pos_s").mean(),
-                    pl.col("spent_fuel").sum(),
-                    pl.col("dtime").sum(),
-                    pl.col("dtime_moving").sum(),
-                    pl.col("travel").sum(),
-                    pl.col("count").sum(),
-                    pl.col("amtr").sum(),
-                    pl.col("jumps").sum(),
-                    pl.col("rpm_mean").mean(),
-                    pl.sum("energy"),
-                    pl.sum("rpm_total"),
-                    pl.col("fd").sum(),
-                    pl.col("fuel_level_nan").max(),
-                    pl.col("no_sat_data").sum(),
-                    pl.col("max_local_fuel_level").max(),
-                    pl.col("ign").sum(),
-                    pl.col("sf_m").sum(),
-                    pl.col("pos_s_m").mean(),
-                ])
+                .agg(
+                    [
+                        pl.col("pos_s").mean(),
+                        pl.col("spent_fuel").sum(),
+                        pl.col("dtime").sum(),
+                        pl.col("dtime_moving").sum(),
+                        pl.col("travel").sum(),
+                        pl.col("count").sum(),
+                        pl.col("amtr").sum(),
+                        pl.col("jumps").sum(),
+                        pl.col("rpm_mean").mean(),
+                        pl.sum("energy"),
+                        pl.sum("rpm_total"),
+                        pl.col("fd").sum(),
+                        pl.col("fuel_level_nan").max(),
+                        pl.col("no_sat_data").sum(),
+                        pl.col("max_local_fuel_level").max(),
+                        pl.col("ign").sum(),
+                        pl.col("sf_m").sum(),
+                        pl.col("pos_s_m").mean(),
+                    ]
+                )
                 .sort(["auto", "timestamp"])
             )
             logger.info(f"После 30-минутной группировки: {result.shape}")
@@ -247,14 +505,14 @@ class NormsService:
 
     @staticmethod
     def _preprocess_basic_norms(
-            df: pl.DataFrame,
-            cars_dict: Dict[str, Dict[str, float]],
-            primary_dict: Dict[str, Dict[str, float]],
-            VOLTAGE_LIMIT: float,
-            FUEL_JUMP_BARRIER_PERC: float,
-            ANTI_BUG_TIME_SECONDS: int,
-            REFUELING_LIMIT: int,
-            PRE_PERIOD_TIME: int,
+        df: pl.DataFrame,
+        cars_dict: Dict[str, Dict[str, float]],
+        primary_dict: Dict[str, Dict[str, float]],
+        VOLTAGE_LIMIT: float,
+        FUEL_JUMP_BARRIER_PERC: float,
+        ANTI_BUG_TIME_SECONDS: int,
+        REFUELING_LIMIT: int,
+        PRE_PERIOD_TIME: int,
     ) -> pl.DataFrame:
         """Базовая предобработка данных в соответствии с оригинальной логикой"""
 
@@ -280,20 +538,29 @@ class NormsService:
                 logger.warning(f"Нет данных для машины {auto_id}")
                 continue
 
-            car_params = cars_dict.get(auto_id, {'input': 1.0, 'output': 1.0})
-            primary_params = primary_dict.get(auto_id, {'max_fuel': 100.0})
+            car_params = cars_dict.get(auto_id, {"input": 1.0, "output": 1.0})
+            primary_params = primary_dict.get(auto_id, {"max_fuel": 100.0})
 
-            logger.debug(f"Параметры машины {auto_id}: {car_params}, primary: {primary_params}")
+            logger.debug(
+                f"Параметры машины {auto_id}: {car_params}, primary: {primary_params}"
+            )
 
             processed_car_df = NormsService._process_single_car_norms(
-                car_df, car_params, primary_params,
-                VOLTAGE_LIMIT, FUEL_JUMP_BARRIER_PERC,
-                ANTI_BUG_TIME_SECONDS, REFUELING_LIMIT, PRE_PERIOD_TIME
+                car_df,
+                car_params,
+                primary_params,
+                VOLTAGE_LIMIT,
+                FUEL_JUMP_BARRIER_PERC,
+                ANTI_BUG_TIME_SECONDS,
+                REFUELING_LIMIT,
+                PRE_PERIOD_TIME,
             )
 
             if processed_car_df is not None and not processed_car_df.is_empty():
                 processed_dfs.append(processed_car_df)
-                logger.info(f"Машина {auto_id} обработана успешно: {processed_car_df.shape}")
+                logger.info(
+                    f"Машина {auto_id} обработана успешно: {processed_car_df.shape}"
+                )
             else:
                 logger.warning(f"Машина {auto_id} не дала результатов")
 
@@ -307,45 +574,47 @@ class NormsService:
 
     @staticmethod
     def _process_single_car_norms(
-            car_df: pl.DataFrame,
-            car_params: Dict[str, float],
-            primary_params: Dict[str, float],
-            VOLTAGE_LIMIT: float,
-            FUEL_JUMP_BARRIER_PERC: float,
-            ANTI_BUG_TIME_SECONDS: int,
-            REFUELING_LIMIT: int,
-            PRE_PERIOD_TIME: int,
-            DTIME_LIMIT: int = 5,
+        car_df: pl.DataFrame,
+        car_params: Dict[str, float],
+        primary_params: Dict[str, float],
+        VOLTAGE_LIMIT: float,
+        FUEL_JUMP_BARRIER_PERC: float,
+        ANTI_BUG_TIME_SECONDS: int,
+        REFUELING_LIMIT: int,
+        PRE_PERIOD_TIME: int,
+        DTIME_LIMIT: int = 5,
     ) -> pl.DataFrame:
         """Обрабатывает данные для одной машины (логика из preprocess_basic_one, fuel.py)"""
         try:
-            max_fuel = primary_params['max_fuel']
-            is_special_car = primary_params.get('is_special_car', True)
-            ign_working = primary_params.get('ign_working', False)
+            max_fuel = primary_params["max_fuel"]
+            is_special_car = primary_params.get("is_special_car", True)
+            ign_working = primary_params.get("ign_working", False)
 
-            logger.debug(f"Обработка машины: max_fuel={max_fuel}, is_special_car={is_special_car}")
+            logger.debug(
+                f"Обработка машины: max_fuel={max_fuel}, is_special_car={is_special_car}"
+            )
             logger.debug(f"Первые 5 значений timestamp: {car_df['timestamp'].head(5)}")
 
             df_processed = car_df
 
             # Преобразование timestamp
-            timestamp_dtype = df_processed.schema['timestamp']
+            timestamp_dtype = df_processed.schema["timestamp"]
             if isinstance(timestamp_dtype, pl.Datetime):
-                df_processed = df_processed.with_columns(
-                    pl.col("rpm").fill_null(0)
-                )
+                df_processed = df_processed.with_columns(pl.col("rpm").fill_null(0))
             else:
                 try:
                     df_processed = df_processed.with_columns(
                         pl.col("timestamp").cast(pl.Datetime),
-                        pl.col("rpm").fill_null(0)
+                        pl.col("rpm").fill_null(0),
                     )
                 except Exception as e1:
-                    logger.warning(f"Не удалось преобразовать timestamp с форматом пробела: {e1}")
+                    logger.warning(
+                        f"Не удалось преобразовать timestamp с форматом пробела: {e1}"
+                    )
                     try:
                         df_processed = df_processed.with_columns(
                             pl.col("timestamp").cast(pl.Datetime),
-                            pl.col("rpm").fill_null(0)
+                            pl.col("rpm").fill_null(0),
                         )
                     except Exception as e2:
                         logger.error(f"Не удалось преобразовать timestamp: {e2}")
@@ -355,7 +624,11 @@ class NormsService:
             df_processed = alg_piece_remove_message_delays(df_processed)
 
             # Топливо выше max_fuel -> null для каждого датчика
-            fuel_cols = [c for c in df_processed.columns if c.startswith("calc_sensors_fuel_level")]
+            fuel_cols = [
+                c
+                for c in df_processed.columns
+                if c.startswith("calc_sensors_fuel_level")
+            ]
             is_multi = len(fuel_cols) > 1
             for col in fuel_cols:
                 postfix = _get_postfix(col)
@@ -386,7 +659,8 @@ class NormsService:
 
             # fuel_level_nan за 30 минут (по первому датчику, как в fuel.py)
             df_processed = df_processed.with_columns(
-                pl.col(fuel_cols[0]).is_not_nan()
+                pl.col(fuel_cols[0])
+                .is_not_nan()
                 .over(["auto", col_dtime_half])
                 .cast(pl.Int16)
                 .alias("fuel_level_nan")
@@ -427,12 +701,18 @@ class NormsService:
             for col in fuel_cols:
                 postfix = _get_postfix(col)
                 # Для мультисенсоров используем grades_N, для одиночного — grades
-                sensor_grades = car_params.get(f"grades{postfix}") if postfix else car_params.get("grades")
+                sensor_grades = (
+                    car_params.get(f"grades{postfix}")
+                    if postfix
+                    else car_params.get("grades")
+                )
                 if sensor_grades is None:
                     sensor_grades = car_params.get("grades")
                 if sensor_grades is not None:
                     car_params_for_sensor = {**car_params, "grades": sensor_grades}
-                    df_processed, lp, b, slope = tarify_car_by_sensor(df_processed, car_params_for_sensor, col)
+                    df_processed, lp, b, slope = tarify_car_by_sensor(
+                        df_processed, car_params_for_sensor, col
+                    )
 
             # Для мультисенсоров: создаём общую колонку calc_sensors_fuel_level
             # (multi_type: Literal["none", "tank", "can"] — runtime guarantee from DB)
@@ -460,15 +740,20 @@ class NormsService:
 
             # voltage_max + фильтр по напряжению
             df_processed = df_processed.with_columns(
-                pl.max("calc_sensors_voltage").over(["auto", col_dtime_2hour]).alias("voltage_max"),
+                pl.max("calc_sensors_voltage")
+                .over(["auto", col_dtime_2hour])
+                .alias("voltage_max"),
             )
 
             initial_count = len(df_processed)
             df_processed = df_processed.filter(
-                (pl.col("voltage_max") - pl.col("calc_sensors_voltage")) / pl.col("voltage_max")
+                (pl.col("voltage_max") - pl.col("calc_sensors_voltage"))
+                / pl.col("voltage_max")
                 < VOLTAGE_LIMIT
             )
-            logger.debug(f"После фильтрации по напряжению: {len(df_processed)}/{initial_count} записей")
+            logger.debug(
+                f"После фильтрации по напряжению: {len(df_processed)}/{initial_count} записей"
+            )
 
             if df_processed.is_empty():
                 logger.warning("Нет данных после фильтрации по напряжению")
@@ -520,12 +805,12 @@ class NormsService:
             # Группировка по анти-баг интервалам
             logger.debug("Группировка по анти-баг интервалам...")
             initial_count = len(df_processed)
-            df_processed = (
-                df_processed.group_by_dynamic(
-                    index_column="timestamp",
-                    every=f"{ANTI_BUG_TIME_SECONDS}s",
-                    group_by="auto"
-                ).agg([
+            df_processed = df_processed.group_by_dynamic(
+                index_column="timestamp",
+                every=f"{ANTI_BUG_TIME_SECONDS}s",
+                group_by="auto",
+            ).agg(
+                [
                     pl.col("calc_sensors_fuel_level").mean(),
                     pl.col("pos_s").mean(),
                     pl.col("spent_fuel").sum(),
@@ -540,10 +825,12 @@ class NormsService:
                     pl.col("no_sat_data").sum(),
                     pl.col("count").sum(),
                     pl.col("ign").sum(),
-                    *aggs
-                ])
+                    *aggs,
+                ]
             )
-            logger.debug(f"После группировки: {len(df_processed)}/{initial_count} записей")
+            logger.debug(
+                f"После группировки: {len(df_processed)}/{initial_count} записей"
+            )
 
             # fpm: расход топлива в минуту при движении (как в leaks_service._fuel_leak_calculate)
 
@@ -585,21 +872,46 @@ class NormsService:
             return pl.DataFrame()
 
     @staticmethod
-    def fit_lasso_per_car_with_guard(group: pl.DataFrame, feature: str, target: str, auto: Any, MIN_SAMPLES: int = 10, alpha: float = 0.1, GUARD_COEF_SIGMA: float = 2.5):
-        check_coef, check_intercept, check_mean, check_std = NormsService._fit_lasso_per_car(group, feature, target, auto, MIN_SAMPLES, alpha)
-        group = group.with_columns(pl.col(feature).mul(check_coef).add(check_intercept).alias("check_prediction"))
-        group = group.filter(pl.col(target).sub(pl.col("check_prediction")).lt(check_mean + check_std * GUARD_COEF_SIGMA))
-        real_coef, real_intercept, real_mean, real_std = NormsService._fit_lasso_per_car(group, feature, target, auto, MIN_SAMPLES, alpha=0.1)
+    def fit_lasso_per_car_with_guard(
+        group: pl.DataFrame,
+        feature: str,
+        target: str,
+        auto: Any,
+        MIN_SAMPLES: int = 10,
+        alpha: float = 0.1,
+        GUARD_COEF_SIGMA: float = 2.5,
+    ):
+        check_coef, check_intercept, check_mean, check_std = (
+            NormsService._fit_lasso_per_car(
+                group, feature, target, auto, MIN_SAMPLES, alpha
+            )
+        )
+        group = group.with_columns(
+            pl.col(feature)
+            .mul(check_coef)
+            .add(check_intercept)
+            .alias("check_prediction")
+        )
+        group = group.filter(
+            pl.col(target)
+            .sub(pl.col("check_prediction"))
+            .lt(check_mean + check_std * GUARD_COEF_SIGMA)
+        )
+        real_coef, real_intercept, real_mean, real_std = (
+            NormsService._fit_lasso_per_car(
+                group, feature, target, auto, MIN_SAMPLES, alpha=0.1
+            )
+        )
         return real_coef, real_intercept, real_mean, real_std
 
     @staticmethod
     def _fit_lasso_per_car(
-            group: pl.DataFrame,
-            feature: str,
-            target: str,
-            auto: Any,
-            MIN_SAMPLES: int = 10,
-            alpha: float = 0.1,
+        group: pl.DataFrame,
+        feature: str,
+        target: str,
+        auto: Any,
+        MIN_SAMPLES: int = 10,
+        alpha: float = 0.1,
     ) -> Tuple[float, float, float, float]:
         """Подгонка Lasso по данным одной машины.
 
@@ -608,11 +920,15 @@ class NormsService:
         """
         try:
             if feature not in group.columns or target not in group.columns:
-                logger.warning(f"Машина {auto}: нет колонки {feature}/{target} для Lasso")
+                logger.warning(
+                    f"Машина {auto}: нет колонки {feature}/{target} для Lasso"
+                )
                 return 0.0, 0.0, 0.0, 0.0
 
             if group.height < MIN_SAMPLES:
-                logger.info(f"Машина {auto}: мало данных ({group.height}) для Lasso {target}")
+                logger.info(
+                    f"Машина {auto}: мало данных ({group.height}) для Lasso {target}"
+                )
                 y_mean = NormsService._safe_mean(group, target)
                 return 0.0, y_mean, 0.0, 0.0
 
@@ -621,6 +937,7 @@ class NormsService:
 
             # заполняем NaN/inf нулями, чтобы не падать
             import numpy as np
+
             x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).reshape(-1, 1)
             y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -631,7 +948,12 @@ class NormsService:
             model = Lasso(alpha=alpha)
             model.fit(X=x, y=y)
             residuals = y - model.predict(x)
-            return float(model.coef_[0]), float(model.intercept_), float(residuals.mean()), float(residuals.std())
+            return (
+                float(model.coef_[0]),
+                float(model.intercept_),
+                float(residuals.mean()),
+                float(residuals.std()),
+            )
         except Exception as e:
             logger.warning(f"Машина {auto}: ошибка Lasso для {target}: {e}")
             try:
@@ -655,19 +977,20 @@ class NormsService:
 
     @staticmethod
     def _fuel_afterprocess_norms(
-            df_values: pl.DataFrame,
-            cars_dict: Dict[str, Dict[str, float]],
-            FUEL_JUMPS_AMOUNT: int = 30,
-            UNREASONABLE_FUEL_LEVEL: int = 1000,
-            INSIGNIFICANT_MEAN_SPEED: float = 0.45,
+        df_values: pl.DataFrame,
+        cars_dict: Dict[str, Dict[str, float]],
+        FUEL_JUMPS_AMOUNT: int = 30,
+        UNREASONABLE_FUEL_LEVEL: int = 1000,
+        INSIGNIFICANT_MEAN_SPEED: float = 0.45,
     ) -> Tuple[pl.DataFrame, str]:
         """Постобработка и фильтрация данных норм"""
 
-        df = df_values.with_columns([
-            (pl.col("count") <= 5).alias("is_bad_data_count"),
-            (pl.col("jumps") > FUEL_JUMPS_AMOUNT).alias("is_bad_data_jitter"),
-        ])
-
+        df = df_values.with_columns(
+            [
+                (pl.col("count") <= 5).alias("is_bad_data_count"),
+                (pl.col("jumps") > FUEL_JUMPS_AMOUNT).alias("is_bad_data_jitter"),
+            ]
+        )
 
         df = df.with_columns(
             pl.when(pl.col("spent_fuel") < 0)
@@ -676,33 +999,41 @@ class NormsService:
             .alias("spent_fuel")
         )
 
-        df = df.with_columns([
-            (pl.col("spent_fuel") > UNREASONABLE_FUEL_LEVEL).alias("is_bad_data_unreasonable_fuel"),
-        ])
-
-        df = df.with_columns([
-            (
-                    pl.col("is_bad_data_count") |
-                    pl.col("is_bad_data_jitter") |
-                    pl.col("is_bad_data_unreasonable_fuel")
-            ).alias("is_bad_data"),
-            (pl.col("fd") / pl.col("count")).alias("ratio"),
-            (1 - pl.col("no_sat_data") / pl.col("count")).alias("sat_coverage"),
-        ])
-
         df = df.with_columns(
-            pl.col("sf_m").clip(upper_bound=0).abs().truediv("dtime_moving").mul(60).alias("fpm")
+            [
+                (pl.col("spent_fuel") > UNREASONABLE_FUEL_LEVEL).alias(
+                    "is_bad_data_unreasonable_fuel"
+                ),
+            ]
         )
 
+        df = df.with_columns(
+            [
+                (
+                    pl.col("is_bad_data_count")
+                    | pl.col("is_bad_data_jitter")
+                    | pl.col("is_bad_data_unreasonable_fuel")
+                ).alias("is_bad_data"),
+                (pl.col("fd") / pl.col("count")).alias("ratio"),
+                (1 - pl.col("no_sat_data") / pl.col("count")).alias("sat_coverage"),
+            ]
+        )
+
+        df = df.with_columns(
+            pl.col("sf_m")
+            .clip(upper_bound=0)
+            .abs()
+            .truediv("dtime_moving")
+            .mul(60)
+            .alias("fpm")
+        )
 
         df = df.filter(pl.col("is_bad_data").eq(False))
         if df.is_empty():
             return df, "filtered a car due to bad_data"
 
-
         df = df.filter(
-            (pl.col("spent_fuel") > 0) &
-            (pl.col("sat_coverage") > SATELLITES_COVERAGE)
+            (pl.col("spent_fuel") > 0) & (pl.col("sat_coverage") > SATELLITES_COVERAGE)
         )
 
         if df.is_empty():
@@ -711,7 +1042,9 @@ class NormsService:
         return df, ""
 
     @staticmethod
-    def _calculate_by_car(df: pl.DataFrame, cars_dict: Dict[str, Dict[str, float]]) -> pl.DataFrame:
+    def _calculate_by_car(
+        df: pl.DataFrame, cars_dict: Dict[str, Dict[str, float]]
+    ) -> pl.DataFrame:
         """Расчет финальных норм по каждой машине"""
         logger.info("=== НАЧАЛО РАСЧЕТА ФИНАЛЬНЫХ НОРМ ===")
         logger.info(f"Входные данные для расчета норм: {df.shape}")
@@ -721,17 +1054,17 @@ class NormsService:
             logger.warning("Нет данных для расчета норм")
             return pl.DataFrame()
 
-        
-
         logger.info("Статистика по данным:")
         try:
-            stats = df.select([
-                pl.col("auto").n_unique().alias("unique_cars"),
-                pl.col("spent_fuel").mean().alias("mean_spent_fuel"),
-                pl.col("spent_fuel").std().alias("std_spent_fuel"),
-                pl.col("pos_s").mean().alias("mean_speed"),
-                pl.col("max_local_fuel_level").mean().alias("mean_max_fuel"),
-            ])
+            stats = df.select(
+                [
+                    pl.col("auto").n_unique().alias("unique_cars"),
+                    pl.col("spent_fuel").mean().alias("mean_spent_fuel"),
+                    pl.col("spent_fuel").std().alias("std_spent_fuel"),
+                    pl.col("pos_s").mean().alias("mean_speed"),
+                    pl.col("max_local_fuel_level").mean().alias("mean_max_fuel"),
+                ]
+            )
             logger.info(f"Статистика: {stats.row(0)}")
         except Exception as e:
             logger.warning(f"Не удалось получить статистику: {e}")
@@ -745,7 +1078,6 @@ class NormsService:
                 logger.warning(f"Группа {i} пустая")
                 continue
 
-            
             auto = group["auto"][0]
             logger.info(f"Обработка машины {auto}: {group.shape} записей")
 
@@ -759,17 +1091,29 @@ class NormsService:
             # Lasso подгоняется по каждой машине отдельно (если у машины
             # своя модель поведения). Стандартное отклонение — это std остатков
             # (y - ŷ), а не std предсказаний.
-            rpm_model_coef, rpm_model_intercept, rpm_model_mean, rpm_model_std = NormsService._fit_lasso_per_car(
-                group, feature="rpm_total", target="spent_fuel", auto=auto
+            rpm_model_coef, rpm_model_intercept, rpm_model_mean, rpm_model_std = (
+                NormsService._fit_lasso_per_car(
+                    group, feature="rpm_total", target="spent_fuel", auto=auto
+                )
             )
-            speed_model_coef, speed_model_intercept, speed_model_mean, speed_model_std = NormsService._fit_lasso_per_car(
+            (
+                speed_model_coef,
+                speed_model_intercept,
+                speed_model_mean,
+                speed_model_std,
+            ) = NormsService._fit_lasso_per_car(
                 group, feature="pos_s", target="spent_fuel", auto=auto
             )
             group_sfm = group.filter(pl.col("sf_m").lt(0)).with_columns(
-                pl.col("pos_s_m").abs().mul(pl.col("dtime_moving")).alias("fpm_x_metric"),
+                pl.col("pos_s_m")
+                .abs()
+                .mul(pl.col("dtime_moving"))
+                .alias("fpm_x_metric"),
             )
-            fpm_model_coef, fpm_model_intercept, fpm_model_mean, fpm_model_std = NormsService.fit_lasso_per_car_with_guard(
-                group_sfm, feature="fpm_x_metric", target="fpm", auto=auto
+            fpm_model_coef, fpm_model_intercept, fpm_model_mean, fpm_model_std = (
+                NormsService.fit_lasso_per_car_with_guard(
+                    group_sfm, feature="fpm_x_metric", target="fpm", auto=auto
+                )
             )
 
             std = group["spent_fuel"].std()
@@ -784,10 +1128,14 @@ class NormsService:
             max_speed = group["pos_s"].quantile(0.75, interpolation="nearest")
             if max_speed is not None and max_speed < 0.2:
                 max_speed = group["pos_s"].quantile(0.95, interpolation="nearest")
-                logger.info(f"Машина {auto}: низкая скорость, использован 95% квантиль = {max_speed:.2f}")
-            
+                logger.info(
+                    f"Машина {auto}: низкая скорость, использован 95% квантиль = {max_speed:.2f}"
+                )
+
             if max_speed == 0:
-                logger.info(f"Машина {auto} нулевую скорость за весь период. Проблема с датчиком?")
+                logger.info(
+                    f"Машина {auto} нулевую скорость за весь период. Проблема с датчиком?"
+                )
                 continue
 
             max_fuel_val = group["max_local_fuel_level"].max()
@@ -796,40 +1144,45 @@ class NormsService:
             rpm_mean = group["rpm_mean"].mean()
             rpm_std = group["rpm_mean"].std()
 
-
-            logger.info(f"Машина {auto}: max_speed={max_speed}, max_fuel={max_fuel}, "
-                        f"rpm_mean={rpm_mean}, rpm_std={rpm_std}, rpm_max={rpm_max}, ") 
+            logger.info(
+                f"Машина {auto}: max_speed={max_speed}, max_fuel={max_fuel}, "
+                f"rpm_mean={rpm_mean}, rpm_std={rpm_std}, rpm_max={rpm_max}, "
+            )
 
             if max_speed is not None and spent_fuel is not None:
-                results.append({
-                    "max_fuel": max_fuel,
-                    "sl_avto": auto,
-                    "norma_rasx_summer": spent_fuel,
-                    "norma_rasx_winter": spent_fuel * 1.1,
-                    "norma_mean": spent_fuel,
-                    "norma_std": std,
-                    "speed_etalon": float(min(max_speed, 60)),  # type: ignore[arg-type]
-                    "norma_rpm_mean": rpm_mean,
-                    "rpm_model_coef": rpm_model_coef,
-                    "rpm_model_intercept": rpm_model_intercept,
-                    "rpm_model_std": rpm_model_std,
-                    "rpm_model_mean": rpm_model_mean,
-                    "speed_model_coef": speed_model_coef,
-                    "speed_model_intercept": speed_model_intercept,
-                    "speed_model_std": speed_model_std,
-                    "norma_rpm_std": rpm_std,
-                    "norma_rpm_max": rpm_max,
-                    "fpm_model_coef": fpm_model_coef,
-                    "fpm_model_intercept": fpm_model_intercept,
-                    "fpm_model_mean": fpm_model_mean,
-                    "fpm_model_std": fpm_model_std,
-                    "period": datetime.now() + timedelta(days=365),
-                    "is_special_car": max_speed > 30,
-                })
+                results.append(
+                    {
+                        "max_fuel": max_fuel,
+                        "sl_avto": auto,
+                        "norma_rasx_summer": spent_fuel,
+                        "norma_rasx_winter": spent_fuel * 1.1,
+                        "norma_mean": spent_fuel,
+                        "norma_std": std,
+                        "speed_etalon": float(min(max_speed, 60)),  # type: ignore[arg-type]
+                        "norma_rpm_mean": rpm_mean,
+                        "rpm_model_coef": rpm_model_coef,
+                        "rpm_model_intercept": rpm_model_intercept,
+                        "rpm_model_std": rpm_model_std,
+                        "rpm_model_mean": rpm_model_mean,
+                        "speed_model_coef": speed_model_coef,
+                        "speed_model_intercept": speed_model_intercept,
+                        "speed_model_std": speed_model_std,
+                        "norma_rpm_std": rpm_std,
+                        "norma_rpm_max": rpm_max,
+                        "fpm_model_coef": fpm_model_coef,
+                        "fpm_model_intercept": fpm_model_intercept,
+                        "fpm_model_mean": fpm_model_mean,
+                        "fpm_model_std": fpm_model_std,
+                        "period": datetime.now() + timedelta(days=365),
+                        "is_special_car": max_speed > 30,
+                    }
+                )
                 logger.info(f"Машина {auto}: нормы рассчитаны успешно")
             else:
-                logger.warning(f"Машина {auto}: не удалось рассчитать нормы - "
-                               f"max_speed={max_speed}, spent_fuel={spent_fuel}")
+                logger.warning(
+                    f"Машина {auto}: не удалось рассчитать нормы - "
+                    f"max_speed={max_speed}, spent_fuel={spent_fuel}"
+                )
 
         logger.info(f"Всего рассчитано норм для {len(results)} машин")
 
@@ -859,7 +1212,7 @@ class NormsService:
             "fpm_model_mean": pl.Float32,
             "fpm_model_std": pl.Float32,
             "period": pl.Datetime,
-            "is_special_car": pl.Boolean
+            "is_special_car": pl.Boolean,
         }
 
         result_df = pl.DataFrame(results, schema=schema)
@@ -867,13 +1220,14 @@ class NormsService:
         return result_df
 
     @staticmethod
-    def save_norms_to_csv(norms_df: pl.DataFrame, car_id: str, prefix: str = "norms") -> str:
+    def save_norms_to_csv(
+        norms_df: pl.DataFrame, car_id: str, prefix: str = "norms"
+    ) -> str:
         """Сохраняет нормы в CSV файл"""
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{prefix}_{car_id}_{timestamp}.csv"
             filepath = Path(settings.MEDIA_ROOT) / "norms_data" / filename
-
 
             filepath.parent.mkdir(parents=True, exist_ok=True)
 

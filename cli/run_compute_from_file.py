@@ -4,9 +4,10 @@ import argparse
 
 import polars as pl
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli.helpers.csv import write_csv_compute
 pl.enable_string_cache()
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
 

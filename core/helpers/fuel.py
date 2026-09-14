@@ -529,7 +529,6 @@ def preprocess_basic_one(
         *aggs,
         pl.sum("_fc_sign"),
         pl.sum("voltage_diff"),
-        pl.mean("temp")
 
     ]
 

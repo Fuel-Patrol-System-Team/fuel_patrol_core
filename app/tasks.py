@@ -271,7 +271,15 @@ def process_single_car_data_task(
             logger.warning(f"Не удалось сохранить первичные показатели для машины {car_id}")
 
         logger.info("ЭТАП 3: Расчет норм расхода топлива...")
-        norms_df = NormsService.calculate_norms_single(raw_df, primary_df, auto_df)
+        norms_df, status = NormsService.calculate_norms_single(raw_df, primary_df, auto_df)
+        is_artificial = False
+        if status == "line":
+            norms_df = NormsService.calculte_new_average_line(raw_df, car, "speed")
+            if norms_df is not None:
+                is_artificial = True
+        if is_artificial:
+            logger.info("Была выбрана линия для текущей машины")
+
         if norms_df is not None:
             init_number = norms_df.shape[0]
             norms_df = norms_df.filter(pl.col("norma_rasx_summer") > 5)
@@ -297,6 +305,7 @@ def process_single_car_data_task(
             leaks_result, intermediate_df, reports = leak_service.compute_leaks(
                 auto_df=auto_df,
                 data_df=raw_df,
+                sensors=sensors,
                 primary_df=primary_df,
                 norma_df=norms_df,
                 is_save_bad_data=is_save_bad_data,
@@ -523,7 +532,13 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
                 else:
                     logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
                 logger.info("ЭТАП 3.0: Вычисление норм в БД...")
-                norms = NormsService.calculate_norms_single(df, primary, auto_data)
+                norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
+                if status == "skip":
+                    norms_df = NormsService.calculte_new_average_line(raw_df, car, "speed")
+                    if norms_df is not None:
+                        is_artificial = True
+                if is_artificial:
+                    logger.info("Была выбрана линия для текущей машины")
                 if norms is None or norms.is_empty():
                     error_msg = f"Не удалось вычислить нормы показатели для машины (нет записей) {car.id}"
                     logger.error(error_msg)
@@ -597,7 +612,13 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                     else:
                         logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
                     logger.info("ЭТАП 3.0: Вычисление норм в БД...")
-                    norms = NormsService.calculate_norms_single(df, primary, auto_data)
+                    norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
+                    if status == "line":
+                        norms_df = NormsService.calculte_new_average_line(raw_df, car, "speed")
+                        if norms_df is not None:
+                            is_artificial = True
+                    if is_artificial:
+                        logger.info("Была выбрана линия для текущей машины")
                     if norms is None or norms.is_empty():
                         error_msg = f"Не удалось вычислить нормы показатели для машины {car.id}"
                         logger.error(error_msg)
@@ -645,7 +666,13 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
 
                 if status and isinstance(df, pl.DataFrame):
                     primary = pl.DataFrame(car.carprimary.primary)
-                    norms = NormsService.calculate_norms_single(df, primary, auto_data)
+                    norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
+                    if status == "line":
+                        norms_df = NormsService.calculte_new_average_line(df, car, "speed")
+                        if norms_df is not None:
+                            is_artificial = True
+                        if is_artificial:
+                            logger.info("Была выбрана линия для текущей машины")
                     if norms is None or norms.is_empty():
                         error_msg = f"Не удалось вычислить первичные показатели для машины {car.id}"
                         logger.error(error_msg)

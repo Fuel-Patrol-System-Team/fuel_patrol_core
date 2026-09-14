@@ -372,6 +372,7 @@ class ReportService:
                         speed_etalon=row.get("speed_etalon", 60.0),
                         max_fuel=row.get("max_fuel", 2000.0),
                         valid_period=row.get("period"),
+                        metadata=row.get("metadata", None)
                     ))
                     if len(consumption_records) >= 50:
                         CarConsumption.objects.bulk_create(consumption_records)
