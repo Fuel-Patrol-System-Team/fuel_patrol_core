@@ -919,3 +919,65 @@ STOPS_MILEAGE_RESPONSE_SCHEMA = openapi.Schema(
     type=openapi.TYPE_ARRAY,
     items=STOP_MILEAGE_RECORD_SCHEMA,
 )
+
+COMPUTE_LINES_FOR_CAR_SCHEMA = {
+    'operation_summary': "Рассчитать кривую расхода для автомобиля",
+    'operation_description': (
+        "Вычисляет усреднённую кривую расхода (average line) по параметру 'speed' для указанного "
+        "автомобиля через NormsService и сохраняет полученные записи потребления "
+        "(CarConsumption) пакетом через ReportService."
+    ),
+    'request_body': openapi.Schema(
+        type=openapi.TYPE_OBJECT,
+        required=['car_id'],
+        properties={
+            'car_id': openapi.Schema(
+                type=openapi.TYPE_STRING,
+                format=openapi.FORMAT_UUID,
+                description='UUID автомобиля, для которого строится кривая',
+                example='550e8400-e29b-41d4-a716-446655440000',
+            ),
+        },
+    ),
+    'responses': {
+        200: openapi.Response(
+            description='Кривая успешно рассчитана и сохранена',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'created': openapi.Schema(
+                        type=openapi.TYPE_BOOLEAN,
+                        description='Признак успешного создания кривой',
+                        example=True,
+                    ),
+                },
+            ),
+        ),
+        404: openapi.Response(
+            description='Нет данных для построения кривой',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'created': openapi.Schema(
+                        type=openapi.TYPE_BOOLEAN,
+                        description='Кривая не создана (нет данных)',
+                        example=False,
+                    ),
+                },
+            ),
+        ),
+        500: openapi.Response(
+            description='Ошибка при расчёте кривой',
+            schema=openapi.Schema(
+                type=openapi.TYPE_OBJECT,
+                properties={
+                    'error': openapi.Schema(
+                        type=openapi.TYPE_STRING,
+                        description='Описание ошибки',
+                        example='Невозможно построить кривую из-за ошибки',
+                    ),
+                },
+            ),
+        ),
+    },
+}

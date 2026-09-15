@@ -12,13 +12,7 @@ django.setup()
 from core.models import Car
 from core.services.providers.norms_service import NormsService
 pl.enable_string_cache()
-
-
-
-
-
-import app.tasks  # noqa: E402,F401 — must be imported before the providers below
-                  # to break a circular import (car_data_service -> app.tasks -> fuelreport_service -> car_data_service)
+import app.tasks  # noqa:
 
 from cli.run_norms_from_file import _run_norms_from_file, _CSV_SCHEMA_OVERRIDES
 
@@ -31,5 +25,5 @@ if __name__ == "__main__":
     df = _read_csv("/data/datasets/fuel/auto750212_raw_mapped.csv")
     car = Car.objects.filter(id="f1295d9a-42c4-412a-9a80-7b8339ffbed3").first()
     if car:
-        NormsService.calculte_new_average_line(df, car, "speed")
+        NormsService.calculte_new_average_line(car, "speed")
         print("Success")

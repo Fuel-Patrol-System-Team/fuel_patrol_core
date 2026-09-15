@@ -274,7 +274,7 @@ def process_single_car_data_task(
         norms_df, status = NormsService.calculate_norms_single(raw_df, primary_df, auto_df)
         is_artificial = False
         if status == "line":
-            norms_df = NormsService.calculte_new_average_line(raw_df, car, "speed")
+            norms_df = NormsService.calculte_new_average_line(car, "speed")
             if norms_df is not None:
                 is_artificial = True
         if is_artificial:
@@ -534,7 +534,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
                 logger.info("ЭТАП 3.0: Вычисление норм в БД...")
                 norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
                 if status == "skip":
-                    norms_df = NormsService.calculte_new_average_line(raw_df, car, "speed")
+                    norms_df = NormsService.calculte_new_average_line(car, "speed")
                     if norms_df is not None:
                         is_artificial = True
                 if is_artificial:
@@ -614,7 +614,7 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                     logger.info("ЭТАП 3.0: Вычисление норм в БД...")
                     norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
                     if status == "line":
-                        norms_df = NormsService.calculte_new_average_line(raw_df, car, "speed")
+                        norms_df = NormsService.calculte_new_average_line(car, "speed")
                         if norms_df is not None:
                             is_artificial = True
                     if is_artificial:
@@ -668,7 +668,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
                     primary = pl.DataFrame(car.carprimary.primary)
                     norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
                     if status == "line":
-                        norms_df = NormsService.calculte_new_average_line(df, car, "speed")
+                        norms_df = NormsService.calculte_new_average_line(car, "speed")
                         if norms_df is not None:
                             is_artificial = True
                         if is_artificial:

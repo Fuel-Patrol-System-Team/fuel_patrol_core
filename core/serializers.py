@@ -87,6 +87,7 @@ class CarOutputSerializer(serializers.ModelSerializer):
     sensors = serializers.SerializerMethodField()
     car_unit = serializers.SerializerMethodField()
     parsing_stats = serializers.SerializerMethodField()
+    line_type = serializers.SerializerMethodField()
     model = CarModelSerializer(read_only=True)
     model_specs = CarModelSpecificationSerializer(read_only=True)
 
@@ -107,11 +108,22 @@ class CarOutputSerializer(serializers.ModelSerializer):
             "is_active",
             "sensors",
             "parsing_stats",
+            "line_type",
             "model",
             "model_specs",
             "engine_power",
             "fuel_type",
         ]
+
+    def get_line_type(self, obj):
+        consumptions = obj.consumptions.all()
+        if not consumptions.exists():
+            return "none"
+        for consumption in consumptions:
+            metadata = consumption.metadata
+            if isinstance(metadata, dict) and metadata.get("speed_model_artificial"):
+                return "artificial"
+        return "unique"
 
     def get_car_unit(self, obj):
         if hasattr(self.context, 'car_unit_info'):

@@ -156,7 +156,6 @@ class NormsService:
 
     @staticmethod
     def _fit_average_line_from_data(
-        raw_df: pl.DataFrame,
         group_df: pl.DataFrame,
         car: Car,
         model: Literal["fpm"] | Literal["speed"] | Literal["rpm"],
@@ -166,10 +165,6 @@ class NormsService:
         Возвращает однострочный DataFrame с коэффициентами модели либо None.
         """
         try:
-            max_speed = raw_df["pos_s"].quantile(0.75)
-            if max_speed is None or max_speed < 0.1:
-                logger.warning("Невозможно построить линию, найдено остуствие каких-либо данных по топливу")
-                return None
             if group_df is None or group_df.is_empty():
                 return None
 
@@ -196,9 +191,9 @@ class NormsService:
             }
             norms_df = pl.DataFrame(
                 {
-                    "period": datetime.now().isoformat(),
+                    "period": datetime.now(),
                     "sl_avto": str(car.id),
-                    "max_fuel": None, # add
+                    "max_fuel": group_df["max_fuel"].max(), # add
                     "norma_mean": group_df["norma_mean"].mean(),
                     "norma_std": group_df["norma_std"].mean(),
                     "speed_etalon": group_df["speed_etalon"].mean(),
@@ -218,7 +213,6 @@ class NormsService:
 
     @staticmethod
     def calculte_new_average_line(
-        raw_df: pl.DataFrame,
         car: Car, model: Literal["fpm"] | Literal["speed"] | Literal["rpm"]
     ) -> Optional[pl.DataFrame]:
         try:
@@ -265,7 +259,7 @@ class NormsService:
                 )
                 return None
 
-            line_df = NormsService._fit_average_line_from_data(raw_df, group_df, car, model)
+            line_df = NormsService._fit_average_line_from_data( group_df, car, model)
             return line_df
         except BaseException as err:
             logger.warning(f"Невозможно создать сренюю прямую для {car.id} {err}")

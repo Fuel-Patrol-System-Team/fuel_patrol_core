@@ -262,8 +262,8 @@ class FuelReportService:
             return {"error": error_msg}, 400
 
         except Exception as e:
-            error_msg = "Внутренняя ошибка сервера при расчете пробега"
-            logger.error(f"Ошибка расчета пробега для car_id={car_id}: {e}", exc_info=True)
+            error_msg = "Внутренняя ошибка сервера при расхода топлива"
+            logger.error(f"Ошибка расчета расхода топлива для car_id={car_id}: {e}", exc_info=True)
 
             if report_query:
                 ReportService.complete_report_error(report_query, error_msg, e)

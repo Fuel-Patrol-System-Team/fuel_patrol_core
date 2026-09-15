@@ -37,6 +37,8 @@ from app import settings
 from core.helpers.cars import filter_leaks_by_period, aggregate_daily_counts, \
     get_daily_leaks_sum, get_car_leaks_count, get_car_leaks_volume, update_car_active_status, check_car_exists, \
     filter_car_leaks
+from core.services.providers.norms_service import NormsService
+from core.services.providers.report_service import ReportService
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
 from .helpers.agg import validate_agg
 from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
@@ -69,7 +71,8 @@ from core.helpers.rest import (
     CAR_DATA_REQUEST_SCHEMA,
     BAD_DATA_SCHEMA, PARSE_RAW_DATA_SCHEMA,
     CAR_SENSORS_RAW_DATA_SCHEMA, TELEGRAM_REGISTER_SCHEMA, BAD_DATA_DASHBOARD_SCHEMA, ALERT_SUBSCRIPTION_PATCH_SCHEMA,
-    ANALYSIS_SCHEMA, STOPS_MILEAGE_REQUEST_SCHEMA, STOPS_MILEAGE_RESPONSE_SCHEMA
+    ANALYSIS_SCHEMA, STOPS_MILEAGE_REQUEST_SCHEMA, STOPS_MILEAGE_RESPONSE_SCHEMA,
+    COMPUTE_LINES_FOR_CAR_SCHEMA
 )
 from app.tasks import FuelReportService, sync_vehicles_task, parse_terminal_messages_task
 from .serializers import (
@@ -817,7 +820,7 @@ class CarListAPIView(ListAPIView):
             data_providers__org_id=user.org.id
         ).select_related('car_unit', 'model', 'model_specs').prefetch_related(
             *_car_prefetch(language_code)
-        ).distinct().order_by('id')
+        ).prefetch_related('consumptions').distinct().order_by('id')
 
 
 class CarListBySensorGroupAPIView(ListAPIView):
@@ -1551,6 +1554,8 @@ class CarBadDataDetailAPIView(RetrieveAPIView):
             car_id__data_providers__org_id=self.request.user.org.id
         ).select_related('car_id').distinct()
 
+    
+
 class CarCarDataPreparedAPiView(APIView):
     # TODO: admin only
     
@@ -1616,7 +1621,32 @@ class CarBadDataDashboardAPIView(APIView):
         result = handler(org_id, period_from, period_due, category, tags)
         return success_response(result, status.HTTP_200_OK)
 
+class CarComputeLineView(APIView):
+    permission_classes = [IsNotDemoUser, IsOrgMember]
 
+    @swagger_auto_schema(**COMPUTE_LINES_FOR_CAR_SCHEMA)
+    def post(self, request):
+        try:
+            car_id = request.data.get("car_id")
+            car = Car.objects.filter(id=car_id).first()
+            if car is None:
+                return error_response({"error": "Нет машины с таким id"}, status.HTTP_404_NOT_FOUND)
+            line_result = NormsService.calculte_new_average_line(car, "speed")
+            if line_result is not None and not line_result.is_empty():
+                saved_consumptions = ReportService.save_car_consumption_batch(line_result)
+                logger.info(f"Сохранено {saved_consumptions} записей")
+            else:
+                return success_response(
+                    {"created": False}, status.HTTP_404_NOT_FOUND
+                )
+            return success_response(
+                {"created": True}, status.HTTP_200_OK
+            )
+        except BaseException as err:
+            logger.error(f"Невозможно рассчитать кривую {err}")
+            return error_response(
+                
+                {"error": "Невозможно построить кривую из-за ошибки", }, status.HTTP_500_INTERNAL_SERVER_ERROR)
 class StartTerminalMessagesParsingView(APIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]
 
