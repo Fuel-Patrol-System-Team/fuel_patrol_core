@@ -50,6 +50,6 @@ def alg_piece_remove_message_delays(df: pl.DataFrame):
         if usual_delay is None:
             return df
         usual_delay = cast(float, usual_delay)
-        df = df.filter(pl.col("server_delay").lt(usual_delay * 3))
+        df = df.filter(pl.col("server_delay").le(usual_delay * 3))
         return df
     return df
