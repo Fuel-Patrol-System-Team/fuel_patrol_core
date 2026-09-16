@@ -264,6 +264,15 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             vehicle_data["car_unit_id"] = str(car_unit.id)
         vehicle_data["unit_name"] = unit_name
         # TODO: добить постфиксы metadata_postfix для датчиков пробега и прочего
+        custom_fields = vehicle_data.get("customFields", [])
+        marks = list(filter(lambda x: x["name"].lower() == "марка", custom_fields))
+        models = list(filter(lambda x: x["name"].lower() == "модель", custom_fields))
+        mark = None
+        model = None
+        if len(marks) > 0:
+            mark = marks[0]
+        if len(models) > 0:
+            model = models[0]
         for sensor in vehicle_data.get("sensors", []):
             sensor_type = sensor.get("type")
             sensor_name = sensor.get("name", "")
@@ -475,5 +484,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     top_sensors[0].is_picked = True
         vehicle_data["input"] = input_value
         vehicle_data["output"] = output_value
+        vehicle_data["model"] = model
+        vehicle_data["mark"] = mark
         vehicle_data["sensorsMapping"] = sensors_mapping
         return vehicle_data

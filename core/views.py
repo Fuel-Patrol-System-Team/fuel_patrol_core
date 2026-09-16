@@ -5,7 +5,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 import polars as pl
 from django.core.exceptions import ObjectDoesNotExist, ValidationError, PermissionDenied
-from django.db.models import F, Q, Count, Prefetch, Subquery, OuterRef, Sum, IntegerField
+from django.db.models import F, Q, Count, Prefetch, Subquery, OuterRef, Sum, IntegerField, Exists
 from django.db.models.functions import Coalesce
 
 import pandas
@@ -823,6 +823,42 @@ class CarListAPIView(ListAPIView):
         ).prefetch_related('consumptions').distinct().order_by('id')
 
 
+class CarUnfilledListAPIView(ListAPIView):
+    permission_classes = [IsOrgMember]
+    serializer_class = CarOutputSerializer
+    pagination_class = StandardResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_class = CarFilter
+    search_fields = ['name', 'description', 'car_unit__name', 'model__label', 'model_specs__label']
+
+    @swagger_auto_schema(
+        operation_summary="Список несконфигурированных автомобилей",
+        operation_description=(
+            "Возвращает автомобили текущей организации, у которых не указана марка (model) "
+            "или спецификация (model_specs), и при этом отсутствует запись CarConsumption. "
+            "Поддерживает стандартную пагинацию и фильтры Cars."
+        ),
+        responses={200: CarOutputSerializer(many=True), 401: "Не авторизован"},
+    )
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
+
+    def get_queryset(self):
+        if _ANON_GUARD(self):
+            return Car.objects.none()
+        user = self.request.user
+        language_code = _get_language_code(user)
+        return Car.objects.filter(
+            data_providers__org_id=user.org.id
+        ).filter(
+            Q(model__isnull=True) | Q(model_specs__isnull=True)
+        ).filter(
+            ~Exists(CarConsumption.objects.filter(car_id=OuterRef('pk')))
+        ).select_related('car_unit', 'model', 'model_specs').prefetch_related(
+            *_car_prefetch(language_code)
+        ).distinct().order_by('id')
+
+
 class CarListBySensorGroupAPIView(ListAPIView):
     permission_classes = [IsOrgMember]
     serializer_class = CarByGroupSensorsValuesOutputSerializer
@@ -851,7 +887,6 @@ class CarListBySensorGroupAPIView(ListAPIView):
                 car_id__data_providers__org_id=self.request.user.org.id, key__key=key_value, is_active=True
             )
         return result.order_by("id")
-
 
 class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
     permission_classes = [IsNotDemoUser, IsOrgMember]

@@ -21,7 +21,7 @@ from core.views import APICalculationLogRetrieveAPIView, AutoDataListAPIView, Ca
     CarFuelReportListAPIView, CarFuelReportDetailAPIView, TimezoneListAPIView, APICalculationLogListAPIView, \
     CarBadDataDashboardAPIView, CarBadDataDetailAPIView, AlertSubscriptionAPIView, MLReasoningView, StopsMileageAPIView, \
     CarModelListCreateAPIView, CarModelDetailAPIView, CarModelSpecificationListCreateAPIView, \
-    CarModelSpecificationDetailAPIView
+    CarModelSpecificationDetailAPIView, CarUnfilledListAPIView
 
 urlpatterns = [
 
@@ -53,6 +53,7 @@ urlpatterns = [
     path("cars/bySensorGroup", CarListBySensorGroupAPIView.as_view(), name="car-sensor-list"),
     path('cars', CarListAPIView.as_view(), name='car-list'),
     path('cars/create-line', CarComputeLineView.as_view(), name='car-compute-line'),
+    path('cars/unfilled', CarUnfilledListAPIView.as_view(), name='car-unfilled-list'),
     path('cars/models', CarModelListCreateAPIView.as_view(), name='car-model-list'),
     path('cars/models/<uuid:pk>', CarModelDetailAPIView.as_view(), name='car-model-detail'),
     path('cars/model-specs', CarModelSpecificationListCreateAPIView.as_view(), name='car-model-specs-list'),
