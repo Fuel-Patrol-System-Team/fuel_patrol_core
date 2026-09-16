@@ -86,6 +86,7 @@ def fuel_spent_calculate(
 
 # НЕ ТРОГАТЬ, НЕ ПЕРЕНОСИТЬ
 
+
 def tarify_car_by_sensor(
     df: pl.DataFrame,
     cars: dict[str, Any],
@@ -98,14 +99,16 @@ def tarify_car_by_sensor(
     mp = unique[0]
     lp = unique[-1]
     df = df.with_columns(
-        pl.when(pl.col(column).le(mp["input"])).then(mp["output"]).otherwise(pl.col(column)).alias(column)
+        pl.when(pl.col(column).le(mp["input"]))
+        .then(mp["output"])
+        .otherwise(pl.col(column))
+        .alias(column)
     )
     # Нормализация через медиану, ранее была отдельно из-за низких периодов которые не сильно влияли на результаты
     degrees = cars.get("degrees", None)
     if degrees is not None:
         df = df.with_columns(pl.col(column).rolling_median(window_size=degrees))
 
-        
     for fp, sp in pairs:
         slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
         b = fp["output"] - slope * fp["input"]
@@ -367,7 +370,9 @@ def preprocess_basic_one(
         degrees = cars.get("median_degrees")
         try:
             if len(degrees) != 0 and degrees is not None and degrees[i] is not None:
-                df = df.with_columns(pl.col(sensor).rolling_median(window_size=degrees[i]))
+                df = df.with_columns(
+                    pl.col(sensor).rolling_median(window_size=degrees[i])
+                )
         except IndexError:
             pass
 
@@ -493,7 +498,6 @@ def preprocess_basic_one(
             .otherwise(0)
             .cast(pl.Int16)
             .alias("jumps"),
-            
         ]
     )
 
@@ -516,23 +520,25 @@ def preprocess_basic_one(
 
     df = df.with_columns(pl.col("dtime").mul(pl.col("ign")).alias("es"))
     df = df.with_columns(pl.col("rpm").mul(pl.col("dtime")).alias("rpm_total"))
-    df = df.with_columns(pl.col("pos_s").mul(pl.col("dtime")).alias("energy"))    
+    df = df.with_columns(pl.col("pos_s").mul(pl.col("dtime")).alias("energy"))
     # расчеты кол-ва смены знаков, смены напряжения (для отсекания сливов по признаку замыкания)
-    df = df.with_columns(pl.col("calc_sensors_fuel_level").diff().ge(0).cast(pl.Int32).alias("_fc_sign"))
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level").diff().ge(0).cast(pl.Int32).alias("_fc_sign")
+    )
     df = df.with_columns(
         [
-        pl.col("_fc_sign").ne(pl.col("_fc_sign").shift(1)).cast(pl.Int32).alias("fc_sign"),
-        pl.col("calc_sensors_voltage").diff().abs().alias("voltage_diff"),
+            pl.col("_fc_sign")
+            .ne(pl.col("_fc_sign").shift(1))
+            .cast(pl.Int32)
+            .alias("fc_sign"),
+            pl.col("calc_sensors_voltage").diff().abs().alias("voltage_diff"),
         ]
     )
     aggs = [
         *aggs,
         pl.sum("_fc_sign"),
         pl.sum("voltage_diff"),
-
     ]
-
-
 
     df = df.group_by_dynamic(
         index_column="timestamp", every=f"{ANTI_BUG_TIME_SECONDS}s", group_by="auto"
@@ -664,7 +670,10 @@ def preprocess_basic_one(
                 "refuel"
             ),
             (
-                (pl.col("fuel_delta")).clip(upper_bound=0).mul(pl.col("is_falling")).abs()
+                (pl.col("fuel_delta"))
+                .clip(upper_bound=0)
+                .mul(pl.col("is_falling"))
+                .abs()
             ).alias("fall"),
         ]
     )
@@ -721,11 +730,40 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("is_fall_eligble").mul(pl.col("fall")).alias("fall_eligble")
     )
+
     # Drop transient helper columns so they don't leak into downstream consumers.
     df = df.drop(["_refuel_span_first", "_refuel_span_last"])
     aggs = [
         *aggs,
         pl.sum("fall_eligble"),
     ]
+    df = df.with_columns(
+        pl.col("pos_s")
+        .fill_null(0)
+        .rolling_mean_by(window_size="30s", by="timestamp")
+        .alias("pos_s_mean")
+    )
+    df = (
+        df.with_columns(pl.col("pos_s_mean").gt(3).cast(pl.Int8).alias("is_moving"))
+        .with_columns(pl.col("is_moving").diff().abs().cum_sum().alias("moving_group"))
+        .with_columns(
+            pl.col("is_moving").eq(1)
+            & (pl.col("is_moving").shift(1).fill_null(0) == 0).alias("is_moving_start")
+        )
+    )
+    df = df.with_columns(
+        pl.col("timestamp")
+        .sub(pl.col("timestamp").first().over("moving_group"))
+        .dt.total_seconds()
+        .truediv(3600)
+        .cast(pl.Int32)
+        .alias("hour_idx")
+    ).with_columns(
+        (pl.col("hour_idx").diff().ne(0) | pl.col("moving_group").diff().ne(0))
+        .fill_null(True)
+        .cast(pl.Int8)
+        .cum_sum()
+        .alias("span_group")
+    )
 
     return df, reports, aggs

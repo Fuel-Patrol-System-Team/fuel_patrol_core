@@ -249,7 +249,7 @@ class LeaksService(BaseLeaksCalculator):
         logger.debug(f"Группировка по {PRE_PERIOD_TIME}-минутным интервалам")
         initial_count = len(anti_bug)
         anti_bug = anti_bug.group_by_dynamic(
-            index_column="timestamp", every=f"{PRE_PERIOD_TIME}m", group_by="auto"
+            index_column="timestamp", every=f"{PRE_PERIOD_TIME}m", group_by=["auto", "span_group"]
         ).agg(
             [
                 pl.median("pos_s").alias("pos_s"),
@@ -305,10 +305,11 @@ class LeaksService(BaseLeaksCalculator):
 
         logger.debug(f"Финальная группировка по {PERIOD_2_MIN}-минутным интервалам")
         initial_count = len(anti_bug)
-        result = anti_bug.group_by_dynamic(
-            index_column="timestamp", every=f"{PERIOD_2_MIN}m", group_by="auto"
+        result = anti_bug.group_by(
+            ["auto", "span_group"]
         ).agg(
             [
+                pl.col("timestamp").first(),
                 pl.mean("pos_s").alias("pos_s"),
                 pl.sum("spent_fuel").alias("spent_fuel"),
                 pl.max("pos_s_max").alias("pos_s_max"),
