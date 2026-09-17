@@ -856,8 +856,6 @@ class CarUnfilledListAPIView(ListAPIView):
             data_providers__org_id=user.org.id
         ).filter(
             Q(model__isnull=True) | Q(model_specs__isnull=True)
-        ).filter(
-            ~Exists(CarConsumption.objects.filter(car_id=OuterRef('pk')))
         ).select_related('car_unit', 'model', 'model_specs').prefetch_related(
             *_car_prefetch(language_code)
         ).distinct().order_by('id')
