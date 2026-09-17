@@ -585,6 +585,7 @@ def preprocess_basic_one(
 
     df = df.with_columns(
         pl.col("spent_fuel")
+        .fill_null(0)
         .rolling_mean_by("timestamp", window_size="30m", closed="both")
         .alias("spent_fuel_rolling")
     )
@@ -593,6 +594,8 @@ def preprocess_basic_one(
     # 1. Short rolling median of the fuel level → fuel_smooth.
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
+        .fill_null(strategy="forward")
+        .fill_null(0)
         .rolling_median_by(by="timestamp", window_size=SMOOTH_WINDOW, closed="both")
         .over("auto")
         .alias("fuel_smooth")
