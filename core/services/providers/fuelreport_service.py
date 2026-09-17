@@ -94,8 +94,8 @@ class FuelReportService:
             pl.col("spent_fuel_t").first().alias("fuel_spent")
         )
         result_agg = result.group_by("auto").agg([
-            pl.first("fuel_first").alias("fuel_start"),
-            pl.last("fuel_last").alias("fuel_end"),
+            pl.col("fuel_first").drop_nulls().first().alias("fuel_start"),
+            pl.col("fuel_last").drop_nulls().last().alias("fuel_end"),
             pl.col("fuel_spent").sub(refuel).clip(upper_bound=0).abs().first().alias("fuel_spent"),
             pl.col("fuel_consumpt_spent").sum().alias("fuel_consumpt_spent"),
             pl.col("fuel_consumpt_first").first(),
