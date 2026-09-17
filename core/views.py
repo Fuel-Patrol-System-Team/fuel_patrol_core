@@ -697,14 +697,18 @@ class MotohoursCalculationAPIView(APICalculationLoggingMixin, APIView):
 
         try:
             if start_date:
-                start_date = _parse_to_aware(start_date, target_timezone)
+                start_date = _parse_to_aware(start_date, target_timezone).astimezone(pytz.utc)
             if end_date:
-                end_date = _parse_to_aware(end_date, target_timezone)
+                end_date = _parse_to_aware(end_date, target_timezone).astimezone(pytz.utc)
+            else:
+                end_date = datetime.now(pytz.utc)
         except ValueError as e:
             return Response({"error": f"Неверный формат даты: {e}"}, status=400)
+        except Exception as e:
+            return Response({"error": f"Ошибка обработки дат: {e}"}, status=400)
 
-        if not start_date or not end_date:
-            return Response({"error": "Параметры start_date и end_date обязательны"}, status=400)
+        if not start_date:
+            return Response({"error": "Параметр start_date обязателен"}, status=400)
 
         now = datetime.now(target_timezone)
 

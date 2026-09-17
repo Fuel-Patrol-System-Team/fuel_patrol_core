@@ -20,6 +20,7 @@ class FuelReportService:
     @staticmethod
     def build_right_history(df: pl.DataFrame, fillings: pl.DataFrame):
         df = df.join(fillings, on="timestamp", how="left")
+        df = df.with_columns(pl.col("refill").fill_null(0))
         return df
 
     @staticmethod
