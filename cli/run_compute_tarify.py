@@ -4,10 +4,12 @@ import argparse
 
 import polars as pl
 
-from core.services.providers.car_consumption_service import CarConsumptionService
-from core.tests.test_parser_calc import NormsService
-pl.enable_string_cache()
+
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from cli.helpers.csv import write_csv_compute
+pl.enable_string_cache()
+
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
 
@@ -17,9 +19,10 @@ django.setup()
 import app.tasks  # noqa: E402,F401 — must be imported before the providers below
                   # to break a circular import (car_data_service -> app.tasks -> fuelreport_service -> car_data_service)
 
-from core.models import Car, CarPrimary
+from core.models import Car
 from core.services.providers.car_data_service import CarDataService
 from core.services.providers.leaks_service import LeaksService
+from core.helpers.fuel import tarify_car_by_sensor
 
 
 _CSV_SCHEMA_OVERRIDES = {
@@ -29,38 +32,51 @@ _CSV_SCHEMA_OVERRIDES = {
     "rpm": pl.Int32,
     "mileage": pl.Float32,
     "motohours": pl.Float32,
+    "longitude": pl.Float32,
+    "latitude": pl.Float32,
     "calc_sensors_fuel_level": pl.Float32
 }
 
 
-def _run_norms_from_file(data_slice: pl.DataFrame, car_id: str):
-    car = (
-        Car.objects
-        .filter(id=car_id)
-        .first()
-    )
+def _run_compute_from_file(data_slice: pl.DataFrame, car_id: str):
+    car = None
+    try:
+        car = (
+            
+            Car.objects
+            .select_related("carprimary")
+            .prefetch_related("consumptions")
+            .filter(id=car_id)
+            .first()
+        )
+    except BaseException:
+        print(f"Car {car_id} no primary or consumptions")
+        return None
     if car is None:
         print(f"Car {car_id} is not found at all")
         return None
-    
     auto_data = CarDataService.prepare_auto_data(car)
-    primary = CarDataService.calculate_primary_single(data_slice, auto_data)
-    if primary is not None:
-        status = CarDataService.save_primary_to_db(car, primary)
-        norms, status = NormsService.calculate_norms_single(data_slice, primary, auto_data)
-        if norms is not None:
-            CarConsumptionService.save_consumption_rates(norms, car)
+    result, _, _, _ = tarify_car_by_sensor(data_slice, auto_data.to_dicts()[0] )
+    if result is None:
+        print("result for computations in None check the underlying dataframe")
+    return result
+
 
 def main():
-    parser = argparse.ArgumentParser("compute", "compute leaks from file")
+    parser = argparse.ArgumentParser("tarify", "tarify leaks from file")
     parser.add_argument("file")
+    parser.add_argument("output_path")
     args = parser.parse_args()
 
     data = pl.read_csv(args.file, schema_overrides=_CSV_SCHEMA_OVERRIDES)
     car_id = data["auto"].first()
-    result = _run_norms_from_file(data, car_id)
+    result = _run_compute_from_file(data, car_id)
     if result is not None:
-        print(result)
+        write_csv_compute(result, args.output_path)
+        return
+    print("result for computations is zero")
+    
+        
 
 
 if __name__ == "__main__":

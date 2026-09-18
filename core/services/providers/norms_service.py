@@ -169,17 +169,24 @@ class NormsService:
                 return None
 
             mean_keys = {
-                key: group_df[key].mean()
+                key: (
+                    group_df[key].mean()
+                    if key in group_df.columns
+                    else 0.0
+                )
                 for key in [
                     "fpm_model_coef",
+                    "fpm_model_dt_coef",
                     "fpm_model_intercept",
                     "fpm_model_mean",
                     "fpm_model_std",
                     "speed_model_intercept",
                     "speed_model_coef",
+                    "speed_model_dt_coef",
                     "speed_model_std",
                     "rpm_model_intercept",
                     "rpm_model_coef",
+                    "rpm_model_dt_coef",
                     "rpm_model_std"
                 ]
             }
@@ -187,7 +194,10 @@ class NormsService:
                 "created_at": datetime.now().isoformat(),
                 "rpm_model_artificial": True,
                 "speed_model_artificial": True,
-                "fpm_model_artificial": True
+                "fpm_model_artificial": True,
+                "rpm_model_3d": True,
+                "speed_model_3d": True,
+                "fpm_model_3d": True
             }
             norms_df = pl.DataFrame(
                 {
@@ -874,16 +884,24 @@ class NormsService:
         MIN_SAMPLES: int = 10,
         alpha: float = 0.1,
         GUARD_COEF_SIGMA: float = 2.5,
+        dtime_feature: Optional[str] = None,
     ):
-        check_coef, check_intercept, check_mean, check_std = (
+        check_coefs, check_intercept, check_mean, check_std = (
             NormsService._fit_lasso_per_car(
-                group, feature, target, auto, MIN_SAMPLES, alpha
+                group, feature, target, auto, MIN_SAMPLES, alpha, dtime_feature
             )
         )
+        if check_coefs == [0.0] * len(check_coefs) and check_intercept == 0.0:
+            return check_coefs, check_intercept, check_mean, check_std
+        check_prediction = pl.lit(check_intercept)
+        if dtime_feature is not None:
+            check_prediction = check_prediction.add(
+                pl.col(dtime_feature).mul(check_coefs[1])
+            )
         group = group.with_columns(
             pl.col(feature)
-            .mul(check_coef)
-            .add(check_intercept)
+            .mul(check_coefs[0])
+            .add(check_prediction)
             .alias("check_prediction")
         )
         group = group.filter(
@@ -891,12 +909,12 @@ class NormsService:
             .sub(pl.col("check_prediction"))
             .lt(check_mean + check_std * GUARD_COEF_SIGMA)
         )
-        real_coef, real_intercept, real_mean, real_std = (
+        real_coefs, real_intercept, real_mean, real_std = (
             NormsService._fit_lasso_per_car(
-                group, feature, target, auto, MIN_SAMPLES, alpha=0.1
+                group, feature, target, auto, MIN_SAMPLES, alpha=0.1, dtime_feature=dtime_feature
             )
         )
-        return real_coef, real_intercept, real_mean, real_std
+        return real_coefs, real_intercept, real_mean, real_std
 
     @staticmethod
     def _fit_lasso_per_car(
@@ -906,44 +924,56 @@ class NormsService:
         auto: Any,
         MIN_SAMPLES: int = 10,
         alpha: float = 0.1,
-    ) -> Tuple[float, float, float, float]:
+        dtime_feature: Optional[str] = None,
+    ) -> Tuple[List[float], float, float, float]:
         """Подгонка Lasso по данным одной машины.
 
-        Возвращает (coef, intercept, mean, std). residual_std — std остатков
-        (y - ŷ). При нехватке данных/ошибке возвращает (0, mean(y), 0, 0).
+        При переданном dtime_feature строится 3D-модель с двумя признаками
+        (feature + dtime_feature). Возвращает (coefs, intercept, mean, std),
+        где coefs — список коэффициентов по признакам. residual_std — std
+        остатков (y - ŷ). При нехватке данных/ошибке возвращает
+        (нули, mean(y), 0, 0).
         """
+        import numpy as np
+
+        features = [feature] if dtime_feature is None else [feature, dtime_feature]
+        n_coefs = len(features)
         try:
-            if feature not in group.columns or target not in group.columns:
+            missing = [f for f in features if f not in group.columns]
+            if missing or target not in group.columns:
                 logger.warning(
-                    f"Машина {auto}: нет колонки {feature}/{target} для Lasso"
+                    f"Машина {auto}: нет колонки {missing or target} для Lasso"
                 )
-                return 0.0, 0.0, 0.0, 0.0
+                return [0.0] * n_coefs, 0.0, 0.0, 0.0
 
             if group.height < MIN_SAMPLES:
                 logger.info(
                     f"Машина {auto}: мало данных ({group.height}) для Lasso {target}"
                 )
                 y_mean = NormsService._safe_mean(group, target)
-                return 0.0, y_mean, 0.0, 0.0
+                return [0.0] * n_coefs, y_mean, 0.0, 0.0
 
-            x = group.select(feature).to_numpy().astype("float64")
+            x = group.select(features).to_numpy().astype("float64")
             y = group.select(target).to_numpy().astype("float64").ravel()
 
             # заполняем NaN/inf нулями, чтобы не падать
-            import numpy as np
-
-            x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).reshape(-1, 1)
+            x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
             y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
 
             if y.std() == 0 or x.std() == 0:
                 logger.info(f"Машина {auto}: нулевая дисперсия для Lasso {target}")
-                return 0.0, float(y.mean()) if y.size > 0 else 0.0, 0.0, 0.0  # type: ignore[arg-type]
+                return (
+                    [0.0] * n_coefs,
+                    float(y.mean()) if y.size > 0 else 0.0,
+                    0.0,
+                    0.0,
+                )  # type: ignore[arg-type]
 
             model = Lasso(alpha=alpha)
             model.fit(X=x, y=y)
             residuals = y - model.predict(x)
             return (
-                float(model.coef_[0]),
+                [float(c) for c in model.coef_],
                 float(model.intercept_),
                 float(residuals.mean()),
                 float(residuals.std()),
@@ -954,7 +984,7 @@ class NormsService:
                 y_mean = NormsService._safe_mean(group, target)
             except Exception:
                 y_mean = 0.0
-            return 0.0, y_mean, 0.0, 0.0
+            return [0.0] * n_coefs, y_mean, 0.0, 0.0
 
     @staticmethod
     def _safe_mean(group: pl.DataFrame, col: str) -> float:
@@ -1085,18 +1115,26 @@ class NormsService:
             # Lasso подгоняется по каждой машине отдельно (если у машины
             # своя модель поведения). Стандартное отклонение — это std остатков
             # (y - ŷ), а не std предсказаний.
-            rpm_model_coef, rpm_model_intercept, rpm_model_mean, rpm_model_std = (
+            rpm_model_coefs, rpm_model_intercept, rpm_model_mean, rpm_model_std = (
                 NormsService._fit_lasso_per_car(
-                    group, feature="rpm_total", target="spent_fuel", auto=auto
+                    group,
+                    feature="rpm_total",
+                    target="spent_fuel",
+                    auto=auto,
+                    dtime_feature="dtime",
                 )
             )
             (
-                speed_model_coef,
+                speed_model_coefs,
                 speed_model_intercept,
                 speed_model_mean,
                 speed_model_std,
             ) = NormsService._fit_lasso_per_car(
-                group, feature="pos_s", target="spent_fuel", auto=auto
+                group,
+                feature="pos_s",
+                target="spent_fuel",
+                auto=auto,
+                dtime_feature="dtime",
             )
             group_sfm = group.filter(pl.col("sf_m").lt(0)).with_columns(
                 pl.col("pos_s_m")
@@ -1104,9 +1142,13 @@ class NormsService:
                 .mul(pl.col("dtime_moving"))
                 .alias("fpm_x_metric"),
             )
-            fpm_model_coef, fpm_model_intercept, fpm_model_mean, fpm_model_std = (
+            fpm_model_coefs, fpm_model_intercept, fpm_model_mean, fpm_model_std = (
                 NormsService.fit_lasso_per_car_with_guard(
-                    group_sfm, feature="fpm_x_metric", target="fpm", auto=auto
+                    group_sfm,
+                    feature="fpm_x_metric",
+                    target="fpm",
+                    auto=auto,
+                    dtime_feature="dtime",
                 )
             )
 
@@ -1154,16 +1196,19 @@ class NormsService:
                         "norma_std": std,
                         "speed_etalon": float(min(max_speed, 60)),  # type: ignore[arg-type]
                         "norma_rpm_mean": rpm_mean,
-                        "rpm_model_coef": rpm_model_coef,
+                        "rpm_model_coef": rpm_model_coefs[0],
+                        "rpm_model_dt_coef": rpm_model_coefs[1],
                         "rpm_model_intercept": rpm_model_intercept,
                         "rpm_model_std": rpm_model_std,
                         "rpm_model_mean": rpm_model_mean,
-                        "speed_model_coef": speed_model_coef,
+                        "speed_model_coef": speed_model_coefs[0],
+                        "speed_model_dt_coef": speed_model_coefs[1],
                         "speed_model_intercept": speed_model_intercept,
                         "speed_model_std": speed_model_std,
                         "norma_rpm_std": rpm_std,
                         "norma_rpm_max": rpm_max,
-                        "fpm_model_coef": fpm_model_coef,
+                        "fpm_model_coef": fpm_model_coefs[0],
+                        "fpm_model_dt_coef": fpm_model_coefs[1],
                         "fpm_model_intercept": fpm_model_intercept,
                         "fpm_model_mean": fpm_model_mean,
                         "fpm_model_std": fpm_model_std,
@@ -1196,12 +1241,15 @@ class NormsService:
             "norma_rpm_std": pl.Float32,
             "norma_rpm_max": pl.Float32,
             "rpm_model_coef": pl.Float32,
+            "rpm_model_dt_coef": pl.Float32,
             "rpm_model_intercept": pl.Float32,
             "rpm_model_std": pl.Float32,
             "speed_model_coef": pl.Float32,
+            "speed_model_dt_coef": pl.Float32,
             "speed_model_intercept": pl.Float32,
             "speed_model_std": pl.Float32,
             "fpm_model_coef": pl.Float32,
+            "fpm_model_dt_coef": pl.Float32,
             "fpm_model_intercept": pl.Float32,
             "fpm_model_mean": pl.Float32,
             "fpm_model_std": pl.Float32,

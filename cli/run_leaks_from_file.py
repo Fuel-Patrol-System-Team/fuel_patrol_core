@@ -4,6 +4,8 @@ import argparse
 
 import polars as pl
 
+from core.services.providers.filtering_service import FilteringService
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli.helpers.csv import write_csv_compute
 pl.enable_string_cache()
@@ -35,7 +37,7 @@ _CSV_SCHEMA_OVERRIDES = {
 }
 
 
-def _run_compute_from_file(data_slice: pl.DataFrame, car_id: str):
+def _run_leaks_from_file(data_slice: pl.DataFrame, car_id: str):
     car = None
     try:
         car = (
@@ -67,7 +69,10 @@ def _run_compute_from_file(data_slice: pl.DataFrame, car_id: str):
     )
     if result is None:
         print("result for computations in None check the underlying dataframe")
-    return result
+        return result
+    filtering_service = FilteringService()
+    leaks, _ = filtering_service.apply_filters(result)
+    return leaks
 
 
 def main():
@@ -78,7 +83,7 @@ def main():
 
     data = pl.read_csv(args.file, schema_overrides=_CSV_SCHEMA_OVERRIDES)
     car_id = data["auto"].first()
-    result = _run_compute_from_file(data, car_id)
+    result = _run_leaks_from_file(data, car_id)
     if result is not None:
         write_csv_compute(result, args.output_path)
         return

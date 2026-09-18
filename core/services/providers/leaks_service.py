@@ -248,10 +248,12 @@ class LeaksService(BaseLeaksCalculator):
 
         logger.debug(f"Группировка по {PRE_PERIOD_TIME}-минутным интервалам")
         initial_count = len(anti_bug)
-        anti_bug = anti_bug.group_by_dynamic(
-            index_column="timestamp", every=f"{PRE_PERIOD_TIME}m", group_by=["auto", "span_group"]
+        anti_bug = anti_bug.group_by(
+            ["auto", "span_group"]
         ).agg(
             [
+                pl.col("timestamp").first(),
+                pl.col("timestamp").last().alias("timestamp_last"),
                 pl.median("pos_s").alias("pos_s"),
                 pl.max("pos_s_max").alias("pos_s_max"),
                 pl.sum("spent_fuel").alias("spent_fuel"),
@@ -310,6 +312,7 @@ class LeaksService(BaseLeaksCalculator):
         ).agg(
             [
                 pl.col("timestamp").first(),
+                pl.col("timestamp_last").last(),
                 pl.mean("pos_s").alias("pos_s"),
                 pl.sum("spent_fuel").alias("spent_fuel"),
                 pl.max("pos_s_max").alias("pos_s_max"),
@@ -485,7 +488,13 @@ class LeaksService(BaseLeaksCalculator):
         )
         if df_values["rpm_total"].is_not_null().any() or norma.get("rpm_model_coef") is None:
             df_values = df_values.with_columns(
-                pl.col("rpm_total").mul(norma.get("rpm_model_coef", 0), ).add(norma.get("rpm_model_intercept", 0)).alias("rpm_model_predicted"),
+                pl.col("rpm_total")
+                .mul(norma.get("rpm_model_coef", 0))
+                .add(
+                    pl.col("dtime").mul(norma.get("rpm_model_dt_coef", 0.0))
+                )
+                .add(norma.get("rpm_model_intercept", 0))
+                .alias("rpm_model_predicted"),
                 pl.lit(norma.get("rpm_model_std")).cast(pl.Float32).alias("rpm_model_std")
             )
         else:
@@ -497,8 +506,13 @@ class LeaksService(BaseLeaksCalculator):
         # so we must predict using pos_s_m, NOT fpm.
         if df_values["pos_s_m"].is_not_null().any() or norma.get("fpm_model_coef") is None:
             df_values = df_values.with_columns(
-                pl.col("fpm_metric_x").mul(norma.get("fpm_model_coef", 0)).add(norma.get("fpm_model_intercept", 0)).alias("fpm_model_predicted"),
-                pl.lit(norma.get("fpm_model_std")).cast(pl.Float32).alias("fpm_model_std")
+                pl.col("fpm_metric_x")
+                .mul(norma.get("fpm_model_coef", 0))
+                .add(pl.col("dtime").mul(norma.get("fpm_model_dt_coef", 0.0)))
+                .add(norma.get("fpm_model_intercept", 0))
+                .alias("fpm_model_predicted"),
+                pl.lit(norma.get("fpm_model_std")).cast(pl.Float32).alias("fpm_model_std"),
+                pl.lit(norma.get("fpm_model_mean", 0.0)).cast(pl.Float32).alias("fpm_model_mean")
             )
         else:
             df_values = df_values.with_columns(
@@ -506,10 +520,14 @@ class LeaksService(BaseLeaksCalculator):
                 pl.lit(None).cast(pl.Float32).alias("fpm_model_std"),
                 pl.lit(None).cast(pl.Float32).alias("fpm_model_mean"),
             )
-        # speed_model: linear model pos_s -> spent_fuel (per-car Lasso from norms)
+        # speed_model: linear model pos_s + dtime -> spent_fuel (per-car Lasso from norms)
         if df_values["pos_s"].is_not_null().any() or norma.get("speed_model_coef") is None:
             df_values = df_values.with_columns(
-                pl.col("pos_s").mul(norma.get("speed_model_coef", 0)).add(norma.get("speed_model_intercept", 0)).alias("speed_model_predicted"),
+                pl.col("pos_s")
+                .mul(norma.get("speed_model_coef", 0))
+                .add(pl.col("dtime").mul(norma.get("speed_model_dt_coef", 0.0)))
+                .add(norma.get("speed_model_intercept", 0))
+                .alias("speed_model_predicted"),
                 pl.lit(norma.get("speed_model_std")).cast(pl.Float32).alias("speed_model_std")
             )
         else:

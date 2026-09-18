@@ -16,10 +16,12 @@ logger = logging.getLogger(__name__)
 class FilteringService(BaseFilteringService):
     """Сервис для фильтрации результатов утечек"""
 
-    
     def final_filter(self, df: pl.DataFrame):
-        filtered_df = df.filter(pl.col("is_picked_leak").eq(True) & pl.col("filtered").eq(False))
+        filtered_df = df.filter(
+            pl.col("is_picked_leak").eq(True) & pl.col("filtered").eq(False)
+        )
         return filtered_df, df
+
     def apply_filters(self, df: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
         """
         Применяет все фильтры к данным.
@@ -40,8 +42,8 @@ class FilteringService(BaseFilteringService):
         # filtered_df, _ = self.pick_by_rpm_model(filtered_df)
         filtered_df, _ = self.filtering_count(filtered_df, 10)
         filtered_df, _ = self.filtering_sattelites(filtered_df)
-        filtered_df, _ = self.filtering_possible_short_circuit(filtered_df)
-        
+        # filtered_df, _ = self.filtering_possible_short_circuit(filtered_df)
+
         filtered_df, _ = self.pick_by_fpm_std(filtered_df, SIGMAS=3)
         filtered_df, _ = self.pick_by_speed_model(filtered_df, SIGMAS=2.8)
         filtered_df, _ = self.pick_by_spent_fuel_std(filtered_df, SIGMAS=2.5)
@@ -106,18 +108,15 @@ class FilteringService(BaseFilteringService):
     ):
         result_df = self._tool_pick_leak(
             result_df,
-                pl.col("spent_fuel_boundary")
-                .clip(upper_bound=0)
-                .abs()
-                .sub(pl.col("spent_fuel"))
-            ,
-            
-                pl.col("spent_fuel_boundary")
-                .clip(upper_bound=0)
-                .abs()
-                .sub(pl.col("spent_fuel"))
-                .gt(HARD_LOSS_IN_BOUNDARY)
-            ,
+            pl.col("spent_fuel_boundary")
+            .clip(upper_bound=0)
+            .abs()
+            .sub(pl.col("spent_fuel")),
+            pl.col("spent_fuel_boundary")
+            .clip(upper_bound=0)
+            .abs()
+            .sub(pl.col("spent_fuel"))
+            .gt(HARD_LOSS_IN_BOUNDARY),
             FuelFilters.BOUNDARY.value,
         )
         result_df = result_df.with_columns(
@@ -135,16 +134,17 @@ class FilteringService(BaseFilteringService):
         )
 
         return result_df, result_df
-    
-    def _tool_pick_filter(self,
-        result_df: pl.DataFrame,
-        expr: pl.Expr,
-        filtered_name: str):
+
+    def _tool_pick_filter(
+        self, result_df: pl.DataFrame, expr: pl.Expr, filtered_name: str
+    ):
         return result_df.with_columns(
             pl.when(expr).then(True).otherwise(pl.col("filtered")).alias("filtered"),
-            pl.when(expr).then(pl.lit(filtered_name)).otherwise(pl.col("filtered_reason")).alias("filtered_reason"),
+            pl.when(expr)
+            .then(pl.lit(filtered_name))
+            .otherwise(pl.col("filtered_reason"))
+            .alias("filtered_reason"),
         )
-        
 
     def _tool_pick_leak(
         self,
@@ -163,7 +163,10 @@ class FilteringService(BaseFilteringService):
                 .then(pl.lit(picked_by_name))
                 .otherwise(pl.col("picked_by"))
                 .alias("picked_by"),
-                pl.when(expr).then(target_expr_col).otherwise(pl.col("leak_display")).alias("leak_display"),
+                pl.when(expr)
+                .then(target_expr_col)
+                .otherwise(pl.col("leak_display"))
+                .alias("leak_display"),
             ]
         )
         return result_df
@@ -194,7 +197,11 @@ class FilteringService(BaseFilteringService):
         return result_df, result_df
 
     def pick_by_fpm_std(
-        self, result_df: pl.DataFrame, SIGMAS: float = 3, SF_M_BARRIER = 8, DTIME_BARRIER_MINUTES = 5
+        self,
+        result_df: pl.DataFrame,
+        SIGMAS: float = 3,
+        SF_M_BARRIER=8,
+        DTIME_BARRIER_MINUTES=5,
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по стандартному отклонению расхода (fpm -> spent_fuel)"""
         # Guard: if fpm_model_std is 0 (e.g. no training data), skip this filter
@@ -216,27 +223,35 @@ class FilteringService(BaseFilteringService):
 
         result_df = result_df.with_columns(
             [
-                pl.col("fpm_model_predicted").mul(pl.col("dtime_moving").truediv(60)).alias("sf_m_predicted"),
+                pl.col("fpm_model_predicted")
+                .mul(pl.col("dtime_moving").truediv(60))
+                .alias("sf_m_predicted"),
                 (
-                    (pl.col("fpm") - pl.col("fpm_model_predicted") - pl.col("fpm_model_mean"))
+                    (
+                        pl.col("fpm")
+                        - pl.col("fpm_model_predicted")
+                        - pl.col("fpm_model_mean")
+                    )
                     / pl.col("fpm_model_std")
                 ).alias("z_values_fpm"),
             ]
         )
         result_df = result_df.with_columns(
             [
-            pl.col("z_values_fpm").gt(SIGMAS).alias("is_leak_model_fpm"),
-            pl.col("sf_m").sub(pl.col("sf_m_predicted")).clip(lower_bound=0).alias("sf_m_diff")
+                pl.col("z_values_fpm").gt(SIGMAS).alias("is_leak_model_fpm"),
+                pl.col("sf_m")
+                .sub(pl.col("sf_m_predicted"))
+                .clip(lower_bound=0)
+                .alias("sf_m_diff"),
             ]
         )
         result_df = self._tool_pick_leak(
             result_df,
             pl.col("sf_m_diff"),
             pl.col("is_leak_model_fpm") & pl.col("sf_m_diff").gt(SF_M_BARRIER / 1.2),
-            FuelFilters.SIGMA_FPM.value
+            FuelFilters.SIGMA_FPM.value,
         )
         return result_df, result_df
-
 
     def pick_by_rpm_model(
         self, result_df: pl.DataFrame, SIGMAS: float = 2.5
@@ -245,24 +260,31 @@ class FilteringService(BaseFilteringService):
         if result_df["rpm_model_std"].max() == 0:
             result_df = result_df.with_columns(
                 [
-                pl.lit(False).alias("is_leak_model_rpm"),
-                pl.lit(0).alias("z_values_rpm")
+                    pl.lit(False).alias("is_leak_model_rpm"),
+                    pl.lit(0).alias("z_values_rpm"),
                 ]
             )
         else:
             result_df = result_df.with_columns(
                 [
-                pl.col("spent_fuel")
-                .gt(pl.col("rpm_model_predicted").add(pl.col("rpm_model_std").mul(SIGMAS)))
-                .alias("is_leak_model_rpm"),
-                pl.col("spent_fuel")
-                .sub(pl.col("rpm_model_predicted"))
-                .truediv(pl.col("rpm_model_std"))
-                .alias("z_values_rpm"),
+                    pl.col("spent_fuel")
+                    .gt(
+                        pl.col("rpm_model_predicted").add(
+                            pl.col("rpm_model_std").mul(SIGMAS)
+                        )
+                    )
+                    .alias("is_leak_model_rpm"),
+                    pl.col("spent_fuel")
+                    .sub(pl.col("rpm_model_predicted"))
+                    .truediv(pl.col("rpm_model_std"))
+                    .alias("z_values_rpm"),
                 ]
             )
             result_df = self._tool_pick_leak(
-                result_df, pl.col("spent_fuel").sub("rpm_model_predicted").abs(), pl.col("is_leak_model_rpm"), FuelFilters.RPM_MODEL.value
+                result_df,
+                pl.col("spent_fuel").sub("rpm_model_predicted").abs(),
+                pl.col("is_leak_model_rpm"),
+                FuelFilters.RPM_MODEL.value,
             )
 
         return result_df, result_df
@@ -282,7 +304,11 @@ class FilteringService(BaseFilteringService):
             result_df = result_df.with_columns(
                 [
                     pl.col("spent_fuel")
-                    .gt(pl.col("speed_model_predicted").add(pl.col("speed_model_std").mul(SIGMAS)))
+                    .gt(
+                        pl.col("speed_model_predicted").add(
+                            pl.col("speed_model_std").mul(SIGMAS)
+                        )
+                    )
                     .alias("is_leak_model_speed"),
                     pl.col("spent_fuel")
                     .sub(pl.col("speed_model_predicted"))
@@ -317,11 +343,13 @@ class FilteringService(BaseFilteringService):
             | (pl.col("is_special_car") & pl.col("ign_working"))
         )
         return filtered_df, result_df
-    
-    def filtering_possible_short_circuit(
-        self, result_df: pl.DataFrame
-    ):
-        filtered_df = self._tool_pick_filter(result_df, pl.col("voltage_diff").lt(5), "short_curcuit")
+
+    def filtering_possible_short_circuit(self, result_df: pl.DataFrame):
+        filtered_df = self._tool_pick_filter(
+            result_df,
+            pl.col("voltage_diff").lt(5) & pl.col("ign_max") & pl.col("ign_working"),
+            "short_curcuit",
+        )
 
         return filtered_df, result_df
 
@@ -332,14 +360,18 @@ class FilteringService(BaseFilteringService):
         result_df = result_df.with_columns(
             (1 - (pl.col("no_sat_data") / pl.col("count"))).alias("sat_coverage")
         )
-        filtered_df = self._tool_pick_filter(result_df, pl.col("sat_coverage").lt(SAT_AMOUNT), "low_satellites")
+        filtered_df = self._tool_pick_filter(
+            result_df, pl.col("sat_coverage").lt(SAT_AMOUNT), "low_satellites"
+        )
         return filtered_df, result_df
 
     def filtering_count(
         self, result_df: pl.DataFrame, COUNT_VALUE: int = 12
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по количеству записей"""
-        filtered_df = self._tool_pick_filter(result_df, pl.col("count").lt(COUNT_VALUE), "low_count")
+        filtered_df = self._tool_pick_filter(
+            result_df, pl.col("count").lt(COUNT_VALUE), "low_count"
+        )
         return filtered_df, result_df
 
     def filtering_certains_ids(
@@ -353,14 +385,18 @@ class FilteringService(BaseFilteringService):
         self, result_df: pl.DataFrame
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация специальных машин"""
-        filtered_df = self._tool_pick_filter(result_df, pl.col("is_special_car"), "special_car")
+        filtered_df = self._tool_pick_filter(
+            result_df, pl.col("is_special_car"), "special_car"
+        )
         return filtered_df, result_df
 
     def filtering_high_load(
         self, result_df: pl.DataFrame, LOAD_RATIO: float = 0.75
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по высокой нагрузке"""
-        filtered_df = self._tool_pick_filter(result_df, pl.col("load_ratio") < pl.lit(LOAD_RATIO), "load_ratio")
+        filtered_df = self._tool_pick_filter(
+            result_df, pl.col("load_ratio") < pl.lit(LOAD_RATIO), "load_ratio"
+        )
         return filtered_df, result_df
 
     def filtering_ratio(
