@@ -59,7 +59,7 @@ class FuelReportService:
 
     @staticmethod
     def fuel_spent_calculate_instant(result: pl.DataFrame, sensors: Dict[str, List[Dict[str, Any]]],
-                                     fillings: pl.DataFrame | None, cars: dict[str, Any], agg: int | None):
+                                     fillings: pl.DataFrame | None, fillings_all: pl.DataFrame, cars: dict[str, Any], agg: int | None):
         is_primary, primary = make_primary_fast(result)
         result, reports, _ = preprocess_basic_one(result, cars, sensors, primary, is_fuel_processing=True)
         if not is_primary:
@@ -73,7 +73,7 @@ class FuelReportService:
         return_fillings = []
         if fillings is not None and fillings.shape[0] > 0:
             refuel = fillings["refill"].sum()
-            return_fillings = fillings.with_columns(pl.col("timestamp").dt.to_string("iso:strict")).to_dicts()
+            return_fillings = fillings_all.with_columns(pl.col("timestamp").dt.replace_time_zone(time_zone="UTC").dt.to_string("iso:strict")).to_dicts()
         spent_report = []
         if agg is not None:
             spent_report = result.group_by_dynamic(
@@ -203,7 +203,7 @@ class FuelReportService:
                 return {"error": error_msg}, 401
 
             status, df, sensors = provider.parse_raw_data("fuel", True, car)
-            fillings = provider.parse_refill_data_full(car, start_date, end_date)
+            fillings, all_fillings = provider.parse_refill_data_full(car, start_date, end_date)
             if df is None or df.is_empty() or not status:
                 result = make_fuel_spent(0, 0, 0, [], [])
 
@@ -231,7 +231,7 @@ class FuelReportService:
             if isinstance(df, pl.DataFrame):
                 auto = CarDataService.prepare_auto_data(car)
                 auto_record = auto.filter(pl.col("auto") == str(car_id)).to_dicts()[0]
-                result, reports = FuelReportService.fuel_spent_calculate_instant(df, sensors, fillings, auto_record,
+                result, reports = FuelReportService.fuel_spent_calculate_instant(df, sensors, fillings,all_fillings, auto_record,
                                                                                  agg)
                 report_data = {
                     "result": result,
