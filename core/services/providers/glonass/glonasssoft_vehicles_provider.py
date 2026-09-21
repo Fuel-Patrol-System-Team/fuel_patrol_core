@@ -245,7 +245,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             "ign": [],
             "fuel_consumpt": [],
             "rpm_idle": [],
-            "rpm_active": []
+            "rpm_active": [],
+            "power_level": []
         }
 
         unit_name = vehicle_data.get("unitName")
@@ -370,6 +371,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                         sensors_mapping.get("calc_sensors_fuel_level", []).append (
                             SensorType(f"parameters.analog{input_number}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled)
                     )
+            elif sensor_type == "PowerLevel":
+                sensors_mapping.get("power_level", []).append(SensorType(f"voltage", metadata_postfix if is_affix else None, 3, is_disabled))
 
             elif sensor_type == "EngineRPM" or sensor_name.startswith("Обороты"):
                 if parameter_name:

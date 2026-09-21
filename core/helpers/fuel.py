@@ -99,8 +99,8 @@ def tarify_car_by_sensor(
     mp = unique[0]
     lp = unique[-1]
     df = df.with_columns(
-        pl.when(pl.col(column).le(mp["input"]))
-        .then(mp["output"])
+        pl.when(pl.col(column).lt(mp["input"]))
+        .then(None)
         .otherwise(pl.col(column))
         .alias(column)
     )
@@ -574,6 +574,13 @@ def preprocess_basic_one(
             pl.first("spent_fuel_t"),
             *aggs,
         ]
+    )
+
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
+    )
+    df = df.filter(
+        pl.col("calc_sensors_fuel_level").is_not_null()
     )
 
     # убрано т.к. убивает шум и заправки, занижая слив

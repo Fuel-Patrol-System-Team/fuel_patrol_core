@@ -54,6 +54,7 @@ class GL_PARAM_KEYS(Enum):
     rpm = "rpm"
     engine_temp = "engine_temp"
     voltage = "voltage"
+    power_level = "power_level"
     latitude = "latitude"
     longitude = "longitude"
     altitude = "altitude"
@@ -107,6 +108,16 @@ def _cast_ign(
     )
     return df
 
+def _cast_power_level(df: pl.DataFrame, sensor_mapping:  dict[str, list[SensorMappingParserType]]):
+
+    if "power_level" in df.columns:
+        max_power = df["power_level"].max()
+        min_power = df["power_level"].gt(1000).max()
+        if min_power > 1000 and max_power > 1000:
+            df = df.with_columns(
+                pl.col("power_level").truediv(1000)
+            )
+    return df
 
 def _cast_boolish_column(
     df: pl.DataFrame,
@@ -146,6 +157,9 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.speed: GlonassParameter(True, "speed", "pos_s", None, False, 0, None),
     GL_PARAM_KEYS.speed_gps: GlonassParameter(
         False, "speed", "speed_gps", None, False, 0, None
+    ),
+    GL_PARAM_KEYS.power_level: GlonassParameter(
+        True, "voltage", "power_level", _cast_power_level, False, 0, None 
     ),
     GL_PARAM_KEYS.fuel_level: GlonassParameter(
         True, "", "calc_sensors_fuel_level", None, False, None, None

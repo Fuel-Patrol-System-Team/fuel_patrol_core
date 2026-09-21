@@ -5,6 +5,7 @@ import argparse
 import polars as pl
 
 from core.services.providers.filtering_service import FilteringService
+from core.services.providers.report_service import ReportService
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli.helpers.csv import write_csv_compute
@@ -72,6 +73,8 @@ def _run_leaks_from_file(data_slice: pl.DataFrame, car_id: str):
         return result
     filtering_service = FilteringService()
     leaks, _ = filtering_service.apply_filters(result)
+    report_service = ReportService()
+    report_service.save_car_reports_batch(leaks)
     return leaks
 
 
