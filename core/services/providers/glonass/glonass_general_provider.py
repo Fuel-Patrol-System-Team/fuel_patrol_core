@@ -208,8 +208,8 @@ class GlonassGeneralProvider:
     def parse_refill_data_full(self, car: Car, start_date: datetime ,end_date: datetime):
         result = self._parse_refill_data(car, start_date, end_date)
         if result is not None:
-           refill_data = self._preprocess_refill_data(result, car)
-           return refill_data
+           refill_data, all_data = self._preprocess_refill_data(result, car)
+           return refill_data, all_data
         return None
 
     
@@ -270,20 +270,27 @@ class GlonassGeneralProvider:
     
     def _preprocess_refill_data(self, data: Dict[str, Any], car: Car):
         day_refill = {}
-
+        all_refill = {}
         for item in data["fuels"]:
             if item["event"] == "FuelIn":
                 refill_amount = item["valueFuel"]
-                refill_date = datetime.fromisoformat(item["startDate"]).date()
-                refill_date = datetime(refill_date.year, refill_date.month, refill_date.day)
+                refill_date_initial = datetime.fromisoformat(item["startDate"])
+                refill_date = datetime(refill_date_initial.year, refill_date_initial.month, refill_date_initial.day)
                 if refill_date in day_refill:
                     day_refill[refill_date] += refill_amount 
                 else:
                     day_refill[refill_date] = refill_amount 
+                if refill_date:
+                    all_refill[refill_date_initial] = refill_amount
         return pl.DataFrame(
             {
                 "timestamp": day_refill.keys(),
                 "refill": day_refill.values(),
+            }
+        ), pl.DataFrame(
+            {
+                "timestamp": all_refill.keys(),
+                "refill": all_refill.values()
             }
         )
 

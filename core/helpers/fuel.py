@@ -78,8 +78,8 @@ def fuel_spent_calculate(
     spent_report = result.group_by_dynamic(
         index_column="timestamp", group_by="auto", every=f"24h"
     ).agg(
-        pl.first("fuel_first").alias("fuel_start"),
-        pl.last("fuel_last").alias("fuel_end"),
+        pl.col("fuel_first").drop_nulls().first().alias("fuel_start"),
+        pl.col("fuel_last").drop_nulls().last().alias("fuel_end"),
     )
     return spent_report
 
@@ -598,6 +598,7 @@ def preprocess_basic_one(
 
     df = df.with_columns(
         pl.col("spent_fuel")
+        .fill_null(0)
         .rolling_mean_by("timestamp", window_size="30m", closed="both")
         .alias("spent_fuel_rolling")
     )
@@ -606,6 +607,8 @@ def preprocess_basic_one(
     # 1. Short rolling median of the fuel level → fuel_smooth.
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
+        .fill_null(strategy="forward")
+        .fill_null(0)
         .rolling_median_by(by="timestamp", window_size=SMOOTH_WINDOW, closed="both")
         .over("auto")
         .alias("fuel_smooth")
@@ -648,14 +651,14 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("calc_sensors_fuel_level")
         .mean()
-        .over([col_dtime_hour])
+        .over(["auto", col_dtime_hour])
         .sub(pl.col("calc_sensors_fuel_level"))
         .abs()
         .alias("noise"),
     )
     df = df.with_columns(
-        pl.col("noise").mean().over([col_dtime_hour]).alias("noise_mean"),
-        pl.col("noise").std().over([col_dtime_hour]).alias("noise_std"),
+        pl.col("noise").mean().over(["auto", col_dtime_hour]).alias("noise_mean"),
+        pl.col("noise").std().over(["auto", col_dtime_hour]).alias("noise_std"),
     )
     aggs = [*aggs, pl.col("noise_mean").first(), pl.col("noise_std").first()]
 
@@ -663,13 +666,13 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("fuel_smooth")
         .first()
-        .over(["refuel_group"])
+        .over(["auto", "refuel_group"])
         .alias("_refuel_span_first"),
-        pl.col("fuel_smooth").last().over(["refuel_group"]).alias("_refuel_span_last"),
-        pl.col("fuel_smooth").first().over(["fall_group"]).alias("_fall_span_first"),
-        pl.col("fuel_smooth").last().over(["fall_group"]).alias("_fall_span_last"),
-        pl.col("dtime").sum().over(["refuel_group"]).alias("dtime_refuel"),
-        pl.col("dtime").sum().over(["fall_group"]).alias("dtime_fall"),
+        pl.col("fuel_smooth").last().over(["auto", "refuel_group"]).alias("_refuel_span_last"),
+        pl.col("fuel_smooth").first().over(["auto", "fall_group"]).alias("_fall_span_first"),
+        pl.col("fuel_smooth").last().over(["auto", "fall_group"]).alias("_fall_span_last"),
+        pl.col("dtime").sum().over(["auto", "refuel_group"]).alias("dtime_refuel"),
+        pl.col("dtime").sum().over(["auto", "fall_group"]).alias("dtime_fall"),
     )
     df = df.with_columns(
         [
@@ -686,22 +689,22 @@ def preprocess_basic_one(
     )
     df = df.with_columns(
         [
-            pl.col("is_rising").sum().over(["refuel_group"]).alias("refuel_count"),
-            pl.col("is_falling").sum().over(["fall_group"]).alias("fall_count"),
+            pl.col("is_rising").sum().over(["auto", "refuel_group"]).alias("refuel_count"),
+            pl.col("is_falling").sum().over(["auto", "fall_group"]).alias("fall_count"),
         ]
     )
 
     # 6. Collapse to 30-minute buckets.
     df = df.with_columns(
         [
-            pl.col("refuel").sum().over(["refuel_group"]).alias("refuel_span"),
+            pl.col("refuel").sum().over(["auto", "refuel_group"]).alias("refuel_span"),
             pl.col("dtime_refuel")
             .sum()
-            .over(["refuel_group"])
+            .over(["auto", "refuel_group"])
             .alias("dtime_refuel_span"),
-            pl.col("fall").sum().over(["fall_group"]).alias("fall_span"),
-            pl.col("dtime_fall").sum().over(["fall_group"]).alias("dtime_fall_span"),
-            pl.col("pos_s").mean().over(["fall_group"]).alias("speed_fall_group"),
+            pl.col("fall").sum().over(["auto", "fall_group"]).alias("fall_span"),
+            pl.col("dtime_fall").sum().over(["auto", "fall_group"]).alias("dtime_fall_span"),
+            pl.col("pos_s").mean().over(["auto", "fall_group"]).alias("speed_fall_group"),
         ]
     )
     # 7. Eligibility using the new Plan B parameters.

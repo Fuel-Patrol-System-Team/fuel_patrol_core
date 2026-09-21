@@ -100,14 +100,15 @@ def mileage_test_compute(df: pl.DataFrame, auto_record: Dict[str, Any], AGG: int
         ])
     )
     df = df.with_columns(
-        pl.col("last_mileage").fill_null(strategy="backward").over("auto")
+        pl.col("last_mileage").fill_null(strategy="backward").over("auto"),
+        pl.col("first_mileage").fill_null(strategy="forward").over("auto"),
     )
 
     return {
         "travel": df['travel'].sum(),
         "travel_fraud": df['travel_fraud'].sum(),
-        "first_mileage": df['first_mileage'].first(),
-        "last_mileage": df['last_mileage'].last(),
+        "first_mileage": df['first_mileage'].drop_nulls().first(),
+        "last_mileage": df['last_mileage'].drop_nulls().last(),
         "data": df.to_dicts() if regime is MileageModes.agg else None,
         "msg_skip_big": 0,
         "chart_data": None,
@@ -602,13 +603,13 @@ def mileage_test_fraud_new(
     else:
         df = df.with_columns(pl.lit(0).alias("dmileage_suspicious"))
     df = df.with_columns(
-        pl.col("ign_fraud_spent").sum().over(pl.col("timestamp").dt.truncate("1h")).lt(MIN_MILEAGE_PER_HOUR).alias("is_small_mileage")
+        pl.col("ign_fraud_spent").sum().over(["auto", pl.col("timestamp").dt.truncate("1h")]).lt(MIN_MILEAGE_PER_HOUR).alias("is_small_mileage")
     )
     df = df.with_columns(
         pl.when(pl.col("is_small_mileage")).then(pl.col("ign_fraud_spent")).otherwise(pl.lit(0)).alias("ign_fraud_spent")
     )
     df = df.with_columns(
-        pl.col("dmileage_missed").sum().over(pl.col("timestamp").dt.truncate("1h")).lt(MIN_MILEAGE_PER_HOUR).alias("is_small_mileage")
+        pl.col("dmileage_missed").sum().over(["auto", pl.col("timestamp").dt.truncate("1h")]).lt(MIN_MILEAGE_PER_HOUR).alias("is_small_mileage")
     )
     df = df.with_columns(
         pl.when(pl.col("is_small_mileage").eq(False)).then(pl.col("dmileage_missed")).otherwise(pl.lit(0)).alias("dmileage_missed")
@@ -620,9 +621,9 @@ def mileage_test_fraud_new(
             index_column="timestamp", every=f"{AGG_PERIOD_MINUTES}m", group_by="auto"
         ).agg(
             [
-                pl.col("ncm").first().alias("first_mileage"),
+                pl.col("ncm").drop_nulls().first().alias("first_mileage"),
                 pl.col("mileage").last().alias("last_mileage_real"),
-                pl.col("ncm").last().alias("last_mileage"),
+                pl.col("ncm").drop_nulls().last().alias("last_mileage"),
                 pl.col("dmileage").sum().alias("travel"),
                 pl.col("dmileage").max().alias("max_change"),
                 pl.col("dmileage_r").sum().alias("travel_r"),
@@ -648,9 +649,9 @@ def mileage_test_fraud_new(
         index_column="timestamp", every=f"{WORKING_AGG_PERIOD_HOURS}h", group_by="auto"
     ).agg(
         [
-            pl.col("ncm").first().alias("first_mileage"),
+            pl.col("ncm").drop_nulls().first().alias("first_mileage"),
             pl.col("mileage").last().alias("last_mileage_real"),
-            pl.col("ncm").last().alias("last_mileage"),
+            pl.col("ncm").drop_nulls().last().alias("last_mileage"),
             pl.col("dmileage").sum().alias("travel"),
             pl.col("dmileage").max().alias("max_change"),
             pl.col("dmileage_r").sum().alias("travel_r"),
@@ -722,8 +723,8 @@ def mileage_test_fraud_new(
         .mul(pl.col("mileage_fraud"))
         .alias("true_mileage_fraud")
     )
-    last_mileage = cast(float, df_working["last_mileage"].last())
-    first_mileage = cast(float, df_working["first_mileage"].first())
+    last_mileage = cast(float, df_working["last_mileage"].drop_nulls().last())
+    first_mileage = cast(float, df_working["first_mileage"].drop_nulls().first())
     travel = cast(
         float,
         (
@@ -732,7 +733,7 @@ def mileage_test_fraud_new(
             else df_working["travel"].sum()
         ),
     )
-    if last_mileage is not None:
+    if last_mileage is not None and first_mileage is not None:
         if last_mileage < first_mileage:
             last_mileage = first_mileage + travel
     target_for_diff = (
