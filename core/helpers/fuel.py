@@ -1,3 +1,4 @@
+from datetime import datetime
 import re
 from typing import Any, Dict, List, Literal
 import polars as pl
@@ -93,44 +94,63 @@ def tarify_car_by_sensor(
     column="calc_sensors_fuel_level",
     grading="grades",
 ):
-    grades = cars[grading]
-    unique = list({tuple(sorted(d.items())): d for d in grades}.values())
-    pairs = list(zip(unique, unique[1:]))
-    mp = unique[0]
-    lp = unique[-1]
-    df = df.with_columns(
-        pl.when(pl.col(column).lt(mp["input"]))
-        .then(None)
-        .otherwise(pl.col(column))
-        .alias(column)
+    grades_total = cars[grading]
+    last_relevance_time = datetime(2090, 1, 1, 0, 0, 0, 0)
+    df = df.filter(
+        pl.col(column).gt(0)
     )
-    # Нормализация через медиану, ранее была отдельно из-за низких периодов которые не сильно влияли на результаты
-    degrees = cars.get("degrees", None)
-    if degrees is not None:
-        df = df.with_columns(pl.col(column).rolling_median(window_size=degrees))
-
-    for fp, sp in pairs:
-        slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
-        b = fp["output"] - slope * fp["input"]
+    for grade_record in grades_total:
+        grades = grade_record["grades"]
+        relevance_time = grade_record["relevance_time"]
+        if isinstance(relevance_time, str):
+            relevance_time = datetime.fromisoformat(relevance_time).replace(tzinfo=None)
+        else:
+            relevance_time = datetime(1990, 1, 1, 0, 0, 0, 0)
+        
+        
+        unique = list({tuple(sorted(d.items())): d for d in grades}.values())
+        pairs = list(zip(unique, unique[1:]))
+        mp = unique[0]
+        lp = unique[-1]
+        prefix = int(column[-1]) if column[-1].isnumeric() else 0  
         df = df.with_columns(
-            pl.when(pl.col(column).is_between(fp["input"], sp["input"]))
+            pl.col(column).alias(f"{column}_raw")
+        )
+        df = df.with_columns(
+            pl.when(pl.col(column).lt(mp["input"]) & pl.col("timestamp").is_between(relevance_time, last_relevance_time))
+            .then(None)
+            .otherwise(pl.col(column))
+            .alias(column)
+        )
+        # Нормализация через медиану, ранее была отдельно из-за низких периодов которые не сильно влияли на результаты
+        degrees = cars.get("median_degrees", None)
+        if degrees is not None:
+            degree = degrees[prefix]
+            df = df.with_columns(pl.col(column).rolling_median(window_size=degree))
+
+        for fp, sp in pairs:
+            slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
+            b = fp["output"] - slope * fp["input"]
+            df = df.with_columns(
+                pl.when(pl.col(column).is_between(fp["input"], sp["input"]) & pl.col("timestamp").is_between(relevance_time, last_relevance_time))
+                .then(pl.col(column).mul(slope).add(b))
+                .otherwise(pl.col(column))
+            )
+            # последния тарировка (у некоторых машин есть адекватные значения выше тарировки JCB 3797 15c7e16f-355e-4b9d-bbaf-452f915863b3_day.csv)
+        df = df.with_columns(
+            pl.when(pl.col(column).gt(lp["input"]) & pl.col("timestamp").is_between(relevance_time, last_relevance_time))
             .then(pl.col(column).mul(slope).add(b))
             .otherwise(pl.col(column))
         )
-        # последния тарировка (у некоторых машин есть адекватные значения выше тарировки JCB 3797 15c7e16f-355e-4b9d-bbaf-452f915863b3_day.csv)
-    df = df.with_columns(
-        pl.when(pl.col(column).gt(lp["input"]))
-        .then(pl.col(column).mul(slope).add(b))
-        .otherwise(pl.col(column))
-    )
-    # TODO: подумать если ли кейс при котором это условие может быть полезно и адаптировать для всех видов тарировок
-    # df = df.filter(pl.col(column).ge(mp["output"]))
+        last_relevance_time = relevance_time 
+        # TODO: подумать если ли кейс при котором это условие может быть полезно и адаптировать для всех видов тарировок
+        # df = df.filter(pl.col(column).ge(mp["output"]))
 
-    df = df.with_columns(
-        pl.when(pl.col(column).gt(lp["input"]))
-        .then(pl.col(column).mul(slope).add(b))
-        .otherwise(pl.col(column))
-    )
+        # df = df.with_columns(
+        #     pl.when(pl.col(column).gt(lp["input"]))
+        #     .then(pl.col(column).mul(slope).add(b))
+        #     .otherwise(pl.col(column))
+        # )
     return df, lp, b, slope
 
 
@@ -318,8 +338,8 @@ def preprocess_basic_one(
     else:
         df = df.with_columns(pl.lit(0).alias("fuel_consumpt_spent"))
 
-    # if "flex_adc" in cars["fuel_sensor"]:
-    #     df = df.filter(pl.col("pos_s").ge(12))
+    if "flex_adc" in cars["fuel_sensor"]:
+        df = df.filter(pl.col("calc_sensors_fuel_level").gt(0))
 
     # cleaning records for fuel
 
@@ -366,15 +386,6 @@ def preprocess_basic_one(
             df, lp, b, slope = tarify_car_by_sensor(df, cars_for_sensor, sensor)
             if df[sensor].gt(lp["input"]).any():
                 print("Car has problems")
-    for i, sensor in enumerate(calc_fuel_sensors):
-        degrees = cars.get("median_degrees")
-        try:
-            if len(degrees) != 0 and degrees is not None and degrees[i] is not None:
-                df = df.with_columns(
-                    pl.col(sensor).rolling_median(window_size=degrees[i])
-                )
-        except IndexError:
-            pass
 
     df = reconcile_multisensor(df, cars["fuel_sensor_multi_type"])
     if not is_fuel_processing:

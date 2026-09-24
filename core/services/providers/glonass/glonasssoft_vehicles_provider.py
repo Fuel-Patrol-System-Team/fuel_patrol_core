@@ -160,6 +160,10 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             metadata_postfix = {}
             priority_default = 5
             median_degree = sensor.get("medianDegree", None)
+            metadata_postfix["expr_active"] = False
+
+            if parameter_name == "":
+                metadata_postfix["expr_active"] = True
             
             if median_degree is not None:
                 metadata_postfix["median_degree"] = median_degree
@@ -172,10 +176,19 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     
             if sensor.get("gradeType") == "GradeTable":
 
-                grades_tables = sensor.get("gradesTables", [{}])
-                if grades_tables and grades_tables[-1]:
-                    grades = grades_tables[-1].get("grades", [{}])
-                    sensor_grades = grades
+                grades_tables = sensor.get("gradesTables", [])
+                grades_tables.reverse()
+                sensor_grades = []
+                if len(grades_tables) == 0:
+                    sensor_grades = None
+                for grade_table in grades_tables:
+                    grade = grade_table.get("grades", None )
+                    revelance_time = grade_table.get("revelanceTime", None)
+                    sensor_grades.append({
+                        "grades": grade,
+                        "revelance_time": revelance_time
+                    })
+                
             
                         
                 
@@ -289,7 +302,10 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             id = sensor.get("id", "")
             median_degree = sensor.get("medianDegree", None)
             metadata_postfix = {}
+            metadata_postfix["expr_active"] = False
 
+            if parameter_name == "":
+                metadata_postfix["expr_active"] = True
 
             if expr is not None:
                 metadata_postfix["expr"] = expr
@@ -312,12 +328,20 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                     sensors_mapping = self._parse_children_fuel_sensors(children, sensors_mapping, sensor_agg)
                     continue
                 if sensor.get("gradeType") == "GradeTable":
+                    grades_tables = sensor.get("gradesTables", [])
+                    grades_tables.reverse()
+                    sensor_grades = []
+                    if len(grades_tables) == 0:
+                        sensor_grades = None
+                    for grade_table in grades_tables:
+                        grade = grade_table.get("grades", None )
+                        relevanceTime = grade_table.get("relevanceTime", None)
+                        sensor_grades.append({
+                            "grades": grade,
+                            "relevance_time": relevanceTime
+                        })
 
-                    grades_tables = sensor.get("gradesTables", [{}])
-                    if grades_tables and grades_tables[-1]:
-                        grades = grades_tables[-1].get("grades", [{}])
-                        sensor_grades = grades
-                            
+
                     
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]

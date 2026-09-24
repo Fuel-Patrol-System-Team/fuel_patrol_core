@@ -3,6 +3,7 @@ import sys
 import argparse
 
 import polars as pl
+from pathlib import Path
 
 
 
@@ -64,17 +65,18 @@ def _run_tarify_from_file(data_slice: pl.DataFrame, car_id: str):
 
 def main():
     parser = argparse.ArgumentParser("tarify", "tarify leaks from file")
-    parser.add_argument("file")
-    parser.add_argument("output_path")
+    parser.add_argument("dir")
+    parser.add_argument("output_dir")
     args = parser.parse_args()
 
-    data = pl.read_csv(args.file, schema_overrides=_CSV_SCHEMA_OVERRIDES)
-    car_id = data["auto"].first()
-    result = _run_tarify_from_file(data, car_id)
-    if result is not None:
-        write_csv_compute(result, args.output_path)
-        return
-    print("result for computations is zero")
+    for file_path in Path(args.dir).glob("*.csv"):
+        data = pl.read_csv(file_path, schema_overrides=_CSV_SCHEMA_OVERRIDES)
+        car_id = data["auto"].first()
+        result = _run_tarify_from_file(data, car_id)
+        if result is not None:
+            write_csv_compute(result, Path(args.output_dir, file_path.name))
+            continue
+        print(f"result for computations is zero for car {car_id}")
     
         
 

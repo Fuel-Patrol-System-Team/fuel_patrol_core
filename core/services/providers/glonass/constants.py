@@ -112,8 +112,7 @@ def _cast_power_level(df: pl.DataFrame, sensor_mapping:  dict[str, list[SensorMa
 
     if "power_level" in df.columns:
         max_power = df["power_level"].max()
-        min_power = df["power_level"].gt(1000).max()
-        if min_power > 1000 and max_power > 1000:
+        if max_power > 1000:
             df = df.with_columns(
                 pl.col("power_level").truediv(1000)
             )
@@ -250,6 +249,7 @@ GPS_COLUMNS = [GL_PARAM_KEYS.latitude, GL_PARAM_KEYS.longitude, GL_PARAM_KEYS.sa
 FUEL_COLUMNS = [
     GL_PARAM_KEYS.timestamp,
     GL_PARAM_KEYS.timestamp_server,
+    GL_PARAM_KEYS.power_level,
     *GPS_COLUMNS,
     GL_PARAM_KEYS.speed,
     GL_PARAM_KEYS.fuel_level,
@@ -356,6 +356,11 @@ def _chart_preprocess(
 
     if df.shape[0] == 0:
         return df
+    
+    median_degrees = []
+    for i, sensor in enumerate(sensors):
+        median_degrees.append(sensor_mapping[sensor][i]["metadata"].get("median_degree"))
+    
 
     for i, sensor in enumerate(sensors):
         df = df.filter(pl.col(sensor).gt(0) & pl.col(sensor).lt(65535))
@@ -366,10 +371,10 @@ def _chart_preprocess(
         df, lp, b, slop = tarify_car_by_sensor(
             df,
             {
-                "grades": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"][
+                "grades": sensor_mapping[sensor][i]["metadata"][
                     "grades"
                 ],
-                "degrees": sensor_mapping["calc_sensors_fuel_level"][i]["metadata"].get("median_degree")
+                "median_degrees": median_degrees
             },
             sensor,
         )
@@ -383,6 +388,9 @@ def _chart_preprocess(
     #             df = df.with_columns(pl.col(sensor).rolling_median(window_size=degrees))
     df = reconcile_multisensor(
         df, sensor_mapping["calc_sensors_fuel_level"][-1]["multi_type"]
+    )
+    df = df.with_columns(
+        pl.col("calc_sensors_fuel_level").fill_null(strategy="forward")
     )
     if "calc_sensors_fuel_level" not in mapping:
         mapping.append("calc_sensors_fuel_level")

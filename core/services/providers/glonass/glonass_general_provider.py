@@ -320,7 +320,7 @@ class GlonassGeneralProvider:
         elif mode == "fuel":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, FUEL_COLUMNS, [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge)], return_df=return_df)
         elif mode == "fuel_charts":
-            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.rpm, GP.speed, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge),  GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
+            result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.rpm, GP.speed, GP.power_level, GP.fuel_level, GP.satellites, GP.ignition, GP.msg_number, GP.voltage, GP.amtr_x, GP.amtr_y, GP.amtr_z], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column), GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.amtr_merge),  GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.chart_preprocess)], return_df=return_df)
         elif mode == "motohours":
             result = self._process_general(car_to_use, all_messages, sensors_mapping, [GP.timestamp, GP.timestamp_server, GP.speed, GP.motohours, GP.msg_number, GP.satellites, GP.rpm, GP.rpm_active, GP.rpm_idle, GP.ignition], [GLOBAL_GLONASS_ACTIONS.get(GL_ACTION_KEYS.auto_column)], return_df=return_df)
         elif mode == "raw":
@@ -648,10 +648,12 @@ class GlonassGeneralProvider:
                 for index, sensor in enumerate(path_to_params):
                     path_to_param = sensor["value"]
                     expr = None
+                    is_active = False
 
                     if sensor.get("metadata") is not None and sensor.get("metadata", {}).get("expr", None):
                         expr = sensor["metadata"]["expr"]
-                    if expr is not None:
+                        is_active = sensor["metadata"].get("expr_active", False)
+                    if expr is not None and is_active:
                         result_col = f"_expr_{col.value}_{index}"
                         expr_result_cols[(col.value, index)] = result_col
                         expr_tasks.append((col, index, sensor, path_to_param, expr, result_col))
