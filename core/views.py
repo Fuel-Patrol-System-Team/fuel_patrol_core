@@ -1184,7 +1184,7 @@ class CarReportListAPIView(TimestampTimezoneConverterMixin, ListAPIView):
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id__car_unit', 'car_id__model', 'car_id__model_specs').prefetch_related(
             *_car_prefetch(language_code, prefix='car_id__')
-        ).order_by('datetime')
+        ).order_by('datetime', 'created_at')
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)

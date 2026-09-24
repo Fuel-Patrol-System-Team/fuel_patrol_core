@@ -218,7 +218,7 @@ class CarReportOutputSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = CarReport
-        fields = ["id", "car_id", "speed", "datetime", "volume", "status", "picked_by"]
+        fields = ["id", "car_id", "speed", "datetime", "volume", "status", "created_at", "picked_by"]
 
 
 class CarFuelReportSerializer(serializers.ModelSerializer):
