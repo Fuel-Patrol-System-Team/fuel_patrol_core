@@ -533,6 +533,7 @@ def calculate_stats_fuel_cron_one(self, provider_name: str, car_id: str, force=F
                     logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
                 logger.info("ЭТАП 3.0: Вычисление норм в БД...")
                 norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
+                is_artificial = False
                 if status == "skip":
                     norms_df = NormsService.calculte_new_average_line(car, "speed")
                     if norms_df is not None:
@@ -613,6 +614,7 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
                         logger.warning(f"Не удалось сохранить первичные показатели для машины {car.id}")
                     logger.info("ЭТАП 3.0: Вычисление норм в БД...")
                     norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
+                    is_artificial = False
                     if status == "line":
                         norms_df = NormsService.calculte_new_average_line(car, "speed")
                         if norms_df is not None:
@@ -667,6 +669,7 @@ def calculate_norms_cron(self, provider_name: str, is_save_bad_data=False):
                 if status and isinstance(df, pl.DataFrame):
                     primary = pl.DataFrame(car.carprimary.primary)
                     norms, status = NormsService.calculate_norms_single(df, primary, auto_data)
+                    is_artificial = False
                     if status == "line":
                         norms_df = NormsService.calculte_new_average_line(car, "speed")
                         if norms_df is not None:
