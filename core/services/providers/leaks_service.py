@@ -164,6 +164,7 @@ class LeaksService(BaseLeaksCalculator):
             total_result = self._merge_with_additional_data(
                 total_result, auto_df, primary_df, norma_df
             )
+            total_result = total_result.sort(["timestamp"])
             logger.info(
                 f"✅ Объединение завершено, финальный результат: {len(total_result)} записей"
             )

@@ -859,7 +859,7 @@ def calculate_leaks_cron_one(
                 if isinstance(leaks_result, pl.DataFrame):
                     spent_report = fuel_spent_calculate(leaks_result)
                     try:
-                        refill = parser.parse_refill_data_full(car, datetime_parsing, now)
+                        refill, all_refill = parser.parse_refill_data_full(car, datetime_parsing, now)
                         if refill is not None and refill.shape[0] > 0:
                             df_to_report = FuelReportService.build_right_history(spent_report, refill)
                         else:
