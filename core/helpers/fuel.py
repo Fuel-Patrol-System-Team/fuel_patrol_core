@@ -126,7 +126,8 @@ def tarify_car_by_sensor(
         degrees = cars.get("median_degrees", None)
         if degrees is not None:
             degree = degrees[prefix]
-            df = df.with_columns(pl.col(column).rolling_median(window_size=degree))
+            if degree is not None:
+                df = df.with_columns(pl.col(column).rolling_median(window_size=degree))
 
         for fp, sp in pairs:
             slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
