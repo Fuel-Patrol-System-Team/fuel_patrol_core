@@ -515,7 +515,7 @@ CAR_MILEAGE_REPORT_SHOW_NONE_SCHEMA = openapi.Parameter(
     name="show_none",
     in_=openapi.IN_QUERY,
     description="По умолчанию (или true) — показывать все записи. Если явно false — скрыть "
-                 "неполные записи (mileage_start/mileage_end/travel не заполнены) и записи с travel=0.",
+                 "неполные записи (mileage_start/mileage_end/travel/fraud не заполнены) и записи без накрутки (fraud=0).",
     type=openapi.TYPE_BOOLEAN,
     required=False,
 )

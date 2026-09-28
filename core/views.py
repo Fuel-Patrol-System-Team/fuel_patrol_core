@@ -946,7 +946,8 @@ class CarMileageReportListAPIView(ListAPIView):
                 Q(travel__isnull=True)
                 | Q(mileage_start__isnull=True)
                 | Q(mileage_end__isnull=True)
-                | Q(travel=0)
+                | Q(fraud__isnull=True)
+                | Q(fraud=0)
             )
 
         return queryset
