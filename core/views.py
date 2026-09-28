@@ -63,7 +63,8 @@ from .models import CarMotohoursReport, ComputedData, Organization, ParsingCarSt
     APICalculationLog, CarModel, CarModelSpecification
 from core.helpers.pagination import StandardResultsSetPagination
 from core.helpers.rest import (
-    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA, FUELREPORT_REQUEST_SCHEMA,
+    CAR_LEAKS_CHARTS_SCHEMA, CAR_SENSOR_SWITCH_SCHEMA, CAR_SENSORS_GROUP_BY_PARTIAL_SCHEMA,
+    CAR_MILEAGE_REPORT_SHOW_NONE_SCHEMA, FUELREPORT_REQUEST_SCHEMA,
     LEAKS_VOLUME_SCHEMA, LEAKS_COUNT_SCHEMA,
     DAILY_LEAKS_SUM_SCHEMA, DAILY_LEAKS_COUNT_SCHEMA,
     CAR_LEAKS_SCHEMA, DATA_PROVIDER_CREATE_SCHEMA, CAR_ACTIVE_STATUS_SCHEMA, MILEAGE_REQUEST_SCHEMA,
@@ -927,6 +928,10 @@ class CarMileageReportListAPIView(ListAPIView):
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ['car_id', 'datetime']
     search_fields = ['car_id__name', 'fraud']
+
+    @swagger_auto_schema(manual_parameters=[CAR_MILEAGE_REPORT_SHOW_NONE_SCHEMA])
+    def get(self, request, *args, **kwargs):
+        return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
         if _ANON_GUARD(self):
