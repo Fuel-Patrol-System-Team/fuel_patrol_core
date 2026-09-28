@@ -778,11 +778,22 @@ class AlertSubscription(models.Model):
         BAD_DATA = "bad_data", "Ошибки оборудования"
         SYSTEM   = "system",   "Системное уведомление"
 
+    class SentVia(models.TextChoices):
+        TELEGRAM = "telegram", "Telegram"
+        EMAIL    = "email",    "Почта"
+        BOTH     = "both",     "Telegram и почта"
+
     id   = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.OneToOneField(
         OrgUser, on_delete=models.CASCADE, related_name="alert_subscription"
     )
-
+    sent_via = models.CharField(
+        max_length=20,
+        choices=SentVia.choices,
+        default=SentVia.TELEGRAM,
+        verbose_name="Способ отправки",
+        help_text="Через что отправлять уведомления: Telegram, почта или оба варианта.",
+    )
     alert_types = ArrayField(
         base_field=models.CharField(max_length=20, choices=AlertType.choices),
         default=list,

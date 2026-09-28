@@ -1904,6 +1904,7 @@ class SensorsKeyLocalizationAdmin(ImportExportMixin, ModelAdmin):
 class AlertSubscriptionAdmin(ModelAdmin):
     list_display = [
         'user',
+        'sent_via',
         'alert_types',
         'bad_data_min_severity',
         'min_leak_liters',
@@ -1912,13 +1913,13 @@ class AlertSubscriptionAdmin(ModelAdmin):
         'is_active',
         'updated_at',
     ]
-    list_filter = ['is_active', 'bad_data_min_severity', 'notify_hour']
+    list_filter = ['sent_via', 'is_active', 'bad_data_min_severity', 'notify_hour']
     search_fields = ['user__username', 'user__email']
     readonly_fields = ['updated_at']
 
     fieldsets = (
         ("Пользователь", {
-            "fields": ("user", "is_active"),
+            "fields": ("user", "sent_via", "is_active"),
         }),
         ("Типы уведомлений", {
             "fields": ("alert_types",),

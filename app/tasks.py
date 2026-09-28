@@ -36,6 +36,7 @@ import time
 
 from core.services.providers.fuelreport_service import FuelReportService
 from core.services.notifications.tg_notifier import send_telegram_message
+from core.services.notifications.email_notifier import send_email_message
 from core.services.providers import leaks_service
 from core.services.providers.car_consumption_service import CarConsumptionService
 from core.services.providers.car_data_service import CarDataService
@@ -1592,15 +1593,6 @@ def send_alert_digests(self):
                     )
                     continue
 
-                tg_users = get_tg_users_for_org_user(user)
-
-                if not tg_users:
-                    logger.warning(
-                        f"[send_alert_digests] Активные TelegramUser не найдены: "
-                        f"user={user.username}"
-                    )
-                    continue
-
                 message = build_digest_message(subscription, alerts_for_org)
 
                 if message is None:
@@ -1611,20 +1603,54 @@ def send_alert_digests(self):
                     continue
 
                 any_success = False
-                for tg_user in tg_users:
-                    success = send_telegram_message(tg_user.chat_id, message)
 
-                    if success:
-                        any_success = True
-                        logger.info(
-                            f"[send_alert_digests] Дайджест отправлен: "
-                            f"user={user.username}, org={org.name}, chat_id={tg_user.chat_id}"
+                if subscription.sent_via in (AlertSubscription.SentVia.TELEGRAM, AlertSubscription.SentVia.BOTH):
+                    tg_users = get_tg_users_for_org_user(user)
+
+                    if not tg_users:
+                        logger.warning(
+                            f"[send_alert_digests] Активные TelegramUser не найдены: "
+                            f"user={user.username}"
+                        )
+
+                    for tg_user in tg_users:
+                        success = send_telegram_message(tg_user.chat_id, message)
+
+                        if success:
+                            any_success = True
+                            logger.info(
+                                f"[send_alert_digests] Дайджест отправлен в Telegram: "
+                                f"user={user.username}, org={org.name}, chat_id={tg_user.chat_id}"
+                            )
+                        else:
+                            logger.error(
+                                f"[send_alert_digests] Ошибка отправки в Telegram: "
+                                f"user={user.username}, chat_id={tg_user.chat_id}"
+                            )
+
+                if subscription.sent_via in (AlertSubscription.SentVia.EMAIL, AlertSubscription.SentVia.BOTH):
+                    if not user.email:
+                        logger.warning(
+                            f"[send_alert_digests] У пользователя {user.username} "
+                            f"не указан email, пропускаем отправку на почту"
                         )
                     else:
-                        logger.error(
-                            f"[send_alert_digests] Ошибка отправки: "
-                            f"user={user.username}, chat_id={tg_user.chat_id}"
+                        success = send_email_message(
+                            user.email,
+                            f"Дайджест уведомлений — {org.name}",
+                            message,
                         )
+                        if success:
+                            any_success = True
+                            logger.info(
+                                f"[send_alert_digests] Дайджест отправлен на почту: "
+                                f"user={user.username}, org={org.name}, email={user.email}"
+                            )
+                        else:
+                            logger.error(
+                                f"[send_alert_digests] Ошибка отправки на почту: "
+                                f"user={user.username}, email={user.email}"
+                            )
 
                 if any_success:
                     sent_count = Alert.objects.filter(

@@ -672,6 +672,7 @@ class AlertSubscriptionPatchSerializer(serializers.ModelSerializer):
     class Meta:
         model = AlertSubscription
         fields = [
+            'sent_via',
             'alert_types',
             'bad_data_tags',
             'bad_data_min_severity',
@@ -681,6 +682,7 @@ class AlertSubscriptionPatchSerializer(serializers.ModelSerializer):
             'is_active',
         ]
         extra_kwargs = {
+            'sent_via':            {'required': False},
             'alert_types':         {'required': False},
             'bad_data_tags':       {'required': False},
             'bad_data_min_severity': {'required': False},
@@ -689,6 +691,15 @@ class AlertSubscriptionPatchSerializer(serializers.ModelSerializer):
             'notify_hour':         {'required': False},
             'is_active':           {'required': False},
         }
+
+    def validate_sent_via(self, value):
+        valid = {c[0] for c in AlertSubscription.SentVia.choices}
+        if value not in valid:
+            raise serializers.ValidationError(
+                f"Недопустимый способ отправки: {value}. "
+                f"Допустимые значения: {', '.join(valid)}"
+            )
+        return value
 
     def validate_alert_types(self, value):
         valid = {c[0] for c in AlertSubscription.AlertType.choices}

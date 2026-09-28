@@ -41,7 +41,7 @@ from core.services.providers.norms_service import NormsService
 from core.services.providers.report_service import ReportService
 from core.services.providers.rpm_auto_calculation_service import RpmAutoCalculationService
 from .helpers.agg import validate_agg
-from .helpers.alert_subscription import check_telegram_user, get_or_create_subscription, patch_subscription
+from .helpers.alert_subscription import check_sent_via_requirements, get_or_create_subscription, patch_subscription
 from .helpers.car_bad_data import get_bad_data_by_tag, get_bad_data_by_car, get_bad_data_calendar
 from .helpers.car_move_stop import get_stops_mileage_report
 
@@ -2036,10 +2036,6 @@ class AlertSubscriptionAPIView(APIView):
         **ALERT_SUBSCRIPTION_PATCH_SCHEMA
     )
     def patch(self, request, *args, **kwargs):
-        try:
-            check_telegram_user(request.user)
-        except PermissionDenied as e:
-            return error_response(str(e), status.HTTP_400_BAD_REQUEST) # для клиента
         subscription = get_or_create_subscription(request.user)
         serializer = AlertSubscriptionPatchSerializer(
             instance=subscription,
@@ -2051,6 +2047,12 @@ class AlertSubscriptionAPIView(APIView):
                 f"Невалидные данные подписки: user={request.user.username}, errors={serializer.errors}"
             )
             return error_response(serializer.errors, status.HTTP_400_BAD_REQUEST)
+
+        effective_sent_via = serializer.validated_data.get('sent_via', subscription.sent_via)
+        try:
+            check_sent_via_requirements(request.user, effective_sent_via)
+        except PermissionDenied as e:
+            return error_response(str(e), status.HTTP_400_BAD_REQUEST) # для клиента
         try:
             subscription = patch_subscription(
                 user=request.user,

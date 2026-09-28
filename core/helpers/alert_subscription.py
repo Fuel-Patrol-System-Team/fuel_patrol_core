@@ -30,9 +30,35 @@ def check_telegram_user(user: OrgUser) -> None:
 
     if not has_tg:
         raise PermissionDenied(
-            "Для настройки уведомлений необходимо привязать Telegram-аккаунт. "
+            "Для настройки уведомлений через Telegram необходимо привязать Telegram-аккаунт. "
             "Обратитесь к администратору или запустите бота по ссылке в ЛК."
         )
+
+
+def check_user_email(user: OrgUser) -> None:
+    if not user.email:
+        raise PermissionDenied(
+            "Для настройки уведомлений через почту необходимо указать email в профиле."
+        )
+
+
+def check_sent_via_requirements(user: OrgUser, sent_via: str) -> None:
+    errors = []
+
+    if sent_via in (AlertSubscription.SentVia.TELEGRAM, AlertSubscription.SentVia.BOTH):
+        try:
+            check_telegram_user(user)
+        except PermissionDenied as e:
+            errors.append(str(e))
+
+    if sent_via in (AlertSubscription.SentVia.EMAIL, AlertSubscription.SentVia.BOTH):
+        try:
+            check_user_email(user)
+        except PermissionDenied as e:
+            errors.append(str(e))
+
+    if errors:
+        raise PermissionDenied(" ".join(errors))
 
 
 @transaction.atomic
