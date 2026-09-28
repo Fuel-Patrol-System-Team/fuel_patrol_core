@@ -40,6 +40,7 @@ class FilteringService(BaseFilteringService):
         # filtered_df, _ = self.filtering_special_required(filtered_df)
         # filtered_df, _ = self.filtering_standing_hard(filtered_df)
         # filtered_df, _ = self.pick_by_rpm_model(filtered_df)
+        filtered_df, _ = self.filtering_msg_number_failures(filtered_df)
         filtered_df, _ = self.filtering_count(filtered_df, 10)
         filtered_df, _ = self.filtering_sattelites(filtered_df)
         # filtered_df, _ = self.filtering_possible_short_circuit(filtered_df)
@@ -371,6 +372,12 @@ class FilteringService(BaseFilteringService):
         """Фильтрация по количеству записей"""
         filtered_df = self._tool_pick_filter(
             result_df, pl.col("count").lt(COUNT_VALUE), "low_count"
+        )
+        return filtered_df, result_df
+    
+    def filtering_msg_number_failures(self, result_df: pl.DataFrame, DEFAULT_FOR_SPAN: int = 20):
+        filtered_df = self._tool_pick_filter(
+            result_df, pl.col("msg_number_failures").gt(DEFAULT_FOR_SPAN), "msg_number_failures"
         )
         return filtered_df, result_df
 

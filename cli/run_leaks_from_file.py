@@ -4,18 +4,21 @@ import argparse
 
 import polars as pl
 
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import django
+django.setup()
 from core.services.providers.filtering_service import FilteringService
 from core.services.providers.report_service import ReportService
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from cli.helpers.csv import write_csv_compute
 pl.enable_string_cache()
 
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
 
-import django
-django.setup()
+
+
 
 import app.tasks  # noqa: E402,F401 — must be imported before the providers below
                   # to break a circular import (car_data_service -> app.tasks -> fuelreport_service -> car_data_service)
@@ -29,7 +32,7 @@ _CSV_SCHEMA_OVERRIDES = {
     "auto": pl.Categorical,
     "timestamp": pl.Datetime,
     "timestamp_server": pl.Datetime,
-    "rpm": pl.Int32,
+    "rpm": pl.Float32,
     "mileage": pl.Float32,
     "motohours": pl.Float32,
     "longitude": pl.Float32,

@@ -209,7 +209,7 @@ class LeaksService(BaseLeaksCalculator):
         cars: Dict[str, Any],
         norms: Dict[str, Any],
         initial_df: Optional[pl.DataFrame] = None,
-        reports: List[Any] = [],
+        reports: Optional[List[Any]] = None,
         ANTI_BUG_TIME_SECONDS: int = 30,
         PRE_PERIOD_TIME: int = 3,
         PERIOD_2_MIN: int = 60,
@@ -223,6 +223,9 @@ class LeaksService(BaseLeaksCalculator):
     ) -> Tuple[pl.DataFrame, pl.DataFrame, Optional[pl.DataFrame], List[Any]]:
         """Основная предобработка данных"""
         logger.debug("🔄 Начало основной предобработки")
+
+        if reports is None:
+            reports = []
 
         anti_bug = None
         if initial_df is None:
@@ -344,10 +347,10 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("refuel_eligble"),
                 *aggs,
             ]
-        )
+        ).sort("timestamp")
         result = result.filter(pl.col("fuel_level_nan").ne(pl.col("count")))
         result = result.with_columns(
-            pl.col("timestamp").shift(-1).alias("next_period")
+            pl.col("timestamp").shift(-1).alias("prev_period")
         )
         final_count = len(result)
         logger.debug(

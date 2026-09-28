@@ -4,6 +4,8 @@ import argparse
 
 import polars as pl
 
+from core.services.providers.report_service import ReportService
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from cli.helpers.csv import write_csv_compute
 pl.enable_string_cache()
@@ -26,7 +28,9 @@ _CSV_SCHEMA_OVERRIDES = {
     "auto": pl.Categorical,
     "timestamp": pl.Datetime,
     "timestamp_server": pl.Datetime,
-    "rpm": pl.Int32,
+    "pos_s": pl.Float32,
+    "rpm": pl.Float32,
+    "ign": pl.Int32,
     "mileage": pl.Float32,
     "motohours": pl.Float32,
     "longitude": pl.Float32,

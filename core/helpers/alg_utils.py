@@ -5,6 +5,7 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
+
 def alg_piece_remove_skipped_messages(df: pl.DataFrame, msg_skip_time_small=2, msg_skip_big=10, msg_skip_critical=120):
     """
         dtime, msg_number - нужны в df

@@ -363,7 +363,7 @@ def _chart_preprocess(
     
 
     for i, sensor in enumerate(sensors):
-        df = df.filter(pl.col(sensor).gt(0) & pl.col(sensor).lt(65535))
+        df = df.filter(pl.col(sensor).gt(0) & pl.col(sensor).lt(65530))
         # if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
         #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
         if df.shape[0] == 0:

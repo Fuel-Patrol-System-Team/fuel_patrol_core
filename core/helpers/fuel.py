@@ -1,6 +1,6 @@
 from datetime import datetime
 import re
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 import polars as pl
 
 from core.helpers.alg_utils import alg_piece_remove_message_delays
@@ -99,7 +99,7 @@ def tarify_car_by_sensor(
     df = df.filter(
         pl.col(column).gt(0)
     )
-    for grade_record in grades_total:
+    for i, grade_record in enumerate(grades_total):
         grades = grade_record["grades"]
         relevance_time = grade_record["relevance_time"]
         if isinstance(relevance_time, str):
@@ -114,7 +114,7 @@ def tarify_car_by_sensor(
         lp = unique[-1]
         prefix = int(column[-1]) if column[-1].isnumeric() else 0  
         df = df.with_columns(
-            pl.col(column).alias(f"{column}_raw")
+            pl.col(column).alias(f"raw_fuel_{i}")
         )
         df = df.with_columns(
             pl.when(pl.col(column).lt(mp["input"]) & pl.col("timestamp").is_between(relevance_time, last_relevance_time))
@@ -272,8 +272,11 @@ def preprocess_basic_one(
     FALL_MIN_DURATION_S=30,
     FALL_MIN_POINTS=2,
     is_fuel_processing=False,
-    reports: List[Any] = [],
+    reports: Optional[List[Any]] = None,
 ):
+    dtime_span_3h = pl.col("timestamp").dt.truncate("3h")
+    if reports is None:
+        reports = []
     calc_fuel_sensors = list(filter(lambda x: "calc_sensors_fuel" in x, df.columns))
     for sensor in calc_fuel_sensors:
         if is_fuel_processing and df[sensor].is_null().all():
@@ -296,8 +299,12 @@ def preprocess_basic_one(
         )
     # fuel_level_nan per 30 minutes
 
+    df = df.with_columns(
+        pl.col("msg_number").eq(0).cast(pl.Int32).sum().over(dtime_span_3h).alias("msg_number_failures")
+    )
     if "msg_number" in df.columns:
         df = df.filter(pl.col("msg_number").diff().fill_nan(0).fill_null(0).abs().lt(5))
+    
 
     reports = maintenance_event_codes(df, reports)
 
@@ -399,7 +406,6 @@ def preprocess_basic_one(
         pl.col("calc_sensors_fuel_level")
         .diff()
         .over("auto", col_dtime_2hour)
-        .fill_null(0)
         .fill_null(0)
         .alias("spent_fuel_clean")
     )
@@ -550,6 +556,7 @@ def preprocess_basic_one(
         *aggs,
         pl.sum("_fc_sign"),
         pl.sum("voltage_diff"),
+        pl.max("msg_number_failures")
     ]
 
     df = df.group_by_dynamic(
@@ -762,11 +769,11 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("pos_s")
         .fill_null(0)
-        .rolling_mean_by(window_size="30s", by="timestamp")
+        .rolling_mean_by(window_size="2m", by="timestamp")
         .alias("pos_s_mean")
     )
     df = (
-        df.with_columns(pl.col("pos_s_mean").gt(3).cast(pl.Int8).alias("is_moving"))
+        df.with_columns(pl.col("pos_s_mean").gt(0.3).cast(pl.Int8).alias("is_moving"))
         .with_columns(pl.col("is_moving").diff().abs().cum_sum().alias("moving_group"))
         .with_columns(
             pl.col("is_moving").eq(1)

@@ -1,7 +1,7 @@
 import polars as pl
 def write_csv_compute(df: pl.DataFrame, output_path: str):
     columns = []
-    patterns = ["grades", "median_degrees"]
+    patterns = ["grades", "median_degrees", "grading"]
     for col in df.columns:
         is_pattern = False
         for pat in patterns:
