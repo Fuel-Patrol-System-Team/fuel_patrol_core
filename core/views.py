@@ -921,7 +921,6 @@ class AutoDataListAPIView(SwaggerSafeQuerysetMixin, ListAPIView):
         df.to_csv("/data/datasets/fuel/Cars-new.csv")
         return queryset
 
-
 class CarMileageReportListAPIView(ListAPIView):
     serializer_class = CarMileageReportOutputSerializer
     pagination_class = StandardResultsSetPagination
@@ -932,9 +931,20 @@ class CarMileageReportListAPIView(ListAPIView):
     def get_queryset(self):
         if _ANON_GUARD(self):
             return CarMileageReport.objects.none()
-        return CarMileageReport.objects.filter(
+        queryset = CarMileageReport.objects.filter(
             car_id__data_providers__org_id=self.request.user.org
         ).select_related('car_id').order_by('-datetime')
+
+        show_none_param = self.request.query_params.get('show_none')
+        if show_none_param is not None and show_none_param.lower() in ('false', '0'):
+            queryset = queryset.exclude(
+                Q(travel__isnull=True)
+                | Q(mileage_start__isnull=True)
+                | Q(mileage_end__isnull=True)
+                | Q(travel=0)
+            )
+
+        return queryset
 
 class CarMotohoursReportListAPIView(ListAPIView):
     serializer_class = CarMotohoursReportOutputSerializer
