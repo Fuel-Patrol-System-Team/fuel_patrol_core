@@ -281,9 +281,13 @@ def format_system_block(alerts: list[Alert]) -> str:
     return "\n".join(lines)
 
 
+EMAIL_DIGEST_MAX_EVENTS = 100
+
+
 def build_digest_message(
         subscription: AlertSubscription,
         unsent_alerts: list[Alert],
+        max_events: int | None = None,
 ) -> str | None:
     alert_types = subscription.alert_types
 
@@ -360,6 +364,25 @@ def build_digest_message(
     if not any([leak_alerts, fraud_alerts, bad_data_alerts, system_alerts]):
         return None
 
+    total_events = len(leak_alerts) + len(fraud_alerts) + len(bad_data_alerts) + len(system_alerts)
+    hidden_count = 0
+
+    if max_events is not None and total_events > max_events:
+        combined = (
+            [(a, Alert.AlertType.LEAK) for a in leak_alerts]
+            + [(a, Alert.AlertType.FRAUD) for a in fraud_alerts]
+            + [(a, Alert.AlertType.BAD_DATA) for a in bad_data_alerts]
+            + [(a, Alert.AlertType.SYSTEM) for a in system_alerts]
+        )
+        combined.sort(key=lambda pair: pair[0].event_datetime, reverse=True)
+        kept = combined[:max_events]
+        hidden_count = total_events - max_events
+
+        leak_alerts = [a for a, t in kept if t == Alert.AlertType.LEAK]
+        fraud_alerts = [a for a, t in kept if t == Alert.AlertType.FRAUD]
+        bad_data_alerts = [a for a, t in kept if t == Alert.AlertType.BAD_DATA]
+        system_alerts = [a for a, t in kept if t == Alert.AlertType.SYSTEM]
+
     blocks = ["📋 *Дайджест уведомлений*\n"]
 
     if leak_alerts:
@@ -370,6 +393,9 @@ def build_digest_message(
         blocks.append(format_bad_data_block(bad_data_alerts))
     if system_alerts:
         blocks.append(format_system_block(system_alerts))
+
+    if hidden_count > 0:
+        blocks.append(f"Показаны {max_events} самых свежих событий. Найдено ещё {hidden_count} событий.")
 
     return "\n\n".join(blocks)
 

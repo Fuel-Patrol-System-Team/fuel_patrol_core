@@ -13,7 +13,7 @@ from app.celery import app as celery_app
 from app.settings import DEBUG
 from core.admin import SensorsValues
 from core.helpers.alert import get_tg_users_for_org_user, get_unsent_alerts_by_org, build_digest_message, \
-    save_bad_data_alerts_bulk
+    save_bad_data_alerts_bulk, EMAIL_DIGEST_MAX_EVENTS
 from core.helpers.fuel import fuel_spent_calculate
 from core.models import (
     Alert,
@@ -1635,10 +1635,13 @@ def send_alert_digests(self):
                             f"не указан email, пропускаем отправку на почту"
                         )
                     else:
+                        email_message = build_digest_message(
+                            subscription, alerts_for_org, max_events=EMAIL_DIGEST_MAX_EVENTS
+                        )
                         success = send_email_message(
                             user.email,
                             f"Дайджест уведомлений — {org.name}",
-                            message,
+                            email_message,
                         )
                         if success:
                             any_success = True
