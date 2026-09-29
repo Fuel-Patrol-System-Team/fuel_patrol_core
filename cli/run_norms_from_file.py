@@ -3,16 +3,16 @@ import sys
 import argparse
 
 import polars as pl
-
-from core.services.providers.car_consumption_service import CarConsumptionService
-from core.tests.test_parser_calc import NormsService
-pl.enable_string_cache()
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "app.settings")
 
 import django
 django.setup()
+from core.services.providers.car_consumption_service import CarConsumptionService
+from core.tests.test_parser_calc import NormsService
+pl.enable_string_cache()
+
 
 import app.tasks  # noqa: E402,F401 — must be imported before the providers below
                   # to break a circular import (car_data_service -> app.tasks -> fuelreport_service -> car_data_service)

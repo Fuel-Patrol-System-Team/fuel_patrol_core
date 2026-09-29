@@ -77,7 +77,7 @@ def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=None):
         )
         report_data = report_data.filter(
             pl.col("count").gt(DAILY_MESSAGES)
-            & pl.col("anomaly").truediv(pl.col("count")).gt(0.1)
+            & pl.col("anomaly").truediv(pl.col("count")).gt(0.25)
         )
         for report in report_data.rows(named=True):
             reports.append(
