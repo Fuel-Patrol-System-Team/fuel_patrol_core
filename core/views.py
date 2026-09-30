@@ -504,6 +504,7 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
         start_date = request.data.get("start_date")
         end_date = request.data.get("end_date")
         is_save_bad_data = request.data.get("is_save_bad_data", True)
+        return_true_sensor_data = request.data.get("return_true_sensor_data", False)
 
         agg, agg_error = validate_agg(agg)
         if agg_error:
@@ -554,7 +555,8 @@ class MileageCalculationAPIView(APICalculationLoggingMixin, APIView):
                 start_date=start_date,
                 end_date=end_date,
                 is_save_bad_data=is_save_bad_data,
-                force_chart=force_chart
+                force_chart=force_chart,
+                return_true_sensor_data=return_true_sensor_data
             )
             if status_code == 400 and isinstance(result, dict) and "not exist" in str(result.get("error", "")).lower():
                 status_code = 404

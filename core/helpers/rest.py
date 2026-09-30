@@ -230,6 +230,7 @@ MILEAGE_REQUEST_SCHEMA = openapi.Schema(
         'end_date': openapi.Schema(type=openapi.TYPE_STRING, format=openapi.FORMAT_DATETIME,
                                    description='Дата конца в ISO формате'),
         'agg': openapi.Schema(type=openapi.TYPE_NUMBER, format=openapi.FORMAT_INT32, description="Агрегация в минутах"),
+        'return_true_sensor_data': openapi.Schema(type=openapi.TYPE_BOOLEAN, description="Возвращать ли данные по сенсору без сглаживания"),
         'is_save_bad_data': openapi.Schema(type=openapi.TYPE_BOOLEAN,
                                            description="Сохранять ли bad data записи (по умолчанию true)"),
     },

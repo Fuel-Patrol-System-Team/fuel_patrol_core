@@ -34,7 +34,8 @@ class MileageCalculationService:
             is_save_bad_data: bool = True,
             parser: Optional[GlonassGeneralProvider] = None,
             sensor_speed_chart: Literal["can"] | Literal["mileage"] = "mileage",
-            force_chart=False
+            force_chart=False,
+            return_true_sensor_data=False
     ) -> Tuple[Dict[str, Any], int]:
         """
         Выполняет расчет пробега с созданием отчета
@@ -103,7 +104,7 @@ class MileageCalculationService:
                         result = mileage_test_compute(df, auto_record, agg, mode)
                     else:
                         result = mileage_test_fraud_new(car_id, df, sensors, auto_record, agg, mode,
-                                                        sensor_chart=sensor_speed_chart, force_chart=force_chart)
+                                                        sensor_chart=sensor_speed_chart, force_chart=force_chart, return_true_sensor_data=return_true_sensor_data)
                 except (SystemExit, KeyboardInterrupt, GeneratorExit):
                     raise
                 except BaseException as calc_error:

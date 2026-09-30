@@ -7,6 +7,7 @@ from pathlib import Path
 from django.conf import settings
 
 from app.tasks import SensorsValues
+from core.helpers.alg_utils import alg_remove_max_pieces
 from core.models import CarPrimary, Car
 
 logger = logging.getLogger(__name__)
@@ -31,13 +32,14 @@ class CarDataService:
             is_multi = len(fuel_cols) > 1
 
             for col in fuel_cols:
-                df = df.with_columns(
-                    pl.when(pl.col(col) > 4096)
-                    .then(None)
-                    .otherwise(pl.col(col))
-                    .cast(pl.Float64)
-                    .alias(col)
-                )
+                df = alg_remove_max_pieces(df, col)
+                # df = df.with_columns(
+                #     pl.when(pl.col(col) > 4096)
+                #     .then(None)
+                #     .otherwise(pl.col(col))
+                #     .cast(pl.Float64)
+                #     .alias(col)
+                # )
 
             if "rpm" not in df.columns:
                 df = df.with_columns(pl.lit(65535).alias("rpm"))

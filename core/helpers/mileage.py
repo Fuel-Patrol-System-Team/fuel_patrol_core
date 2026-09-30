@@ -199,8 +199,8 @@ def mileage_test_fraud(
     )
     df = df.with_columns(
         [
-            pl.when(pl.col("du") < 224).then(pl.col("du")).otherwise(0),
-            pl.when(pl.col("du") > 225).then(1).otherwise(0).alias("corrupted"),
+            pl.when(pl.col("du") < 336).then(pl.col("du")).otherwise(0),
+            pl.when(pl.col("du") > 337).then(1).otherwise(0).alias("corrupted"),
         ]
     )
     df = df.with_columns(
@@ -309,6 +309,7 @@ def mileage_test_fraud_new(
     reports = None,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
+    return_true_sensor_data = False
 ):
     """
     Функция для расчета пройденного расстояния и детектирования накрутки автомобиля
@@ -749,12 +750,14 @@ def mileage_test_fraud_new(
             pl.col("pos_s").mean(),
             pl.col("speed_gps").mean(),
             pl.col("du").mean().alias("du_mean"),
+            pl.col("du_mean").mean().alias("du_mean_real"),
             pl.col("ign").max(),
             pl.col("dmileage").sum(),
             pl.col("dtime").sum(),
         )
         # cdf = cdf.with_columns(
             # pl.col("dmileage").truediv(pl.col("dtime")).alias("du_mean"))
+        chart_data_sub_column = "du_mean" if return_true_sensor_data else "du_mean_real"
         chart_data = {
             "timestamp": cdf["timestamp"]
             .dt.replace_time_zone("UTC")
@@ -762,7 +765,7 @@ def mileage_test_fraud_new(
             .to_list(),
             "mileage": cdf["mileage"].to_list(),
             "pos_s": cdf["speed_gps"].to_list(),
-            "pos_s_sensor": cdf["du_mean"].to_list() if sensor_chart == "mileage" else cdf["pos_s"],
+            "pos_s_sensor": cdf[chart_data_sub_column].to_list() if sensor_chart == "mileage" else cdf["pos_s"],
             "ign": cdf["ign"].to_list(),
         }
     df_working = df_working.with_columns(

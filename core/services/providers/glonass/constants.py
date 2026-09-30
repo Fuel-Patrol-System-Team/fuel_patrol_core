@@ -4,6 +4,7 @@ from attr import dataclass
 import polars as pl
 from typing import Protocol
 
+from core.helpers.alg_utils import alg_remove_max_pieces
 from core.helpers.fuel import (
     alg_piece_remove_message_delays,
     reconcile_multisensor,
@@ -357,12 +358,14 @@ def _chart_preprocess(
     if df.shape[0] == 0:
         return df
     
+    
     median_degrees = []
     for i, sensor in enumerate(sensors):
         median_degrees.append(sensor_mapping[sensor][i]["metadata"].get("median_degree"))
     
 
     for i, sensor in enumerate(sensors):
+        df = alg_remove_max_pieces(df, sensor)
         df = df.filter(pl.col(sensor).gt(0) & pl.col(sensor).lt(65530))
         # if "flex_adc" in sensor_mapping["calc_sensors_fuel_level"]:
         #     df = df.filter(~pl.col(sensor).is_in([9, 4]))
