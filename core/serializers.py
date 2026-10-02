@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import pytz
 from rest_framework import serializers
 from .models import (
     CarMotohoursReport,
@@ -296,6 +297,22 @@ class UserOutputSerializer(serializers.Serializer):
     organization = OrganizationOutputSerializer(read_only=True, source="org")
     organization_tg_link = serializers.URLField()
     timezone = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False, allow_null=True)
+
+
+class UserInfoPatchSerializer(serializers.Serializer):
+    timezone = serializers.CharField(required=False)
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
+
+    def validate_timezone(self, value):
+        if value not in pytz.common_timezones:
+            raise serializers.ValidationError("Invalid timezone. Use one of pytz.common_timezones")
+        return value
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError("Передайте хотя бы одно поле: timezone или email.")
+        return attrs
 
 
 class OrgUserOutputSerializer(serializers.ModelSerializer):
@@ -339,10 +356,11 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True)
     org_name = serializers.CharField(write_only=True)
     language_code = serializers.CharField(write_only=True, required=False)
+    email = serializers.EmailField(required=False, allow_null=True)
 
     class Meta:
         model = OrgUser
-        fields = ["id", "username", "password", "org_name", "language_code"]
+        fields = ["id", "username", "password", "org_name", "language_code", "email"]
         read_only_fields = ["id"]
 
     def create(self, validated_data):
@@ -363,6 +381,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             password=validated_data["password"],
             org=organization,
             active_language=language,
+            email=validated_data.get("email"),
         )
         return user
 

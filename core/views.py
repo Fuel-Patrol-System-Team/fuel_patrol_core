@@ -90,7 +90,7 @@ from .serializers import (
     DailyLeaksSerializer, DataProviderOutputSerializer, CarLeaksFilterSerializer,
     DataProviderSerializer, SensorsKeyOutputSerializer, LanguageSerializer,
     CarBadDataSerializer, CarUnitSerializer, UserCarListDetailSerializer, UserCarListCreateUpdateSerializer,
-    UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
+    UserInfoPatchSerializer, UserCarListSerializer, CarMileageReportOutputSerializer, TelegramUserRegistrationSerializer,
     TelegramUserOutputSerializer, CarFuelReportSerializer, DataProviderUpdateSerializer,
     APICalculationLogOutputSerializer, BadDataQuerySerializer, CarBadDataFilterSerializer,
     AlertSubscriptionPatchSerializer, AnalysisRequestSerializer, StopsMileageRequestSerializer
@@ -266,7 +266,7 @@ class UserInfoAPIView(APIView):
 
     @swagger_auto_schema(
         operation_summary="Получить информацию о текущем пользователе",
-        operation_description="Возвращает данные авторизованного пользователя: имя, организацию, часовой пояс и ссылку на Telegram-бота.",
+        operation_description="Возвращает данные авторизованного пользователя: имя, организацию, часовой пояс, email и ссылку на Telegram-бота.",
         responses={200: UserOutputSerializer(), 401: "Не авторизован"}
     )
     def get(self, request):
@@ -279,12 +279,18 @@ class UserInfoAPIView(APIView):
             'organization': user.org.name,
             'organization_tg_link': f"https://t.me/{user.org.bot_username}?start={user.id}",
             'timezone': user.timezone,
+            'email': user.email,
         })
         return user_response(serializer.data, status.HTTP_200_OK)
 
     @swagger_auto_schema(
-        operation_summary="Обновить часовой пояс пользователя",
-        operation_description="Позволяет изменить часовой пояс текущего пользователя. Принимает строку из списка `pytz.common_timezones`.",
+        operation_summary="Обновить часовой пояс и/или email пользователя",
+        operation_description=(
+            "Позволяет изменить часовой пояс и/или email текущего пользователя. "
+            "Нужно передать хотя бы одно поле. Часовой пояс — строка из списка `pytz.common_timezones`. "
+            "Email нужен для получения уведомлений на почту (`sent_via` = `email` или `both` в настройках подписки на алерты); "
+            "пустая строка или null очищает email."
+        ),
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
@@ -292,21 +298,33 @@ class UserInfoAPIView(APIView):
                     type=openapi.TYPE_STRING,
                     example='Europe/Moscow',
                     description='Часовой пояс из списка pytz.common_timezones'
-                )
+                ),
+                'email': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    format=openapi.FORMAT_EMAIL,
+                    example='user@example.com',
+                    description='Email пользователя для почтовых уведомлений'
+                ),
             },
-            required=['timezone']
         ),
-        responses={200: UserOutputSerializer(), 400: "Неверный часовой пояс", 401: "Не авторизован"}
+        responses={200: UserOutputSerializer(), 400: "Неверный часовой пояс или email", 401: "Не авторизован"}
     )
     def patch(self, request):
         user = request.user
         if not user:
             return error_response("Unauthorized", status.HTTP_401_UNAUTHORIZED)
-        new_timezone = request.data.get('timezone')
-        if not new_timezone or new_timezone not in pytz.common_timezones:
-            return error_response("Invalid timezone. Use one of pytz.common_timezones", status.HTTP_400_BAD_REQUEST)
-        user.timezone = new_timezone
-        user.save(update_fields=['timezone'])
+        input_serializer = UserInfoPatchSerializer(data=request.data)
+        if not input_serializer.is_valid():
+            return error_response(input_serializer.errors, status.HTTP_400_BAD_REQUEST)
+        data = input_serializer.validated_data
+        update_fields = []
+        if 'timezone' in data:
+            user.timezone = data['timezone']
+            update_fields.append('timezone')
+        if 'email' in data:
+            user.email = data['email'] or None
+            update_fields.append('email')
+        user.save(update_fields=update_fields)
         serializer = UserOutputSerializer({
             'id': user.id,
             'username': user.username,
@@ -317,6 +335,7 @@ class UserInfoAPIView(APIView):
                 else None
             ),
             'timezone': user.timezone,
+            'email': user.email,
         })
         return user_response(serializer.data, status.HTTP_200_OK)
 
