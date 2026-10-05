@@ -103,6 +103,15 @@ def make_motohours_result(
         
     }
 
+def is_motohours_result_empty(data: dict[str, Any]) -> bool:
+    return (
+        data.get("count") == 0
+        or data.get("sensor") == "none"
+        or data.get("motohours_start") is None
+        or data.get("motohours_end") is None
+    )
+
+
 def make_empty_motohours_response():
     return make_motohours_result(
         motohours_start=0,

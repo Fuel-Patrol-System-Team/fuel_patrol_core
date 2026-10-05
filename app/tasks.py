@@ -16,6 +16,8 @@ from core.helpers.alert import get_tg_users_for_org_user, get_unsent_alerts_by_o
     save_bad_data_alerts_bulk, EMAIL_DIGEST_MAX_EVENTS
 from core.helpers.fuel import fuel_spent_calculate
 from core.helpers.mileage_spans import compute_mileage_span_days
+from core.helpers.mileage import is_mileage_result_empty
+from core.helpers.motohours import is_motohours_result_empty
 from core.models import (
     Alert,
     AlertSubscription,
@@ -1084,7 +1086,7 @@ def parse_cars_mileage_task_one(
                     break
 
                 data = result["result"]
-                is_empty = result.get("empty_data") or (data.get("travel") is None and data.get("first_mileage") is None)
+                is_empty = result.get("empty_data") or is_mileage_result_empty(data)
                 if is_empty:
                     # Реально нет данных за день: отчет НЕ пишем (не затираем
                     # существующие значения), но маркер двигаем — машину с
@@ -1093,6 +1095,9 @@ def parse_cars_mileage_task_one(
                     processed_upto = current_date + timedelta(days=1)
                     continue
 
+                travel = data["travel"]
+                if travel is None:
+                    travel = data["last_mileage"] - data["first_mileage"]
                 fraud_value = data.get("travel_fraud")
                 mileage_report, created = CarMileageReport.objects.update_or_create(
                     car_id_id=car.id,
@@ -1100,7 +1105,7 @@ def parse_cars_mileage_task_one(
                     defaults={
                         "mileage_start": data["first_mileage"],
                         "mileage_end": data["last_mileage"],
-                        "travel": data["travel"],
+                        "travel": travel,
                         "fraud": fraud_value,
                         "travel_fraud_jumps": data["travel_fraud_jumps"],
                         "ign_miss": data["ign_miss"]
@@ -1109,7 +1114,7 @@ def parse_cars_mileage_task_one(
                 processed_upto = current_date + timedelta(days=1)
                 logger.info(
                     f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. "
-                    f"Пройдено км: {data['travel']}, подозрительный пробег: {fraud_value}"
+                    f"Пройдено км: {travel}, подозрительный пробег: {fraud_value}"
                 )
 
                 if fraud_value is not None and abs(fraud_value) > 0 and created:
@@ -1279,9 +1284,9 @@ def parse_cars_motohours_task_one(
                     break
                 data = result["result"]
                 # Пустой ответ содержит нули (make_empty_motohours_response),
-                # поэтому доверяем флагу empty_data, который сервис кладет
-                # во внешний dict рядом с "result".
-                is_empty = result.get("empty_data")
+                # поэтому помимо флага empty_data проверяем сам результат
+                # (count/sensor/start/end).
+                is_empty = result.get("empty_data") or is_motohours_result_empty(data)
                 if is_empty:
                     logger.warning(f"Нет данных motohours для машины {car.id} за {current_date.date().isoformat()}, пропуск без записи")
                     processed_upto = current_date + timedelta(days=1)

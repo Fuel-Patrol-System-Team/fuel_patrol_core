@@ -174,7 +174,8 @@ class MLReasoningService:
                         datetime=dt
                     )
                 except CarMileageReport.DoesNotExist:
-                    mileage_report = CarMileageReport(car_id=car, datetime=dt)
+                    logger.warning(f"Отчёт по пробегу не найден (car={car.id}, dt={dt}), AI-ответ не сохраняется")
+                    continue
                 # Поля данных обновляются каждый раз, а не только при создании -
                 # иначе повторный расчёт того же дня в другом диапазоне дат
                 # оставит в БД устаревшие значения, и следующая сверка в
@@ -195,7 +196,8 @@ class MLReasoningService:
                         datetime=dt
                     )
                 except CarMotohoursReport.DoesNotExist:
-                    motohours_report = CarMotohoursReport(car_id=car, datetime=dt)
+                    logger.warning(f"Отчёт по моточасам не найден (car={car.id}, dt={dt}), AI-ответ не сохраняется")
+                    continue
                 # См. комментарий в ветке mileage выше - поля данных обновляются
                 # каждый раз, а не только при создании записи.
                 for field_name in MOTOHOURS_COMPARE_FIELDS:

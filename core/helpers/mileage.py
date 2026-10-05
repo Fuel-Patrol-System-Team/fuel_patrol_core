@@ -46,6 +46,10 @@ def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_sk
         "reports": reports
     }
 
+def is_mileage_result_empty(data: Dict[str, Any]) -> bool:
+    return data.get("first_mileage") is None or data.get("last_mileage") is None
+
+
 def make_empty_mileage_result(mode: MileageModes):
     return make_mileage_result(
         travel=None,
