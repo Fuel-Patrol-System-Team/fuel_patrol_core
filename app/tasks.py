@@ -15,6 +15,7 @@ from core.admin import SensorsValues
 from core.helpers.alert import get_tg_users_for_org_user, get_unsent_alerts_by_org, build_digest_message, \
     save_bad_data_alerts_bulk, EMAIL_DIGEST_MAX_EVENTS
 from core.helpers.fuel import fuel_spent_calculate
+from core.helpers.mileage_spans import compute_mileage_span_days
 from core.models import (
     Alert,
     AlertSubscription,
@@ -1006,7 +1007,7 @@ def parse_terminal_messages_task(
 
 
 @shared_task(bind=True)
-def parse_cars_milleage_task_one(
+def parse_cars_mileage_task_one(
         self,
         provider_name: str,
         car_id: str,
@@ -1020,10 +1021,11 @@ def parse_cars_milleage_task_one(
         if is_parse_mileage == False:
             return
         tz = pytz.UTC
-        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = start_date + timedelta(days=1)
-        if last_date_manual:
-            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
+        now = datetime.now(tz)
+        if start_date_manual is not None:
+            start_date_manual = datetime.fromisoformat(start_date_manual).astimezone(tz)
+        if last_date_manual is not None:
+            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
         car = Car.objects.filter(id=car_id).select_related("parsingcar_stats").first()
@@ -1031,85 +1033,118 @@ def parse_cars_milleage_task_one(
             logger.warning(f"Машина не найдена {car_id}")
             return
 
-        cars = [car]
+        marker = None
+        p_stats = ParsingCarStats.objects.filter(car_id__id=car.id).first()
+        if p_stats is not None:
+            marker = p_stats.mileage_last_processed
 
-        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date)
+        days = compute_mileage_span_days(
+            now=now,
+            marker=marker,
+            start_manual=start_date_manual,
+            last_manual=last_date_manual,
+            force=force,
+            bootstrap_days=90,
+        )
+
+        if not days:
+            logger.info(f"Нет завершенных дней для расчета пробега машины {car.id} с маркера {marker}")
+            return
+
+        logger.info(
+            f"Обработка пробега для машины {car.id}: "
+            f"спан {days[0].date().isoformat()} - {days[-1].date().isoformat()} ({len(days)} дн., маркер {marker})"
+        )
+
+        parser = GlonassGeneralProvider([car], None, provider, days[0], days[-1] + timedelta(days=1))
         anomalies = 0
+        processed_upto = None  # полночь дня, следующего за последним обработанным
 
         try:
-            logger.info(f"Обработка пробега для машины {car.id}")
             is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(key__key="mileage"))
-            is_already_computed = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
-            if is_already_computed > 0:
-                logger.info(f"Пробег для машины {car.id} {car.name} за {start_date.date().isoformat()} уже обработан, пропускаем")
-                parser._skip_car(car)
-                return
-            last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().mileage_last_processed
-            if last_datetime is None or force:
-                last_datetime = start_date
-            if last_date_manual:
-                end_date = last_date_manual
             if is_sensor == 0:
                 parser._skip_car(car)
                 return
-            for i in range((end_date - last_datetime).days):
-                is_no_need_to_parse = len(CarMileageReport.objects.filter(datetime=start_date, car_id__id=car.id))
-                if is_no_need_to_parse > 0:
-                    parser._skip_car(car)
+
+            for current_date in days:
+                if not force and CarMileageReport.objects.filter(datetime=current_date, car_id__id=car.id).exists():
+                    logger.info(f"Пробег для машины {car.id} за {current_date.date().isoformat()} уже рассчитан, пропускаем")
+                    processed_upto = current_date + timedelta(days=1)
                     continue
-                current_date = last_datetime + timedelta(days=i)
-                tmp_end_date = min(current_date + timedelta(days=1), end_date)
+
+                tmp_end_date = min(current_date + timedelta(days=1), now)
                 result, status = MileageCalculationService.calculate_mileage(
                     car.id, MileageAlgorithms.fraud, None, current_date, tmp_end_date,
                     parser=parser, is_save_bad_data=is_save_bad_data
                 )
+                if status != 200:
+                    # Транзиентная ошибка: останавливаемся, маркер не двигаем,
+                    # недосчитанные дни будут переиграны следующим запуском.
+                    logger.error(f"Статус репорта не успешный ({status}) для машины {car.id}, день {current_date.date().isoformat()}")
+                    break
+
                 data = result["result"]
-                if status == 200:
-                    fraud_value = data.get("travel_fraud")
-                    if fraud_value is not None and abs(fraud_value) > 0:
-                        anomalies += 1
-                    mileage_report, _ = CarMileageReport.objects.update_or_create(
-                        car_id_id=car.id,
-                        datetime=current_date,
-                        defaults={
-                            "mileage_start": data["first_mileage"],
-                            "mileage_end": data["last_mileage"],
-                            "travel": data["travel"],
-                            "fraud": fraud_value,
-                            "travel_fraud_jumps": data["travel_fraud_jumps"],
-                            "ign_miss": data["ign_miss"]
-                        }
-                    )
-                    logger.info(
-                        f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. "
-                        f"Пройдено км: {data['travel']}, подозрительный пробег: {fraud_value}"
+                is_empty = result.get("empty_data") or (data.get("travel") is None and data.get("first_mileage") is None)
+                if is_empty:
+                    # Реально нет данных за день: отчет НЕ пишем (не затираем
+                    # существующие значения), но маркер двигаем — машину с
+                    # давно пустыми данными не пересчитываем бесконечно.
+                    logger.warning(f"Нет данных mileage для машины {car.id} за {current_date.date().isoformat()}, пропуск без записи")
+                    processed_upto = current_date + timedelta(days=1)
+                    continue
+
+                fraud_value = data.get("travel_fraud")
+                mileage_report, created = CarMileageReport.objects.update_or_create(
+                    car_id_id=car.id,
+                    datetime=current_date,
+                    defaults={
+                        "mileage_start": data["first_mileage"],
+                        "mileage_end": data["last_mileage"],
+                        "travel": data["travel"],
+                        "fraud": fraud_value,
+                        "travel_fraud_jumps": data["travel_fraud_jumps"],
+                        "ign_miss": data["ign_miss"]
+                    }
+                )
+                processed_upto = current_date + timedelta(days=1)
+                logger.info(
+                    f"Пробег для машины {car.id} за {current_date.date().isoformat()} сохранен. "
+                    f"Пройдено км: {data['travel']}, подозрительный пробег: {fraud_value}"
+                )
+
+                if fraud_value is not None and abs(fraud_value) > 0 and created:
+                    # Алерт только на первую запись отчета, чтобы переигрывать
+                    # день без дубликатов алертов.
+                    anomalies += 1
+                    save_fraud_alert(
+                        car=car,
+                        organization=provider.org_id,
+                        fraud_km=fraud_value,
+                        event_datetime=current_date,
+                        source_mileage_report=mileage_report,
                     )
 
-                    if fraud_value is not None and abs(fraud_value) > 0:
-                        save_fraud_alert(
-                            car=car,
-                            organization=provider.org_id,
-                            fraud_km=fraud_value,
-                            event_datetime=current_date,
-                            source_mileage_report=mileage_report,
-                        )
-                else:
-                    logger.error("Статус репорта не успешный")
-            ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"mileage_last_processed": start_date})
+            if processed_upto is not None:
+                ParsingCarStats.objects.update_or_create(
+                    car_id=car.id, defaults={"mileage_last_processed": processed_upto}
+                )
+            total_span = max((days[-1] - days[0]).days + 1, 1)
+            # save_system_alert(
+            #     organization=provider.org_id,
+            #     message=f"Отчёт по пробегу за {days[0].date().isoformat()}-{days[-1].date().isoformat()} завершён (машина {car.id}). Накруток: {anomalies}",
+            #     event_datetime=now,
+            # )
         except Exception as err:
             logger.error(f"Ошибка при обработке пробега для машины {car.id}: {err}")
             ReportService.create_bad_data_record(
                 car, f"Ошибка при обработке пробега: {err}", None,
-                start_date, end_date,
+                days[0], days[-1] + timedelta(days=1),
                 CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MILEAGE]
             )
-
-        save_system_alert(
-            organization=provider.org_id,
-            message=f"Отчёт по пробегу за {start_date.date().isoformat()} завершён (машина {car.id}). Накруток: {anomalies}",
-            event_datetime=datetime.utcnow(),
-        )
-
+            if processed_upto is not None:
+                ParsingCarStats.objects.update_or_create(
+                    car_id=car.id, defaults={"mileage_last_processed": processed_upto}
+                )
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга mileage_one: {e}", exc_info=True)
         self.update_state(state='FAILURE', meta={'error': str(e)})
@@ -1130,16 +1165,14 @@ def parse_cars_milleage_task(
         if is_parse_mileage == False:
             return
         tz = pytz.UTC
-        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = start_date + timedelta(days=1)
-
+        end_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
         provider = DataProvider.objects.filter(name=provider_name).first()
         cars = provider.cars.select_related("parsingcar_stats").filter(
             Q(is_active=True) | Q(parsingcar_stats__is_parse_mileage=True)
         )
         if not force:
             cars = cars.filter(
-                Q(parsingcar_stats__mileage_last_processed__isnull=True) | Q(parsingcar_stats__mileage_last_processed__lt=start_date)
+                Q(parsingcar_stats__mileage_last_processed__isnull=True) | Q(parsingcar_stats__mileage_last_processed__lt=end_date)
             )
         cars = list(cars)
 
@@ -1157,9 +1190,9 @@ def parse_cars_milleage_task(
             return
 
         tasks = [
-            parse_cars_milleage_task_one.si(
+            parse_cars_mileage_task_one.si(
                 provider_name, str(car.id), is_save_bad_data, is_parse_mileage,
-                start_date_manual, last_date_manual, force
+                start_date_manual,last_date_manual, force
             )
             for car in cars
         ]
@@ -1188,97 +1221,127 @@ def parse_cars_motohours_task_one(
         if is_parse_motohours == False:
             return
         tz = pytz.UTC
-        start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = start_date + timedelta(days=1)
-        if last_date_manual:
-            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0)
-
+        now = datetime.now(tz)
+        if start_date_manual is not None:
+            start_date_manual = datetime.fromisoformat(start_date_manual).astimezone(tz)
+        if last_date_manual is not None:
+            last_date_manual = datetime.fromisoformat(last_date_manual).astimezone(tz)
+        
         provider = DataProvider.objects.filter(name=provider_name).first()
         car = Car.objects.filter(id=car_id).select_related("parsingcar_stats").first()
         if car is None:
             logger.warning(f"Машина не найдена {car_id}")
             return
+        marker = None
+        p_stats = ParsingCarStats.objects.filter(car_id__id=car.id).first()
+        if p_stats is not None:
+            marker = p_stats.motohours_last_processed
+        
+        days = compute_mileage_span_days(
+            now=now,
+            marker=marker,
+            start_manual=start_date_manual,
+            last_manual=last_date_manual,
+            force=force,
+            bootstrap_days=90
+        )
+        
+        if not days:
+            logger.info(f"Нет завершенных дней для расчета моточасов машины {car.id} с маркера {marker}")
+            return
 
-        cars = [car]
+        logger.info(
+            f"Обработка моточасов для машины {car.id}: "
+            f"спан {days[0].date().isoformat()} - {days[-1].date().isoformat()} ({len(days)} дн., маркер {marker})"
+        )
 
-        parser = GlonassGeneralProvider(cars, None, provider, start_date, end_date, "motohours")
+
+        parser = GlonassGeneralProvider([car], None, provider, days[0], days[-1] + timedelta(days=1))
         anomalies = 0
-
+        processed_upto = None  # полночь дня, следующего за последним обработанным
         try:
-            logger.info(f"Обработка моточасов для машины {car.id}")
             is_sensor = len(SensorsValues.objects.filter(car_id__id=car.id, is_active=True).select_related("key").filter(Q(key__key="motohours") | Q(key__key="ign")))
-            last_datetime = ParsingCarStats.objects.filter(car_id__id=car.id).first().motohours_last_processed
-            if last_datetime is None or force:
-                last_datetime = start_date
-            if last_date_manual:
-                end_date = last_date_manual
             if is_sensor == 0:
                 parser._skip_car(car)
                 return
-            for i in range((end_date - last_datetime).days):
-                current_date = last_datetime + timedelta(days=i)
-                is_no_need_to_parse = len(CarMotohoursReport.objects.filter(datetime=current_date, car_id__id=car.id))
-                if is_no_need_to_parse > 0:
+            for current_date in days:
+                if not force and CarMotohoursReport.objects.filter(datetime=current_date, car_id__id=car.id).exists():
+                    logger.info(f"Моточасы для машины {car.id} за {current_date.date().isoformat()} уже рассчитан, пропускаем")
+                    processed_upto = current_date + timedelta(days=1)
                     continue
-                tmp_end_date = min(current_date + timedelta(days=1), end_date)
+                tmp_end_date = min(current_date + timedelta(days=1), now)
                 result, status = MotohoursCalculationService.calculate_motohours(
                     car.id, None, current_date, tmp_end_date,
-                    is_save_bad_data=is_save_bad_data
+                    parser=parser, is_save_bad_data=is_save_bad_data
                 )
+                if status != 200:
+                    logger.error(f"Статус репорта не успешный ({status}) для машины {car.id}, день {current_date.date().isoformat()}")
+                    break
                 data = result["result"]
-                if status == 200:
-                    fraud_value = data.get("motohours_fraud")
-                    if fraud_value is not None and abs(fraud_value) > 0:
-                        anomalies += 1
-                    motohours_report, _ = CarMotohoursReport.objects.update_or_create(
-                        car_id_id=car.id,
-                        datetime=current_date,
-                        defaults={
-                            "motohours_start": data["motohours_start"],
-                            "motohours_end": data["motohours_end"],
-                            "motohours": data["motohours"],
-                            "motohours_fraud": fraud_value,
-                            "motohours_idle": data["motohours_idle"],
-                            "motohours_active": data["motohours_active"],
-                            "rpm_same_cases": data["rpm_same_cases"],
-                            "rpm_same_cases_time": data["rpm_same_cases_time"],
-                            "motohours_fraud_by_sensor": data["motohours_fraud_by_sensor"],
-                            "unefficient_cases": data["unefficient_cases"],
-                            "unefficient_time": data["unefficient_time"],
-                            "sensor": data["sensor"],
-                            "sensor_check": data["sensor_check"]
-                        }
-                    )
-                    logger.info(
-                        f"Моточасы для машины {car.id} за {current_date.date().isoformat()} сохранены."
-                        f"Итого моточасов: {data['motohours']}, подозрительные моточасы: {fraud_value}"
-                    )
+                # Пустой ответ содержит нули (make_empty_motohours_response),
+                # поэтому доверяем флагу empty_data, который сервис кладет
+                # во внешний dict рядом с "result".
+                is_empty = result.get("empty_data")
+                if is_empty:
+                    logger.warning(f"Нет данных motohours для машины {car.id} за {current_date.date().isoformat()}, пропуск без записи")
+                    processed_upto = current_date + timedelta(days=1)
+                    continue
 
-                    if fraud_value is not None and abs(fraud_value) > 0:
-                        save_fraud_alert(
-                            car=car,
-                            organization=provider.org_id,
-                            fraud_km=fraud_value,
-                            event_datetime=current_date,
-                            source_motohours_report=motohours_report,
-                        )
-                else:
-                    logger.error("Статус репорта не успешный")
-            ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"motohours_last_processed": start_date})
+                fraud_value = data.get("motohours_fraud")
+                motohours_report, created = CarMotohoursReport.objects.update_or_create(
+                    car_id_id=car.id,
+                    datetime=current_date,
+                    defaults={
+                        "motohours_start": data["motohours_start"],
+                        "motohours_end": data["motohours_end"],
+                        "motohours": data["motohours"],
+                        "motohours_fraud": fraud_value,
+                        "motohours_idle": data["motohours_idle"],
+                        "motohours_active": data["motohours_active"],
+                        "rpm_same_cases": data["rpm_same_cases"],
+                        "rpm_same_cases_time": data["rpm_same_cases_time"],
+                        "motohours_fraud_by_sensor": data["motohours_fraud_by_sensor"],
+                        "unefficient_cases": data["unefficient_cases"],
+                        "unefficient_time": data["unefficient_time"],
+                        "sensor": data["sensor"],
+                        "sensor_check": data["sensor_check"]
+                    }
+                )
+                processed_upto = current_date + timedelta(days=1)
+                logger.info(
+                    f"Моточасы для машины {car.id} за {current_date.date().isoformat()} сохранены."
+                    f"Итого моточасов: {data['motohours']}, подозрительные моточасы: {fraud_value}"
+                )
+
+                if fraud_value is not None and abs(fraud_value) > 0 and created:
+                    # Алерт только на первое создание отчета: переигор дня
+                    # по force не плодит дубликаты алертов.
+                    anomalies += 1
+                    save_fraud_alert(
+                        car=car,
+                        organization=provider.org_id,
+                        fraud_km=fraud_value,
+                        event_datetime=current_date,
+                        source_motohours_report=motohours_report,
+                    )
+            if processed_upto is not None:
+                ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"motohours_last_processed": processed_upto})
+
         except Exception as err:
             logger.error(f"Ошибка при обработке моточасов для машины {car.id}: {err}")
             ReportService.create_bad_data_record(
                 car, f"Ошибка при обработке моточасов: {err}", None,
-                start_date, end_date,
+                days[0], days[-1] + timedelta(days=1),
                 CarBadData.Severity.ERROR, CarBadData.Category.CALCULATION, [CarBadData.Tag.MOTOHOURS]
             )
+            if processed_upto is not None:
+                ParsingCarStats.objects.update_or_create(car_id=car.id, defaults={"motohours_last_processed": processed_upto})
 
         save_system_alert(
             organization=provider.org_id,
-            message=f"Отчёт по моточасам за {start_date.date().isoformat()} завершён (машина {car.id}). Накруток: {anomalies}",
-            event_datetime=datetime.utcnow(),
+            message=f"Отчёт по моточасам за {days[0].date().isoformat()}-{days[-1].date().isoformat()} завершён (машина {car.id}). Накруток: {anomalies}",
+            event_datetime=now,
         )
-
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга motohours_one: {e}", exc_info=True)
         self.update_state(state='FAILURE', meta={'error': str(e)})
@@ -1299,8 +1362,8 @@ def parse_cars_motohours_task(
         if is_parse_motohours == False:
             return
         tz = pytz.UTC
+        # Выборка машин по маркеру: конец-эксклюзив спана всегда "вчера" в детях.
         start_date = datetime.now(tz).replace(hour=0, minute=0, second=0, microsecond=0) if start_date_manual is None else datetime.fromisoformat(start_date_manual).astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
-        end_date = start_date + timedelta(days=1)
 
         provider = DataProvider.objects.filter(name=provider_name).first()
         cars = provider.cars.select_related("parsingcar_stats").filter(
@@ -1320,7 +1383,6 @@ def parse_cars_motohours_task(
                     'message': 'Нет машин для обработки моточасов',
                     'provider_name': provider_name,
                     'start_date': start_date.isoformat(),
-                    'end_date': end_date.isoformat(),
                 }
             )
             return
@@ -1453,11 +1515,10 @@ def internal_migrate_to_new_processing_system(self):
 
 @shared_task(bind=True)
 def parse_cars_fuel_provider(self, provider_name: str, is_save_bad_data=False, is_parse_mileage=False):
-    agg = 1440
     try:
         chain(
             calculate_leaks_cron_new.si(provider_name, is_save_bad_data),
-            parse_cars_milleage_task.si(provider_name, agg, is_save_bad_data, is_parse_mileage),
+            parse_cars_milleage_task.si(provider_name, is_save_bad_data, is_parse_mileage),
         ).apply_async()
     except Exception as e:
         logger.error(f"Full exception: {e}", exc_info=True)

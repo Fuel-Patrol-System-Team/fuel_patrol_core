@@ -103,7 +103,7 @@ def make_motohours_result(
         
     }
 
-def make_motohours_response_empty():
+def make_empty_motohours_response():
     return make_motohours_result(
         motohours_start=0,
         motohours_end=0,
@@ -165,7 +165,7 @@ def _compute_motohours(
 ):
     reports = []
     if df.shape[0] == 0:
-        return make_motohours_response_empty(), reports
+        return make_empty_motohours_response(), reports
     result = None
     if method == "ign":
         result, reports = _compute_motohours_by_ign(df, stats, AGG_TIME)
@@ -346,7 +346,7 @@ def _compute_motohours_by_ign(df: pl.DataFrame, stats: dict[str, Any], AGG_PERIO
     is_ign_present = df["ign"].is_not_null().any()
     df = alg_piece_remove_message_delays(df)
     if df.shape[0] == 0:
-        return make_motohours_response_empty(), [] 
+        return make_empty_motohours_response(), [] 
     sensor_check = "ign"
 
     

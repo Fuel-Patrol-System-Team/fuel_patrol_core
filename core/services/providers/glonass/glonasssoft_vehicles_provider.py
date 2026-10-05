@@ -102,13 +102,13 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка при получении списка автомобилей: {e}")
             return None
+            
 
     @retry_on_status(retry_delays=[5, 10, 15], status_codes=[400, 429])
     def get_vehicle_details(self, vehicle_id: int, provider: DataProvider | None = None) -> Optional[Dict[str, Any]]:
         self._enforce_rate_limit()
         url = f"{self.base_url}/vehicles/{vehicle_id}"
         headers = {"X-Auth": self.auth_token}
-
         try:
             response = requests.get(url, headers=headers)
 

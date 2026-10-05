@@ -2,6 +2,7 @@ from enum import Enum
 import logging
 from typing import Dict, Any, Literal, Optional, Tuple
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import polars as pl
 from pandas import DataFrame
@@ -35,7 +36,7 @@ class MileageCalculationService:
             parser: Optional[GlonassGeneralProvider] = None,
             sensor_speed_chart: Literal["can"] | Literal["mileage"] = "mileage",
             force_chart=False,
-            return_true_sensor_data=False
+            return_true_sensor_data=False,
     ) -> Tuple[Dict[str, Any], int]:
         """
         Выполняет расчет пробега с созданием отчета
@@ -65,16 +66,20 @@ class MileageCalculationService:
                 ReportService.complete_report_error(report_query, error_msg)
                 return {"error": error_msg}, 401
 
-            status, df, sensors = provider.parse_raw_data("mileage", True, car)
+            status, df, sensors = provider.parse_raw_data("mileage", True, car, start_date, end_date)
             if df is None or df.is_empty() or not status:
                 mode = MileageModes.standart if agg is None else MileageModes.agg
                 result = make_empty_mileage_result(mode)
+                result["empty_data"] = True
 
                 empty_bad_data = ReportService.create_bad_data_record(
                     car,
                     "Нет данных mileage за указанный период",
                     report_query,
-                    start_date, end_date
+                    start_date, end_date,
+                    CarBadData.Severity.INFO,
+                    CarBadData.Category.PROVIDER_ERROR,
+                    [CarBadData.Tag.MILEAGE, CarBadData.Tag.PROVIDER]
                 )
                 created_reports = [empty_bad_data] if empty_bad_data else []
                 result["created_reports"] = ReportService.serialize_bad_data_records(created_reports)

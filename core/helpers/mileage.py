@@ -1,14 +1,15 @@
 import ast
 from enum import Enum
 from typing import Any, Dict, List, Literal, cast
+from zoneinfo import ZoneInfo
 import charset_normalizer
 import polars as pl
 import numpy as np
 from sklearn.linear_model import LinearRegression
 
-from core.helpers.alg_utils import alg_piece_remove_skipped_messages
+from core.helpers.alg_utils import alg_piece_remove_messages_jumps, alg_piece_remove_skipped_messages
 from core.helpers.fuel import alg_piece_remove_message_delays
-from core.helpers.maintenance import maintenace_check_missing_sensors, maintenance_cross_validate_mileage_voltage, maintenance_mileage_sensor_check
+from core.helpers.maintenance import maintenace_check_missing_sensors, maintenace_sensor_check_ign_new, maintenance_cross_validate_mileage_voltage, maintenance_mileage_sensor_check, maintenance_sensor_check_ign 
 
 class MileageModes(str, Enum):
     standart = "standart"
@@ -25,7 +26,7 @@ class MileageModes(str, Enum):
 
 def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_skip_big: int, first_mileage: None | float, last_mileage: None | float,
                         data: List[Any], travel_fraud_jumps: float, ign_miss: float | None, chart_data: List[Any] | None, chart_data_rpm: List[Any] | None, count: int,
-                        std: float | None, intercept: float | None, slope: float | None, mileage_suspicious: float | None, reports=None
+                        std: float | None, intercept: float | None, slope: float | None, fraud_spans: List[Any] | None, mileage_suspicious: float | None, reports=None
                         ): 
     if reports is None:
         reports = []
@@ -40,6 +41,7 @@ def make_mileage_result(travel: float | None, travel_fraud: float | None, msg_sk
         "data": data,
         "chart_data": chart_data,
         "chart_data_rpm": chart_data_rpm,
+        "fraud_spans": fraud_spans,
         "count": count,
         "reports": reports
     }
@@ -58,6 +60,7 @@ def make_empty_mileage_result(mode: MileageModes):
         chart_data_rpm=[],
         count=0,
         intercept=0,
+        fraud_spans=[],
         std=0,
         slope=0,
         mileage_suspicious=0
@@ -309,7 +312,9 @@ def mileage_test_fraud_new(
     reports = None,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
-    return_true_sensor_data = False
+    MILEAGE_FRAUD_FOR_SPAN=20,
+    MILEAGE_SPAN_MIN_DTIME=3,
+    return_true_sensor_data = False,
 ):
     """
     Функция для расчета пройденного расстояния и детектирования накрутки автомобиля
@@ -338,9 +343,13 @@ def mileage_test_fraud_new(
     df = df.filter(pl.col("mileage").is_not_null() & (pl.col("mileage") > 0))
     df = df.filter(pl.col("msg_number").gt(0))
     df = alg_piece_remove_message_delays(df)
+    # TODO: доделать, либо сделать полную фильтрацию либо поправить баг для м870ох 797 + 24.05.2026
+    # df = alg_piece_remove_messages_jumps(df)
     reports = maintenace_check_missing_sensors(df, ["rpm", "mileage"], sensors)
     reports = maintenance_mileage_sensor_check(df, sensors, reports)
     reports = maintenance_cross_validate_mileage_voltage(df, reports)
+    reports = maintenace_sensor_check_ign_new(df, reports)
+
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
     if auto_record["mileage_grading"] is not None:
@@ -393,6 +402,10 @@ def mileage_test_fraud_new(
         ]
     )
     df = alg_piece_remove_skipped_messages(df)
+    # защита от инерции, возможных задержках в датчике зажигания
+    df = df.with_columns(
+        pl.col("ign").fill_null(0).rolling_max_by("timestamp", window_size="5s")
+    )
 
     # внутренний примивный фильтр
     is_zero_one_sensor = df.filter(pl.col("dmileage") < 1)["dmileage"].max() in [0, 0.5]
@@ -741,7 +754,7 @@ def mileage_test_fraud_new(
         "travel" if df_working["dmileage_diff"].abs().first() < 0.0015 else "travel_r"
     )
     ign_miss = df_working["dmileage_missed"].sum()
-    travel_fraud = df_working.with_columns(pl.max_horizontal([pl.col("dmileage_missed"), pl.col("true_mileage_fraud")]))
+    df_working = df_working.with_columns(pl.max_horizontal([pl.col("dmileage_missed"), pl.col("true_mileage_fraud")]).alias("true_mileage_fraud"))
     travel_fraud = df_working["true_mileage_fraud"].sum()
     chart_data = None
     if travel_fraud > 0 or mileage_suspicious > 0 or force_chart:
@@ -757,7 +770,7 @@ def mileage_test_fraud_new(
         )
         # cdf = cdf.with_columns(
             # pl.col("dmileage").truediv(pl.col("dtime")).alias("du_mean"))
-        chart_data_sub_column = "du_mean" if return_true_sensor_data else "du_mean_real"
+        chart_data_sub_column = "du_mean_real" if return_true_sensor_data else "du_mean"
         chart_data = {
             "timestamp": cdf["timestamp"]
             .dt.replace_time_zone("UTC")
@@ -771,6 +784,50 @@ def mileage_test_fraud_new(
     df_working = df_working.with_columns(
         pl.max_horizontal(pl.col("dmileage_missed_skip"), pl.col("true_mileage_fraud")).alias("travel_fraud")
     )
+    df =df.with_columns(
+        pl.col("pos_s").fill_null(0).rolling_mean_by("timestamp", "20s").gt(0).cast(pl.Int32).alias("is_moving_flag")
+    )
+
+    df = df.with_columns(
+        pl.col("is_moving_flag").diff().abs().rle_id().alias("moving_group")
+    )
+    target_for_diff_span = "dmileage_r" if target_for_diff == "travel_r" else "dmileage"
+    df = df.with_columns(
+        pl.col("mileage").last().over("moving_group").alias("mileage_last_moving"),
+        pl.col("mileage").first().over("moving_group").alias("mileage_first_moving"),
+    )
+    df = df.with_columns(
+        (pl.col("mileage").last().over("moving_group") - pl.col("mileage").first().over("moving_group")).sub(pl.col(target_for_diff_span).sum().over("moving_group")).alias("fraud_for_span")
+    )
+
+    df = df.with_columns(
+        pl.when(pl.col("fraud_for_span").gt(MILEAGE_FRAUD_FOR_SPAN) & pl.col("jumps").lt(10).over("moving_group")).then(1).otherwise(0).alias("is_fraud_span")
+    )
+    df = df.with_columns(
+        pl.col("is_fraud_span").diff().abs().cum_sum().alias("fraud_span_id")
+    )
+    fraud_spans = (
+        df.filter(pl.col("is_fraud_span").eq(1))
+        .group_by("fraud_span_id")
+        .agg(
+            pl.col("timestamp").first().alias("timestamp_first"),
+            pl.col("timestamp").last().alias("timestamp_end"),
+            pl.col("fraud_for_span").max().alias("travel_fraud"),
+        )
+    )
+    fraud_spans = fraud_spans.with_columns(
+        pl.col("timestamp_end").sub(pl.col("timestamp_first")).dt.total_seconds().alias("dtime")
+    )
+    fraud_spans = (
+        fraud_spans.filter(pl.col("dtime").gt(MILEAGE_SPAN_MIN_DTIME * 60) & pl.col("travel_fraud").gt(20) )
+        .select(["timestamp_first", "timestamp_end", "travel_fraud"])
+        .with_columns(
+            pl.col("timestamp_first").dt.replace_time_zone("UTC"),
+            pl.col("timestamp_end").dt.replace_time_zone("UTC")
+        )
+        .to_dicts()
+    )
+
     travel_skipped = df_working["dmileage_missed_skip"].sum()
     msg_skip_big = df_working["msg_skip_big"].max()
     ign_fraud_spent = df_working["ign_fraud_spent"].sum()
@@ -798,6 +855,7 @@ def mileage_test_fraud_new(
         count=1,
         std=std,
         slope=slope,
+        fraud_spans=fraud_spans,
         intercept=intercept,
         mileage_suspicious=mileage_suspicious,
         reports=reports

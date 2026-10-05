@@ -5,7 +5,7 @@ from datetime import datetime
 import polars
 
 from app.tasks import ParsingCarStats
-from core.helpers.motohours import compute_motohours, make_motohours_response_empty
+from core.helpers.motohours import compute_motohours, make_empty_motohours_response
 from core.models import Car, CarBadData, DataProvider, ReportQuery
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
@@ -61,36 +61,34 @@ class MotohoursCalculationService:
                 return {"error": error_msg}, 401
 
             try:
-                status, df, sensors = provider.parse_raw_data("motohours", True, car)
+                status, df, sensors = provider.parse_raw_data("motohours", True, car, start_date, end_date)
             except Exception as data_error:
                 error_msg = f"Не удалось получить данные от провайдера: {str(data_error)}"
                 logger.error(f"Ошибка получения данных от провайдера для car_id={car_id}: {data_error}", exc_info=True)
                 ReportService.complete_report_error(report_query, error_msg)
                 return {"error": error_msg}, 400
 
-            if df is None:
-                error_msg = "Провайдер не вернул данные"
-                ReportService.complete_report_error(report_query, error_msg)
-                return {"error": error_msg}, 400
+            if df is None or df.is_empty():
+                result = make_empty_motohours_response()
+                result["empty_data"] = True
 
-            if df.is_empty():
-                result = make_motohours_response_empty()
-
-                ReportService.create_bad_data_record(
+                empty_bad_data = ReportService.create_bad_data_record(
                     car,
-                    "Нет данных моточасов за указанный период",
+                    "Нет данных motohours за указанный период",
                     report_query,
                     start_date, end_date,
                     CarBadData.Severity.INFO,
                     CarBadData.Category.PROVIDER_ERROR,
                     [CarBadData.Tag.MOTOHOURS, CarBadData.Tag.PROVIDER]
-
                 )
+                created_reports = [empty_bad_data] if empty_bad_data else []
+                result["created_reports"] = ReportService.serialize_bad_data_records(created_reports)
 
                 report_data = {
                     "result": result,
                     "empty_data": True,
-                    "rows_processed": 0
+                    "rows_processed": 0,
+                    "bad_data_created": len(created_reports)
                 }
 
                 ReportService.complete_report_success(
@@ -100,7 +98,7 @@ class MotohoursCalculationService:
                     cars_skipped=1
                 )
 
-                return {"result": result}, 200
+                return {"result": result, "empty_data": True}, 200
 
             try:
                 agg_period = 0 if agg is None else agg

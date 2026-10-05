@@ -129,7 +129,6 @@ def maintenance_fuel_consumpt_check(
                 )
     return reports
 
-
 def maintenace_check_missing_sensors(
     df: pl.DataFrame,
     columns: List[str],
@@ -441,6 +440,27 @@ def maintenance_rpm_slow_change_on_speed(df: pl.DataFrame, reports=None):
             )
     return reports
 
+def maintenace_sensor_check_ign_new(df: pl.DataFrame, reports = None):
+    if reports is None:
+        reports = []
+    days_data = df.group_by_dynamic("timestamp", every="1d").agg([
+        (pl.col("ign").eq(1).all() | pl.col("ign").eq(0).all()).alias("ign_fault"),
+        pl.col("pos_s").count().alias("count"),
+        pl.col("pos_s").max().alias("pos_s_max"),
+    ])
+    for day in days_data.iter_rows(named=True):
+        if day["ign_fault"] and day["pos_s_max"] > 20 and day["count"] > 30:
+            reports.append(
+                {
+                    "event_date": day["timestamp"],
+                    "message": f"Задектирован неработающий датчик ign {day["timestamp"].dt.date()}",
+                    "tags": [CarBadData.Tag.SENSOR],
+                    "category": CarBadData.Category.MAINTENANCE,
+                    "severity": CarBadData.Severity.WARNING
+                }
+            )
+    return reports
+    
 
 def maintenance_sensor_check_ign(df: pl.DataFrame):
     """

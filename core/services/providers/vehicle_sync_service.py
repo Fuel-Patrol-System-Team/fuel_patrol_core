@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, Any, final
+from typing import Dict, Any, Optional, final
 
 from core.models import Car, DataProvider, Organization
 
@@ -18,7 +18,7 @@ class VehicleSyncService:
         self.organization = organization
         self.provider_instance = None
 
-    def sync_vehicles(self, report_query=None, specific_car=None) -> Dict[str, Any]:
+    def sync_vehicles(self, report_query=None, specific_car=None, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Основной метод синхронизации с созданием отчета"""
         try:
 
@@ -62,7 +62,7 @@ class VehicleSyncService:
 
             logger.info(f"Получено {len(vehicles)} транспортных средств для обработки")
 
-            stats = self._process_vehicles(vehicles, self.provider, report_query)
+            stats = self._process_vehicles(vehicles, self.provider, report_query, metadata)
 
             current_cars = self.provider.cars.values_list("id_in_provider_system", flat=True)
             cars_to_inactivate =  set(current_cars) - set(stats["vehicles_ids"]) if len(current_cars) > 0 else set()
@@ -109,7 +109,7 @@ class VehicleSyncService:
             except Car.DoesNotExist:
                 logger.warning(f"Не найден автомобиль с id_in_provider_system={car_id} для деактивации")
 
-    def _process_vehicles(self, vehicles: list,provider: DataProvider, report_query=None ) -> Dict[str, Any]:
+    def _process_vehicles(self, vehicles: list,provider: DataProvider, report_query=None, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Обрабатывает список транспортных средств с созданием CarBadData записей"""
         stats = {
             "created": 0,
@@ -129,7 +129,7 @@ class VehicleSyncService:
 
                 logger.info(f"Обработка машины {i}/{len(vehicles)}: vehicleId={vehicle_id}")
 
-                vehicle_details = self.provider_instance.get_vehicle_details(vehicle_id, provider)
+                vehicle_details = self.provider_instance.get_vehicle_details(vehicle_id, provider, metadata)
                 if not vehicle_details:
                     stats["failed"] += 1
                     logger.warning(f"Не удалось получить детали для vehicleId={vehicle_id}")

@@ -46,6 +46,15 @@ def alg_remove_max_pieces(df: pl.DataFrame, sensor: str):
             pl.col(sensor).le(4090)
         )
     return df
+
+def alg_piece_remove_messages_jumps(df: pl.DataFrame):
+    df = df.with_columns(
+        pl.col("msg_number").diff().replace([-1, 1], 0).cum_sum().alias("msg_number_cum")
+    )
+    df = df.filter(
+        pl.col("msg_number").diff().replace([-1, 1], 0).cum_sum().abs().gt(8)
+    )
+    return df
     
 def alg_piece_remove_message_delays(df: pl.DataFrame):
     """

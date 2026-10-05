@@ -30,7 +30,8 @@ class GlonassGeneralProvider:
     mode: str
     old_car_id: UUID | None
     i = 0
-
+    
+    
     def __init__(self,cars: List[Car] | None, car: Car | None, provider: DataProvider, start_date: datetime, end_date: datetime, mode: str = "mileage", default_period_days=90):
         if cars is None and car is not None:
             self.cars = list([car])
