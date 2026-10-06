@@ -286,6 +286,9 @@ def preprocess_basic_one(
     if "satellites" not in df.columns:
         df = df.with_columns(pl.lit(20).alias("satellites"))
     df = alg_piece_remove_message_delays(df)
+    # df = df.with_columns(
+    #     pl.col("speed_can").alias("pos_s")
+    # )
     reports = maintenance_critical_raw_fuel_values(df, sensors, reports)
 
     for sensor in calc_fuel_sensors:

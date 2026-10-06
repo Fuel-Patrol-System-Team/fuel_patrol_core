@@ -1212,6 +1212,31 @@ def parse_cars_milleage_task(
         raise
 
 @shared_task(bind=True)
+def parse_cars_mileage_general_task(
+    self,
+    provider_names: List[str], 
+    is_save_bad_data: bool = False,
+    is_parse_mileage=False,
+    start_date_manual=None,
+    last_date_manual=None,
+    force=False
+):
+    try:
+        tasks = [
+            parse_cars_milleage_task.si(
+                provider_name, is_save_bad_data, is_parse_mileage, start_date_manual, last_date_manual, force 
+            ) for provider_name in provider_names
+        ]
+        try:
+            chain(*tasks).apply_async()
+        except BaseException as err:
+            logger.error(f"Ошибка при расчете пробега(функция менеджмента пробега {err})")
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинге mileage: {e}", exc_info=True)
+        self.update_state(state='FAILURE', meta={'errror': str(e)})
+        raise
+
+@shared_task(bind=True)
 def parse_cars_motohours_task_one(
         self,
         provider_name: str,
@@ -1407,6 +1432,30 @@ def parse_cars_motohours_task(
     except Exception as e:
         logger.error(f"Ошибка в задаче парсинга motohours: {e}", exc_info=True)
         self.update_state(state='FAILURE', meta={'error': str(e)})
+        raise
+
+def parse_cars_motohours_general_task(
+        self,
+        provider_names: List[str],
+        is_save_bad_data: bool = False,
+        is_parse_motohours=False,
+        start_date_manual=None,
+        last_date_manual=None,
+        force=False
+):
+    try:
+        tasks = [
+            parse_cars_motohours_task.si(
+                provider_name, is_save_bad_data, is_parse_motohours, start_date_manual, last_date_manual, force
+            ) for provider_name in provider_names
+        ]
+        try:
+            chain(*tasks).apply_async()
+        except BaseException as err:
+            logger.error(f"Ошибка при расчете пробега(функция менеджмента пробега {err})")
+    except Exception as e:
+        logger.error(f"Ошибка в задаче парсинга motohours: {e}", exc_info=True)
+        self.update_state(state='FAILURE', meta={'error', str(e)})
         raise
 
 # TODO: не использовать убрать

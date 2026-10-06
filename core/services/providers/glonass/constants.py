@@ -48,6 +48,7 @@ class GL_PARAM_KEYS(Enum):
     timestamp_server = "timestamp_server"
     speed = "speed"
     speed_gps = "speed_gps"
+    speed_can = "speed_can"
     fuel_level = "calc_sensors_fuel_level"
     mileage = "mileage"
     motohours = "motohours"
@@ -158,6 +159,9 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     GL_PARAM_KEYS.speed_gps: GlonassParameter(
         False, "speed", "speed_gps", None, False, 0, None
     ),
+    GL_PARAM_KEYS.speed_can: GlonassParameter(
+       True, "parameters.can_speed", "speed_can", None, False, 0, None   
+    ),
     GL_PARAM_KEYS.power_level: GlonassParameter(
         True, "voltage", "power_level", _cast_power_level, False, 0, None 
     ),
@@ -253,6 +257,7 @@ FUEL_COLUMNS = [
     GL_PARAM_KEYS.power_level,
     *GPS_COLUMNS,
     GL_PARAM_KEYS.speed,
+    GL_PARAM_KEYS.speed_can,
     GL_PARAM_KEYS.fuel_level,
     GL_PARAM_KEYS.event_code,
     GL_PARAM_KEYS.temp,

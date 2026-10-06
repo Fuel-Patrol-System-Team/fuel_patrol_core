@@ -410,6 +410,13 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.col("ign").fill_null(0).rolling_max_by("timestamp", window_size="5s")
     )
+    
+    df = df.with_columns(
+        pl.col("mileage").diff().fill_null(0).abs().gt(1000).cast(pl.Int32).rolling_max_by(by="timestamp", window_size="25m").alias("jumps_filter")
+    )
+    df = df.filter(
+        pl.col("jumps_filter").lt(1)
+    )
 
     # внутренний примивный фильтр
     is_zero_one_sensor = df.filter(pl.col("dmileage") < 1)["dmileage"].max() in [0, 0.5]
@@ -533,8 +540,9 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.col("dmileage").mul(pl.col("time_factor")).alias("dmileage_factor")
     )
+    # Прыжки не обязательно будут биться с зажиганием, так как это исчезновение данных
     df = df.with_columns(
-        pl.when(pl.col("ign").eq(0))
+        pl.when(pl.col("ign").eq(0) & pl.col("dtime").lt(0.25))
         .then(pl.col("dmileage"))
         .otherwise(0)
         .alias("dmileage_missed")
@@ -743,6 +751,13 @@ def mileage_test_fraud_new(
     )
     last_mileage = cast(float, df_working["last_mileage"].drop_nulls().last())
     first_mileage = cast(float, df_working["first_mileage"].drop_nulls().first())
+    df_working = df_working.with_columns(
+        pl.when(pl.col("travel").gt(240 * 24)).then(True).otherwise(False).alias("anomaly")
+    ).with_columns(
+        pl.when(pl.col("anomaly")).then(pl.col("last_mileage").sub(pl.col("first_mileage").alias("travel"))).otherwise(pl.col("travel")),
+        pl.when(pl.col("anomaly")).then(0).otherwise(pl.col("true_mileage_fraud")).alias("true_mileage_fraud"),
+        # pl.when(pl.col("anomaly")).then(0).otherwise(pl.col("travel_fraud")).alias("travel_fraud"),
+    )
     travel = cast(
         float,
         (
@@ -831,7 +846,6 @@ def mileage_test_fraud_new(
         )
         .to_dicts()
     )
-
     travel_skipped = df_working["dmileage_missed_skip"].sum()
     msg_skip_big = df_working["msg_skip_big"].max()
     ign_fraud_spent = df_working["ign_fraud_spent"].sum()
@@ -844,6 +858,8 @@ def mileage_test_fraud_new(
         ign_fraud_spent_false = 0
     travel_fraud = df_working["travel_fraud"].sum()
     travel_fraud_jumps = df_working["true_mileage_fraud"].sum()
+    if travel_fraud < 10:
+        travel_fraud = 0
         
     return make_mileage_result(
         travel,
