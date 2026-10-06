@@ -453,7 +453,7 @@ def maintenace_sensor_check_ign_new(df: pl.DataFrame, reports = None):
             reports.append(
                 {
                     "event_date": day["timestamp"],
-                    "message": f"Задектирован неработающий датчик ign {day["timestamp"].dt.date()}",
+                    "message": f"Задектирован неработающий датчик ign {str(day["timestamp"].date())}",
                     "tags": [CarBadData.Tag.SENSOR],
                     "category": CarBadData.Category.MAINTENANCE,
                     "severity": CarBadData.Severity.WARNING
