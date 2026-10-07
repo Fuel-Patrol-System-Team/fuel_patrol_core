@@ -452,7 +452,7 @@ def mileage_test_fraud_new(
         return make_empty_mileage_result(regime)
 
     df = df.with_columns(
-        pl.col("du").rolling_mean_by(by="timestamp", window_size="1m").alias("du_mean")
+        pl.col("du").alias("du_mean")
     )
 
     df = df.with_columns(
@@ -640,6 +640,9 @@ def mileage_test_fraud_new(
     df = df.with_columns(
         pl.when(pl.col("is_small_mileage").eq(False)).then(pl.col("dmileage_missed")).otherwise(pl.lit(0)).alias("dmileage_missed")
     )
+    df = df.with_columns(
+        pl.col("dmileage").sub("dmileage_r").abs().alias("diff")
+    )
 
     agg = None
     if regime == MileageModes.agg:
@@ -737,7 +740,7 @@ def mileage_test_fraud_new(
     df_working = df_working.with_columns(
         (
             (
-                (pl.col("spikes_big").lt(20) & pl.col("dmileage_factor_diff").gt(0.65))
+                (pl.col("spikes_big").lt(20) & pl.col("dmileage_factor_diff").gt(0.40))
                 & pl.col("mileage_fraud").abs().gt(100)
             )
         )
