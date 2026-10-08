@@ -281,6 +281,8 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
         custom_fields = vehicle_data.get("customFields", [])
         marks = list(filter(lambda x: x["name"].lower() == "марка", custom_fields))
         models = list(filter(lambda x: x["name"].lower() == "модель", custom_fields))
+        marks = [ mark["value"] for mark in marks]
+        models = [model["value"] for model in models ]
         mark = None
         model = None
         if len(marks) > 0:

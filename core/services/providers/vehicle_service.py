@@ -54,26 +54,20 @@ class VehicleService:
 
             validation_errors = VehicleService._validate_vehicle_data(vehicle_data)
             critical_errors.extend(validation_errors)
-            # Марка (make) -> CarModel -> car.model
-            # Модель (model) -> CarModelSpecification -> car.model_specs
             car_model_obj = None
             car_spec_obj = None
+            # TODO: кривые записи, требуют доп. валидации для тестов
+            # mark_label = vehicle_data.get("mark")
+            # if mark_label:
+            #     car_model_obj, _ = CarModel.objects.update_or_create(
+            #         label=mark_label, defaults={"label": mark_label}
+            #     )
 
-            mark_label = vehicle_data.get("mark")
-            if mark_label:
-                # CarModel.label уникально — update_or_create по label безопасен.
-                car_model_obj, _ = CarModel.objects.update_or_create(
-                    label=mark_label, defaults={"label": mark_label}
-                )
-
-            model_label = vehicle_data.get("model")
-            if model_label:
-                # CarModelSpecification.label НЕ уникально, поэтому update_or_create
-                # по label небезопасен (возможен MultipleObjectsReturned) — берём
-                # существующую запись, либо создаём новую.
-                car_spec_obj = CarModelSpecification.objects.filter(label=model_label).first()
-                if car_spec_obj is None:
-                    car_spec_obj = CarModelSpecification.objects.create(label=model_label)
+            # model_label = vehicle_data.get("model")
+            # if model_label:
+            #     car_spec_obj = CarModelSpecification.objects.filter(label=model_label).first()
+            #     if car_spec_obj is None:
+            #         car_spec_obj = CarModelSpecification.objects.create(label=model_label)
 
             car, created = Car.objects.update_or_create(
                 id=vehicle_guid,
