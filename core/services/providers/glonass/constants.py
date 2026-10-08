@@ -64,6 +64,7 @@ class GL_PARAM_KEYS(Enum):
     amtr_y = "amtr_y"
     amtr_z = "amtr_z"
     satellites = "satellites"
+    pwr_akb = "pwr_akb"
     msg_number = "msg_number"
     fuel_consumpt = "fuel_consumpt"
     rpm_idle = "rpm_idle"
@@ -161,6 +162,9 @@ GLOBAL_GLONASS_PARAMS: dict[GL_PARAM_KEYS, GlonassParameter] = {
     ),
     GL_PARAM_KEYS.speed_can: GlonassParameter(
        True, "parameters.can_speed", "speed_can", None, False, 0, None   
+    ),
+    GL_PARAM_KEYS.pwr_akb: GlonassParameter(
+       True, "parameters.pwr_akb", "pwr_akb", None, False, 0, None   
     ),
     GL_PARAM_KEYS.power_level: GlonassParameter(
         True, "voltage", "power_level", _cast_power_level, False, 0, None 
@@ -274,6 +278,7 @@ ALL_COLUMNS = [
     *FUEL_COLUMNS,
     GL_PARAM_KEYS.motohours,
     GL_PARAM_KEYS.mileage,
+    GL_PARAM_KEYS.pwr_akb
 ]
 
 
