@@ -187,7 +187,13 @@ class NormsService:
                     "rpm_model_intercept",
                     "rpm_model_coef",
                     "rpm_model_dt_coef",
-                    "rpm_model_std"
+                    "rpm_model_std",
+                    "combo_model_coef",
+                    "combo_model_rpm_coef",
+                    "combo_model_dt_coef",
+                    "combo_model_intercept",
+                    "combo_model_mean",
+                    "combo_model_std"
                 ]
             }
             metadata = {
@@ -197,7 +203,9 @@ class NormsService:
                 "fpm_model_artificial": True,
                 "rpm_model_3d": True,
                 "speed_model_3d": True,
-                "fpm_model_3d": True
+                "fpm_model_3d": True,
+                "combo_model_artificial": True,
+                "combo_model_3d": True
             }
             norms_df = pl.DataFrame(
                 {
@@ -885,24 +893,30 @@ class NormsService:
         alpha: float = 0.1,
         GUARD_COEF_SIGMA: float = 2.5,
         dtime_feature: Optional[str] = None,
+        extra_features: Optional[List[str]] = None,
     ):
+        features = [feature, *(extra_features or [])]
+        if dtime_feature is not None:
+            features.append(dtime_feature)
         check_coefs, check_intercept, check_mean, check_std = (
             NormsService._fit_lasso_per_car(
-                group, feature, target, auto, MIN_SAMPLES, alpha, dtime_feature
+                group,
+                feature,
+                target,
+                auto,
+                MIN_SAMPLES,
+                alpha,
+                dtime_feature,
+                extra_features,
             )
         )
         if check_coefs == [0.0] * len(check_coefs) and check_intercept == 0.0:
             return check_coefs, check_intercept, check_mean, check_std
         check_prediction = pl.lit(check_intercept)
-        if dtime_feature is not None:
-            check_prediction = check_prediction.add(
-                pl.col(dtime_feature).mul(check_coefs[1])
-            )
+        for coef, name in zip(check_coefs, features):
+            check_prediction = check_prediction.add(pl.col(name).mul(coef))
         group = group.with_columns(
-            pl.col(feature)
-            .mul(check_coefs[0])
-            .add(check_prediction)
-            .alias("check_prediction")
+            check_prediction.alias("check_prediction")
         )
         group = group.filter(
             pl.col(target)
@@ -911,7 +925,14 @@ class NormsService:
         )
         real_coefs, real_intercept, real_mean, real_std = (
             NormsService._fit_lasso_per_car(
-                group, feature, target, auto, MIN_SAMPLES, alpha=0.1, dtime_feature=dtime_feature
+                group,
+                feature,
+                target,
+                auto,
+                MIN_SAMPLES,
+                alpha=0.1,
+                dtime_feature=dtime_feature,
+                extra_features=extra_features,
             )
         )
         return real_coefs, real_intercept, real_mean, real_std
@@ -925,18 +946,20 @@ class NormsService:
         MIN_SAMPLES: int = 10,
         alpha: float = 0.1,
         dtime_feature: Optional[str] = None,
+        extra_features: Optional[List[str]] = None,
     ) -> Tuple[List[float], float, float, float]:
         """Подгонка Lasso по данным одной машины.
 
-        При переданном dtime_feature строится 3D-модель с двумя признаками
-        (feature + dtime_feature). Возвращает (coefs, intercept, mean, std),
-        где coefs — список коэффициентов по признакам. residual_std — std
-        остатков (y - ŷ). При нехватке данных/ошибке возвращает
-        (нули, mean(y), 0, 0).
+        Признаки: [feature] + extra_features + [dtime_feature]. Возвращает
+        (coefs, intercept, mean, std), где coefs — список коэффициентов по
+        признакам в порядке перечисления. residual_std — std остатков (y - ŷ).
+        При нехватке данных/ошибке возвращает (нули, mean(y), 0, 0).
         """
         import numpy as np
 
-        features = [feature] if dtime_feature is None else [feature, dtime_feature]
+        features = [feature, *(extra_features or [])]
+        if dtime_feature is not None:
+            features.append(dtime_feature)
         n_coefs = len(features)
         try:
             missing = [f for f in features if f not in group.columns]
@@ -1152,6 +1175,38 @@ class NormsService:
                 )
             )
 
+            # Combo-модель только для машин с рабочим rpm-датчиком и pos_s.
+            # Без rpm rpm-колонка заполнена нулями выше, поэтому max==0
+            # означает отсутствие датчика.
+            combo_has_rpm = (
+                "rpm_mean" in group.columns
+                and group["rpm_mean"].fill_null(0).max() is not None
+                and group["rpm_mean"].fill_null(0).max() > 1000
+            )
+            if combo_has_rpm:
+                combo_coefs, combo_intercept, combo_mean, combo_std = (
+                    NormsService._fit_lasso_per_car(
+                        group,
+                        feature="pos_s",
+                        target="spent_fuel",
+                        auto=auto,
+                        dtime_feature="dtime",
+                        extra_features=["rpm_mean"],
+                    )
+                )
+                logger.info(
+                    f"Машина {auto}: combo-модель coefs={combo_coefs}, "
+                    f"intercept={combo_intercept:.4f}, std={combo_std:.4f}"
+                )
+            else:
+                combo_mean_fallback = NormsService._safe_mean(group, "spent_fuel")
+                combo_coefs, combo_intercept, combo_mean, combo_std = (
+                    [0.0, 0.0, 0.0],
+                    combo_mean_fallback,
+                    0.0,
+                    0.0,
+                )
+
             std = group["spent_fuel"].std()
             if std is None:
                 std = 0
@@ -1212,6 +1267,13 @@ class NormsService:
                         "fpm_model_intercept": fpm_model_intercept,
                         "fpm_model_mean": fpm_model_mean,
                         "fpm_model_std": fpm_model_std,
+                        "combo_model_coef": combo_coefs[0],
+                        "combo_model_rpm_coef": combo_coefs[1],
+                        "combo_model_dt_coef": combo_coefs[2],
+                        "combo_model_intercept": combo_intercept,
+                        "combo_model_mean": combo_mean,
+                        "combo_model_std": combo_std,
+                        "is_combo_model": combo_has_rpm,
                         "period": datetime.now() + timedelta(days=365),
                         "is_special_car": max_speed > 30,
                     }
@@ -1253,6 +1315,13 @@ class NormsService:
             "fpm_model_intercept": pl.Float32,
             "fpm_model_mean": pl.Float32,
             "fpm_model_std": pl.Float32,
+            "combo_model_coef": pl.Float32,
+            "combo_model_rpm_coef": pl.Float32,
+            "combo_model_dt_coef": pl.Float32,
+            "combo_model_intercept": pl.Float32,
+            "combo_model_mean": pl.Float32,
+            "is_combo_model": pl.Boolean,
+            "combo_model_std": pl.Float32,
             "period": pl.Datetime,
             "is_special_car": pl.Boolean,
         }

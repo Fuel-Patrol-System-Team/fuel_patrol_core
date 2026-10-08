@@ -87,6 +87,7 @@ class FuelFilters(Enum):
     SIGMA_FPM = "fpm_model"
     RPM_MODEL = "rpm_model"
     SPEED_MODEL = "speed_model"
+    COMBO_MODEL = "combo_model"
 
 
 def _cast_ign(

@@ -32,10 +32,10 @@ class FilteringService(BaseFilteringService):
         здесь вызываются только терминальные фильтры цепочки.
         """
         logger.info("Применение пикеров для фильтров")
-
         # leak_picker + row filters run once as prerequisites of the first
         # terminal pick; subsequent picks reuse the already-prepared df so the
         # chain stays continuous (matches the original manual sequence).
+        
         filtered_df, _ = self.leak_picker(df)
         # filtered_df, _ = self.filtering_special_required(filtered_df)
         # filtered_df, _ = self.filtering_standing_hard(filtered_df)
@@ -46,6 +46,8 @@ class FilteringService(BaseFilteringService):
         # filtered_df, _ = self.filtering_possible_short_circuit(filtered_df)
 
         filtered_df, _ = self.pick_by_fpm_std(filtered_df, SIGMAS=3)
+        filtered_df, _ = self.pick_by_combo_model(filtered_df, SIGMAS=2.8)
+
         filtered_df, _ = self.pick_by_speed_model(filtered_df, SIGMAS=2.8)
         filtered_df, _ = self.pick_by_spent_fuel_std(filtered_df, SIGMAS=2.5)
         filtered_df, _ = self.pick_low_speed(filtered_df)
@@ -284,10 +286,74 @@ class FilteringService(BaseFilteringService):
             result_df = self._tool_pick_leak(
                 result_df,
                 pl.col("spent_fuel").sub("rpm_model_predicted").abs(),
-                pl.col("is_leak_model_rpm"),
+                pl.col("is_leak_model_rpm") & ~pl.col("use_combo"),
                 FuelFilters.RPM_MODEL.value,
             )
 
+        return result_df, result_df
+
+    def pick_by_combo_model(
+        self, result_df: pl.DataFrame, SIGMAS: float = 2.5
+    ) -> Tuple[pl.DataFrame, pl.DataFrame]:
+        """Фильтрация по combo-модели (pos_s + rpm_mean + dtime -> spent_fuel).
+
+        Действует только на строки с use_combo=True (машины с combo-моделью);
+        для остальных z-value нулевые, пик не производится.
+        """
+        if "use_combo" not in result_df.columns:
+            result_df = result_df.with_columns(pl.lit(False).alias("use_combo"))
+        if "combo_model_std" not in result_df.columns:
+            result_df = result_df.with_columns(
+                pl.lit(0.0).cast(pl.Float32).alias("combo_model_std")
+            )
+
+        combo_rows = result_df.filter(pl.col("use_combo"))
+        no_combo_rows = result_df.filter(~pl.col("use_combo"))
+        if (
+            result_df["combo_model_std"].max() == 0
+            or combo_rows.is_empty()
+            or combo_rows["combo_model_predicted"].null_count() == combo_rows.height
+        ):
+            result_df = result_df.with_columns(
+                [
+                    pl.lit(False).alias("is_leak_model_combo"),
+                    pl.lit(0).cast(pl.Float32).alias("z_values_combo"),
+                ]
+            )
+            return result_df, result_df
+
+        combo_rows = combo_rows.filter(pl.col("combo_model_predicted").is_not_null())
+        if combo_rows.is_empty():
+            result_df = result_df.with_columns(
+                [
+                    pl.lit(False).alias("is_leak_model_combo"),
+                    pl.lit(0).cast(pl.Float32).alias("z_values_combo"),
+                ]
+            )
+            return result_df, result_df
+        z_dtype = combo_rows.schema["spent_fuel"]
+        combo_rows = combo_rows.with_columns(
+            pl.col("spent_fuel")
+            .sub(pl.col("combo_model_predicted"))
+            .truediv(pl.col("combo_model_std"))
+            .alias("z_values_combo"),
+            pl.col("spent_fuel")
+            .gt(pl.col("combo_model_predicted").add(pl.col("combo_model_std").mul(SIGMAS)))
+            .alias("is_leak_model_combo"),
+        )
+        combo_rows = self._tool_pick_leak(
+            combo_rows,
+            pl.col("spent_fuel").sub("combo_model_predicted").clip(lower_bound=0),
+            pl.col("is_leak_model_combo"),
+            FuelFilters.COMBO_MODEL.value,
+        )
+        no_combo_rows = no_combo_rows.with_columns(
+            [
+                pl.lit(0).cast(z_dtype).alias("z_values_combo"),
+                pl.lit(False).alias("is_leak_model_combo"),
+            ]
+        )
+        result_df = pl.concat([combo_rows, no_combo_rows])
         return result_df, result_df
 
     def pick_by_speed_model(
@@ -320,7 +386,7 @@ class FilteringService(BaseFilteringService):
             result_df = self._tool_pick_leak(
                 result_df,
                 pl.col("spent_fuel").sub("speed_model_predicted").clip(lower_bound=0),
-                pl.col("is_leak_model_speed"),
+                pl.col("is_leak_model_speed") & ~pl.col("use_combo"),
                 FuelFilters.SPEED_MODEL.value,
             )
         return result_df, result_df

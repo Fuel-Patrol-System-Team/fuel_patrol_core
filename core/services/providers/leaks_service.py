@@ -540,6 +540,33 @@ class LeaksService(BaseLeaksCalculator):
                 pl.lit(None).cast(pl.Float32).alias("speed_model_std"),
             )
 
+        combo_keys_present = norma.get("combo_model_coef") is not None
+        has_valid_rpm = norma.get("is_combo_model", False)
+        
+        if (
+            "rpm_mean" in df_values.columns
+            and combo_keys_present
+            and has_valid_rpm
+            and df_values["pos_s"].is_not_null().any()
+        ):
+            df_values = df_values.with_columns(
+                pl.col("pos_s")
+                .mul(norma.get("combo_model_coef", 0.0))
+                .add(pl.col("rpm_mean").mul(norma.get("combo_model_rpm_coef", 0.0)))
+                .add(pl.col("dtime").mul(norma.get("combo_model_dt_coef", 0.0)))
+                .add(norma.get("combo_model_intercept", 0.0))
+                .cast(pl.Float32)
+                .alias("combo_model_predicted"),
+                pl.lit(norma.get("combo_model_std", 0.0)).cast(pl.Float32).alias("combo_model_std"),
+                pl.lit(True).alias("use_combo")
+            )
+        else:
+            df_values = df_values.with_columns(
+                pl.lit(None).cast(pl.Float32).alias("combo_model_predicted"),
+                pl.lit(None).cast(pl.Float32).alias("combo_model_std"),
+                pl.lit(False).alias("use_combo")
+            )
+
         logger.debug("Рассчитана норма на пройденное расстояние")
 
         df_values = df_values.with_columns(
@@ -592,7 +619,8 @@ class LeaksService(BaseLeaksCalculator):
         # TODO: сделать лучше тут колонки которые будут нужны computed_data
         df_values = df_values.with_columns(
             pl.lit(0).alias("z_values_rpm"),
-            pl.lit(0).alias("z_values_fpm")
+            pl.lit(0).alias("z_values_fpm"),
+            pl.lit(0).alias("z_values_combo")
         )
 
         

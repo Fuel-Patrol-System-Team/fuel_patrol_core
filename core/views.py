@@ -1836,7 +1836,13 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
         leaks_df = polars.DataFrame(list(leaks.values()))
 
         df = polars.DataFrame(computed_data_list)
-        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values_fpm", "dtime", "ign_spread", "dtime_moving", "rpm_mean", "filtered", "sf_m", "spent_fuel", "leak_display"])
+        tmp = df.select(["fpm", "pos_s", "timestamp", "z_values_fpm", "dtime", "ign_spread", "dtime_moving", "rpm_mean", "filtered", "sf_m", "spent_fuel", "leak_display", "z_values_combo", "use_combo"])
+        tmp = tmp.with_columns(
+            pl.when(pl.col("use_combo"))
+            .then(pl.col("z_values_combo"))
+            .otherwise(pl.col("z_values_fpm"))
+            .alias("z_values_fpm")
+        )
         tmp = tmp.rename({"z_values_fpm": "z_values"})
         if leaks_df.shape[0] > 0:
             tmp = tmp.with_columns(polars.col("timestamp").is_in(leaks_df["datetime"].unique()).alias("is_leak"))
