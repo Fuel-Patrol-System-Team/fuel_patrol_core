@@ -180,6 +180,11 @@ CORS_ALLOW_CREDENTIALS = os.getenv('CORS_ALLOW_CREDENTIALS', 'True') == 'True'
 # REST FRAMEWORK
 # ======================
 REST_FRAMEWORK = {
+    # Все float в ответах API округляются до сотых (см. core/helpers/renderers.py)
+    'DEFAULT_RENDERER_CLASSES': [
+        'core.helpers.renderers.RoundedJSONRenderer',
+        'rest_framework.renderers.BrowsableAPIRenderer',
+    ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'core.demo_auth.authentication.DemoTokenAuthentication',
         'rest_framework_simplejwt.authentication.JWTAuthentication',
