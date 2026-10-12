@@ -839,7 +839,7 @@ def mileage_test_fraud_new(
         .agg(
             pl.col("timestamp").first().alias("timestamp_first"),
             pl.col("timestamp").last().alias("timestamp_end"),
-            pl.col("fraud_for_span").sum().alias("travel_fraud"),
+            pl.col("fraud_for_span").max().alias("travel_fraud"),
         )
     )
     fraud_spans = fraud_spans.with_columns(
