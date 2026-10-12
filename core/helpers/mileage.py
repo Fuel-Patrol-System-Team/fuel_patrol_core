@@ -371,7 +371,7 @@ def mileage_test_fraud_new(
     is_rpm_present = df["rpm"].is_not_null().any()
     
     if is_rpm_present:
-        df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).fill_null().alias("ign"))
+        df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign"))
     if "ign" not in df.columns:
         df = df.with_columns(pl.lit(1).alias("ign"))
     if df["ign"].is_null().all():
