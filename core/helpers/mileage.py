@@ -316,6 +316,7 @@ def mileage_test_fraud_new(
     reports = None,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
+    MILEAGE_FRAUD_HOP=1.2,
     MILEAGE_FRAUD_FOR_SPAN=10,
     MILEAGE_SPAN_MIN_DTIME=3,
     return_true_sensor_data = False,
@@ -371,9 +372,22 @@ def mileage_test_fraud_new(
     is_rpm_present = df["rpm"].is_not_null().any()
     
     if is_rpm_present:
-        df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign"))
+        factor =  ( df["pos_s"].gt(10).cast(pl.Int32).eq(1) & df["rpm"].gt(10).cast(pl.Int32).eq(1) ).sum() / df["pos_s"].gt(10).cast(pl.Int32).sum()
+        if factor > 0.7:
+            df = df.with_columns(pl.col("rpm").gt(100).cast(pl.Int8).fill_null(0).alias("ign"))
+        else:
+            factor =  ( df["pos_s"].gt(10).cast(pl.Int32).eq(1) & df["ign"].ge(1).cast(pl.Int32).eq(1) ).sum() / df["pos_s"].gt(10).cast(pl.Int32).sum()
+            if factor < 0.7:
+                df = df.with_columns(pl.lit(1).alias("ign"))
     if "ign" not in df.columns:
         df = df.with_columns(pl.lit(1).alias("ign"))
+    if df["ign"].is_not_null().any():
+        factor =  ( df["pos_s"].gt(10).cast(pl.Int32).eq(1) & df["ign"].ge(1).cast(pl.Int32).eq(1) ).sum() / df["pos_s"].gt(10).cast(pl.Int32).sum()
+        if factor < 0.6:
+            df = df.with_columns(pl.lit(1).alias("ign"))
+        
+        
+        
     if df["ign"].is_null().all():
         df = df.with_columns(pl.lit(1).alias("ign"))
     if df.shape[0] == 0:
@@ -810,25 +824,42 @@ def mileage_test_fraud_new(
         pl.max_horizontal(pl.col("dmileage_missed_skip"), pl.col("true_mileage_fraud")).alias("travel_fraud")
     )
     df =df.with_columns(
-        pl.col("pos_s").fill_null(0).rolling_mean_by("timestamp", "20s").gt(0).cast(pl.Int32).alias("is_moving_flag")
+        pl.col("pos_s").fill_null(0).rolling_mean_by("timestamp", "10s").gt(0).cast(pl.Int32).alias("is_moving_flag")
     )
 
     df = df.with_columns(
-        pl.col("is_moving_flag").diff().abs().rle_id().alias("moving_group")
+        pl.col("is_moving_flag").diff().abs().cum_sum().alias("moving_group")
     )
     target_for_diff_span = "dmileage_r" if target_for_diff == "travel_r" else "dmileage"
+    df = df.with_columns(
+        pl.col("timestamp")
+        .sub(pl.col("timestamp").first().over("moving_group"))
+        .dt.total_seconds()
+        .truediv(3600)
+        .cast(pl.Int32)
+        .alias("hour_idx")
+    ).with_columns(
+        (pl.col("hour_idx").diff().ne(0) | pl.col("moving_group").diff().ne(0))
+        .fill_null(True)
+        .cast(pl.Int8)
+        .cum_sum()
+        .alias("span_group")
+    )
     df = df.with_columns(
         pl.col("mileage").last().over("moving_group").alias("mileage_last_moving"),
         pl.col("mileage").first().over("moving_group").alias("mileage_first_moving"),
     )
     df = df.with_columns(
-        (pl.col("mileage").last().over("moving_group") - pl.col("mileage").first().over("moving_group")).sub(pl.col(target_for_diff_span).sum().over("moving_group")).alias("fraud_for_span"),
-        (pl.col("dmileage_missed").sum().over("moving_group")).alias("fraud_for_span_2")
+        # (pl.col("mileage").last().over("span_group") - pl.col("mileage").first().over("span_group")).sub(pl.col(target_for_diff_span).sum().over("span_group")).alias("fraud_for_span"),
+        (pl.col("dmileage").sum().over("span_group")).sub(pl.col(target_for_diff_span).sum().over("span_group")).alias("fraud_for_span"),
+        (pl.col("dmileage_missed").sum().over("span_group")).alias("fraud_for_span_2")
     )
 
+    
     df = df.with_columns(
-        pl.when(( pl.col("fraud_for_span").gt(MILEAGE_FRAUD_FOR_SPAN) | pl.col("fraud_for_span_2").gt(MILEAGE_FRAUD_FOR_SPAN)) & pl.col("jumps").lt(10).over("moving_group")).then(1).otherwise(0).alias("is_fraud_span"),
+        pl.when(( pl.col("fraud_for_span").gt(MILEAGE_FRAUD_HOP) | pl.col("fraud_for_span_2").gt(MILEAGE_FRAUD_HOP)) & pl.col("jumps").lt(10).over("span_group")).then(1).otherwise(0).alias("is_fraud_span"),
     )
+    
     df = df.with_columns(
         pl.col("is_fraud_span").diff().abs().cum_sum().alias("fraud_span_id"),
         pl.max_horizontal(pl.col("fraud_for_span"), pl.col("fraud_for_span_2")).alias("fraud_for_span")
@@ -846,7 +877,7 @@ def mileage_test_fraud_new(
         pl.col("timestamp_end").sub(pl.col("timestamp_first")).dt.total_seconds().alias("dtime")
     )
     fraud_spans = (
-        fraud_spans.filter(pl.col("dtime").gt(MILEAGE_SPAN_MIN_DTIME * 60) & pl.col("travel_fraud").gt(20) )
+        fraud_spans.filter(pl.col("dtime").gt(MILEAGE_SPAN_MIN_DTIME * 60) & pl.col("travel_fraud").gt(MILEAGE_FRAUD_HOP) )
         .select(["timestamp_first", "timestamp_end", "travel_fraud"])
         .with_columns(
             pl.col("timestamp_first").dt.replace_time_zone("UTC"),

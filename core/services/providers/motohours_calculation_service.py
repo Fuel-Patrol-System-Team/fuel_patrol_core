@@ -7,6 +7,7 @@ import polars
 from app.tasks import ParsingCarStats
 from core.helpers.motohours import compute_motohours, make_empty_motohours_response
 from core.models import Car, CarBadData, DataProvider, ReportQuery
+from core.services.providers.car_data_service import CarDataService
 from core.services.providers.glonass.glonass_general_provider import GlonassGeneralProvider
 from core.services.providers.glonass.glonassoft_motohours_provider import GlonassSoftMotohoursProvider
 from core.services.providers.report_service import ReportService
@@ -104,9 +105,10 @@ class MotohoursCalculationService:
                 agg_period = 0 if agg is None else agg
                 if isinstance(df, polars.DataFrame):
                     stats = ParsingCarStats.objects.filter(car_id=car.id).first()
+                    car_data = CarDataService.prepare_auto_data(car, return_dict=True)
                     if stats is None:
                         raise ValueError("No parsing stats for this car")
-                    result, reports = compute_motohours(df, agg, {"rpm_idle": stats.rpm_idle, })
+                    result, reports = compute_motohours(df, car_data, agg, {"rpm_idle": stats.rpm_idle, })
                     if reports:
                         ReportService.create_bad_data_record_from_list(car, reports, report_query, is_save_bad_data)
 

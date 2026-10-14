@@ -1562,8 +1562,7 @@ class CarBadDataAPIView(ListAPIView):
         org = self.request.user.org
 
         queryset = CarBadData.objects.filter(
-            # car_id__data_providers__org_id=org.id
-            report_query_id__provider_id__org_id=org.id
+            car_id__data_providers__org_id=org.id
         ).select_related('car_id').distinct().order_by('-datetime')
 
         car_id = data.get('car_id')
@@ -1595,15 +1594,24 @@ class CarBadDataAPIView(ListAPIView):
             car_id = request.query_params.get('car_id')
             if car_id and not queryset.exists():
                 try:
-                    Car.objects.get(id=car_id)
+                    car = Car.objects.get(id=car_id)
+                except Car.DoesNotExist:
+                    return Response(
+                        {"error": "Автомобиль не найден"},
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+                except ValueError:
+                    return Response(
+                        {"error": "Неверный формат UUID автомобиля"},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                if not car.data_providers.filter(org_id=request.user.org.id).exists():
                     return Response(
                         {"error": "Автомобиль не принадлежит вашей организации"},
                         status=status.HTTP_404_NOT_FOUND
                     )
-                except Car.DoesNotExist:
-                    return Response({"error": "Автомобиль не найден"}, status=status.HTTP_404_NOT_FOUND)
-                except ValueError:
-                    return Response({"error": "Неверный формат UUID автомобиля"}, status=status.HTTP_400_BAD_REQUEST)
+                page = self.paginate_queryset([])
+                return self.get_paginated_response([])
             page = self.paginate_queryset(queryset)
             if page is not None:
                 serializer = self.get_serializer(page, many=True)

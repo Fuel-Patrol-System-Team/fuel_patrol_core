@@ -23,6 +23,18 @@ def _extract_var_names(expr: str) -> set[str]:
     return names - _GRAMMAR_KEYWORDS - _GRAMMAR_FUNCTIONS
 
 
+def _compare_expr(left: pl.Expr, op: str, right: pl.Expr) -> pl.Expr:
+    """Единичное сравнение (без цепочек операторов)."""
+    return {
+        ">": left > right,
+        "<": left < right,
+        ">=": left >= right,
+        "<=": left <= right,
+        "==": left == right,
+        "!=": left != right,
+    }[op]
+
+
 class GlonassExpresssionParser:
     """
     Парсит expression для датчиков
@@ -122,7 +134,7 @@ class GlonassExpresssionParser:
             | comparison
             | arith
 
-        comparison: arith OP arith
+        comparison: arith OP arith (OP arith)*
 
         ?arith: arith "+" term   -> add_op
             | arith "-" term   -> sub_op
@@ -197,16 +209,32 @@ class GlonassExpresssionParser:
             return items[0] / items[1]
 
         def comparison(self, items):
-            left, op, right = items
+            # items (visit_tokens=True): [expr, OP, expr, OP, expr, ...] —
+            # операнды на чётных позициях, операторы на нечётных.
+            operands = items[0::2]
+            ops = [str(op) for op in items[1::2]]
 
-            return {
-                ">": left > right,
-                "<": left < right,
-                ">=": left >= right,
-                "<=": left <= right,
-                "==": left == right,
-                "!=": left != right,
-            }[str(op)]
+            if len(operands) == 2:
+                return _compare_expr(operands[0], ops[0], operands[1])
+
+            # Цепочка из трёх операндов (напр. 300<key>850) — «окно» значений:
+            # оба крайних операнда считаются границами и сортируются min/max,
+            # направления операторов не важны (300<key>850 == 300<key<850).
+            # Строгость границы задаёт её оператор: <,> — строгая (300 и 850
+            # не входят), <=,>= — включающая (300<=key>=850 == [300, 850]).
+            if len(operands) == 3:
+                left, middle, right = operands
+                lower = pl.min_horizontal(left, right)
+                upper = pl.max_horizontal(left, right)
+                lower_cmp = middle > lower if ops[0] in ("<", ">") else middle >= lower
+                upper_cmp = middle < upper if ops[1] in ("<", ">") else middle <= upper
+                return lower_cmp & upper_cmp
+
+            # Цепочки из 4+ операндов — буквальная математика: a<b<c → (a<b)&(b<c).
+            chained = _compare_expr(operands[0], ops[0], operands[1])
+            for i in range(1, len(ops)):
+                chained = chained & _compare_expr(operands[i], ops[i], operands[i + 1])
+            return chained
 
         def and_op(self, items):
             return items[0] & items[1]

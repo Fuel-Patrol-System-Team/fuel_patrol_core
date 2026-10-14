@@ -36,6 +36,35 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports=None):
     #     )
     return reports
 
+def maintenance_look_akb_fraud(df: pl.DataFrame, reports = None):
+    if reports is None:
+        reports = []
+    dtime_period = pl.col("timestamp").dt.truncate("1h")
+    tdf = df.with_columns(
+        pl.col("timestamp").diff().dt.total_seconds().abs().truediv(3600).clip(0.1).alias("dtime"),
+        pl.col("calc_sensors_voltage").diff().alias("dvoltage"),
+    ).with_columns(
+        pl.col("pos_s").mul(pl.col("dtime")).alias("dm")
+    )
+    agg = tdf.group_by_dynamic(index_column="timestamp", every="1h").agg(
+        pl.col("dm").sum(),
+        pl.col("dvoltage").abs().sum(),
+    ).filter(
+        pl.col("dm").gt(20),
+        pl.col("dvoltage").lt(100)
+    )
+    for ag in agg.iter_rows(named=True):
+        reports.append(
+            {
+                "event_date": ag["timestamp"],
+                "message": f"Потенциальный случай накрутки с АКБ",
+                "tags": [CarBadData.Tag.MILEAGE],
+                "category": CarBadData.Category.MAINTENANCE,
+                "severity": CarBadData.Severity.WARNING,
+            }
+        )
+    return reports
+
 
 def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=None):
     if reports is None:
@@ -57,7 +86,7 @@ def maintenance_cross_validate_mileage_voltage(df: pl.DataFrame, reports=None):
             .alias("mileage_diff"),
         )
         tdf = tdf.with_columns(
-            (pl.col("voltage_diff").lt(15) & pl.col("mileage_diff").gt(10))
+            (pl.col("voltage_diff").lt(15) & pl.col("mileage_diff").gt(25))
             .cast(pl.Int32)
             .alias("anomaly")
         )

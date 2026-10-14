@@ -212,6 +212,7 @@ class CarDataService:
                 fuel_sensor_multi_type = fuel_sensor.multi_type
 
             mileage_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="mileage", is_active=True).first()
+            rpm_sensor = SensorsValues.objects.filter(car_id__id=car.id, key__key="rpm", is_active=True).first()
 
             # grades первого датчика (обратная совместимость)
             grades = None
@@ -250,6 +251,7 @@ class CarDataService:
                 "fuel_sensor": fuel_sensor if fuel_sensor is None else fuel_sensor.value,
                 "fuel_sensors_amount": fuel_sensors_amount,
                 "mileage_grading": mileage_sensor.grades if mileage_sensor else None,
+                "rpm_grading": rpm_sensor.grades if rpm_sensor else None,
                 "fuel_sensor_multi_type": fuel_sensor_multi_type,
             }
 

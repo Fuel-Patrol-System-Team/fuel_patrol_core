@@ -9,6 +9,7 @@ from core.helpers.maintenance import (
     maintenance_critical_raw_fuel_values,
     maintenance_event_codes,
     maintenance_fuel_consumpt_check,
+    maintenance_look_akb_fraud,
 )
 from core.helpers.mileage import alg_piece_remove_skipped_messages
 
@@ -283,6 +284,10 @@ def preprocess_basic_one(
             df = df.with_columns(pl.lit(0).alias(sensor))
     if "rpm" not in df.columns:
         df = df.with_columns(pl.lit(65535).alias("rpm"))
+    if df["rpm"].is_not_null().any():
+        if cars["rpm_grading"] is not None:
+            df, _, _, _ = tarify_car_by_sensor(df, {"grades": cars["rpm_grading"], }, "rpm" )
+    
     if "satellites" not in df.columns:
         df = df.with_columns(pl.lit(20).alias("satellites"))
     df = alg_piece_remove_message_delays(df)
@@ -310,6 +315,7 @@ def preprocess_basic_one(
     
 
     reports = maintenance_event_codes(df, reports)
+    reports = maintenance_look_akb_fraud(df, reports)
 
     # STAGE: ОЧИСТКА
     col_dtime_half = pl.col("timestamp").dt.truncate("30m")
@@ -344,8 +350,10 @@ def preprocess_basic_one(
     if is_fuel_processing:
         df = df.filter(pl.col("satellites").gt(0))
         df = df.with_columns(
-            pl.col("fuel_consumpt").diff().abs().alias("fuel_consumpt_spent"),
+            pl.col("fuel_consumpt").diff().alias("fuel_consumpt_spent"),
         )
+        if df["fuel_consumpt_spent"].filter(df["fuel_consumpt_spent"].lt(1)).max() == 0.5:
+            df = df.with_columns(pl.when(pl.col("fuel_consumpt_spent").abs().gt(20)).then(None).otherwise(pl.col("fuel_consumpt_spent")).alias("fuel_consumpt_spent"))
     else:
         df = df.with_columns(pl.lit(0).alias("fuel_consumpt_spent"))
 

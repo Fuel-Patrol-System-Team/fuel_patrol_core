@@ -401,12 +401,26 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
                 sensors_mapping.get("power_level", []).append(SensorType(f"voltage", metadata_postfix if is_affix else None, 3, is_disabled))
 
             elif sensor_type == "EngineRPM" or sensor_name.startswith("Обороты"):
+                sensor_grades = None
+                if sensor.get("gradeType") == "GradeTable":
+                    grades_tables = sensor.get("gradesTables", [])
+                    grades_tables.reverse()
+                    sensor_grades = []
+                    if len(grades_tables) == 0:
+                        sensor_grades = None
+                    for grade_table in grades_tables:
+                        grade = grade_table.get("grades", None )
+                        relevanceTime = grade_table.get("relevanceTime", None)
+                        sensor_grades.append({
+                            "grades": grade,
+                            "relevance_time": relevanceTime
+                        })
                 if parameter_name:
                     key_part = parameter_name.split(";")[0]
                     if key_part.startswith("can_") and input_number:
-                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
+                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.can{input_number}", {"grades": sensor_grades, **metadata_postfix}, 3, is_disabled))
                     else:
-                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", metadata_postfix if is_affix else None, 3, is_disabled))
+                        sensors_mapping.get("rpm", []).append(SensorType( f"parameters.{key_part}", {"grades": sensor_grades, **metadata_postfix } , 3, is_disabled))
             elif "холост" in sensor_name.lower():
                 if key_part.startswith("can_") and input_number:
                     sensors_mapping.get("rpm_idle", []).append(SensorType( f"parameters.can{input_number}", metadata_postfix if is_affix else None, 3, is_disabled))
