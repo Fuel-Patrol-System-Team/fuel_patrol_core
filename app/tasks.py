@@ -584,7 +584,7 @@ def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
     datetime_now = datetime.now()
     provider = DataProvider.objects.get(name=provider_name)
 
-    cars_primary = provider.cars.select_related("carprimary").filter(carprimary__isnull=True)
+    cars_primary = provider.cars.select_related("carprimary")
 
     if len(cars_primary) != 0:
         datetime_for_stats = datetime_now - timedelta(days=365)
