@@ -9,7 +9,7 @@ from sklearn.linear_model import LinearRegression
 
 from core.helpers.alg_utils import alg_piece_remove_messages_jumps, alg_piece_remove_skipped_messages
 from core.helpers.fuel import alg_piece_remove_message_delays
-from core.helpers.maintenance import maintenace_check_missing_sensors, maintenace_sensor_check_ign_new, maintenance_cross_validate_mileage_voltage, maintenance_mileage_sensor_check, maintenance_sensor_check_ign 
+from core.helpers.maintenance import alg_voltage_compute_rpm_score_throught_voltage, maintenace_check_missing_sensors, maintenace_sensor_check_ign_new, maintenance_cross_validate_mileage_voltage, maintenance_mileage_sensor_check, maintenance_sensor_check_ign 
 
 class MileageModes(str, Enum):
     standart = "standart"
@@ -304,6 +304,8 @@ def mileage_test_fraud(
         "count": 0
     }
 
+
+
 def mileage_test_fraud_new(
     auto: str,
     df: pl.DataFrame,
@@ -354,6 +356,7 @@ def mileage_test_fraud_new(
     reports = maintenance_mileage_sensor_check(df, sensors, reports)
     reports = maintenance_cross_validate_mileage_voltage(df, reports)
     reports = maintenace_sensor_check_ign_new(df, reports)
+    
 
     if df.shape[0] != 0:
         print(f"Car is being processed {auto}")
@@ -379,6 +382,8 @@ def mileage_test_fraud_new(
             factor =  ( df["pos_s"].gt(10).cast(pl.Int32).eq(1) & df["ign"].ge(1).cast(pl.Int32).eq(1) ).sum() / df["pos_s"].gt(10).cast(pl.Int32).sum()
             if factor < 0.7:
                 df = df.with_columns(pl.lit(1).alias("ign"))
+        reports = alg_voltage_compute_rpm_score_throught_voltage(df, reports)
+        
     if "ign" not in df.columns:
         df = df.with_columns(pl.lit(1).alias("ign"))
     if df["ign"].is_not_null().any():

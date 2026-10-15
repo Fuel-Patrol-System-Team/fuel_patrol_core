@@ -36,22 +36,28 @@ def maintenance_fuel_level_check(df: pl.DataFrame, reports=None):
     #     )
     return reports
 
-def maintenance_look_akb_fraud(df: pl.DataFrame, reports = None):
+
+def maintenance_look_akb_fraud(df: pl.DataFrame, reports=None):
     if reports is None:
         reports = []
     dtime_period = pl.col("timestamp").dt.truncate("1h")
     tdf = df.with_columns(
-        pl.col("timestamp").diff().dt.total_seconds().abs().truediv(3600).clip(0.1).alias("dtime"),
+        pl.col("timestamp")
+        .diff()
+        .dt.total_seconds()
+        .abs()
+        .truediv(3600)
+        .clip(0.1)
+        .alias("dtime"),
         pl.col("calc_sensors_voltage").diff().alias("dvoltage"),
-    ).with_columns(
-        pl.col("pos_s").mul(pl.col("dtime")).alias("dm")
-    )
-    agg = tdf.group_by_dynamic(index_column="timestamp", every="1h").agg(
-        pl.col("dm").sum(),
-        pl.col("dvoltage").abs().sum(),
-    ).filter(
-        pl.col("dm").gt(20),
-        pl.col("dvoltage").lt(100)
+    ).with_columns(pl.col("pos_s").mul(pl.col("dtime")).alias("dm"))
+    agg = (
+        tdf.group_by_dynamic(index_column="timestamp", every="1h")
+        .agg(
+            pl.col("dm").sum(),
+            pl.col("dvoltage").abs().sum(),
+        )
+        .filter(pl.col("dm").gt(20), pl.col("dvoltage").lt(100))
     )
     for ag in agg.iter_rows(named=True):
         reports.append(
@@ -61,6 +67,60 @@ def maintenance_look_akb_fraud(df: pl.DataFrame, reports = None):
                 "tags": [CarBadData.Tag.MILEAGE],
                 "category": CarBadData.Category.MAINTENANCE,
                 "severity": CarBadData.Severity.WARNING,
+            }
+        )
+    return reports
+
+
+def alg_voltage_compute_rpm_score_throught_voltage(
+    df: pl.DataFrame, reports=None, BARRIER_VALUE=0.5
+):
+    """
+    Работает ли rpm, рассчитывается по voltage, BARRIER_VALUE подобран на датасете из 40 машин
+    """
+
+    if reports is None:
+        reports = []
+    df = df.with_columns(
+        pl.col("calc_sensors_voltage")
+        .fill_null(0)
+        .diff()
+        .abs()
+        .fill_null(0)
+        .rolling_sum_by("timestamp", window_size="30m")
+        .gt(1000)
+        .cast(pl.Int32)
+        .alias("is_voltage"),
+    ).with_columns(
+        
+        pl.col("is_voltage").diff().abs().cum_sum().alias("voltage_span"),
+    )
+    vdf = (
+        df.filter(pl.col("is_voltage").gt(0))
+        .group_by("voltage_span")
+        .agg(
+            pl.col("timestamp").first().alias("timestamp_first"),
+            pl.col("timestamp").last().alias("timestamp_last"),
+            pl.col("rpm").mean().alias("rpm_mean"),
+            pl.col("calc_sensors_voltage").diff().abs().sum().alias("dvoltage"),
+        )
+    ).filter(pl.col("rpm_mean").gt(100))
+    cases = vdf.filter(pl.col("rpm_mean").gt(300) & pl.col("dvoltage").lt(300))[
+        "timestamp_first"
+    ].count()
+    score_4 = (
+        (1 - (cases / vdf["timestamp_first"].count()))
+        if vdf["timestamp_first"].count() > 0
+        else 1
+    )
+    if score_4 < BARRIER_VALUE:
+        reports.append(
+            {
+                "event_date": df["timestamp"].first(),
+                "message": f"Потенциальная неполадка RPM",
+                "tags": [CarBadData.Tag.SENSOR],
+                "category": CarBadData.Category.MAINTENANCE,
+                "severity": CarBadData.Severity.ERROR,
             }
         )
     return reports
@@ -157,6 +217,7 @@ def maintenance_fuel_consumpt_check(
                     }
                 )
     return reports
+
 
 def maintenace_check_missing_sensors(
     df: pl.DataFrame,
@@ -369,7 +430,9 @@ def maintenance_board_voltage_notify(df: pl.DataFrame, sensors, reports=None):
                 ]
             )
             voltage_reports = voltage_reports.filter(
-                pl.col("voltage_jumps").ge(5) & pl.col("voltage_diff").gt(9000) & pl.col("voltage_jumps").truediv(pl.col("count")).gt(0.08)
+                pl.col("voltage_jumps").ge(5)
+                & pl.col("voltage_diff").gt(9000)
+                & pl.col("voltage_jumps").truediv(pl.col("count")).gt(0.08)
             )
             for voltage_report in voltage_reports.iter_rows(named=True):
                 reports.append(
@@ -469,14 +532,17 @@ def maintenance_rpm_slow_change_on_speed(df: pl.DataFrame, reports=None):
             )
     return reports
 
-def maintenace_sensor_check_ign_new(df: pl.DataFrame, reports = None):
+
+def maintenace_sensor_check_ign_new(df: pl.DataFrame, reports=None):
     if reports is None:
         reports = []
-    days_data = df.group_by_dynamic("timestamp", every="1d").agg([
-        (pl.col("ign").eq(1).all() | pl.col("ign").eq(0).all()).alias("ign_fault"),
-        pl.col("pos_s").count().alias("count"),
-        pl.col("pos_s").max().alias("pos_s_max"),
-    ])
+    days_data = df.group_by_dynamic("timestamp", every="1d").agg(
+        [
+            (pl.col("ign").eq(1).all() | pl.col("ign").eq(0).all()).alias("ign_fault"),
+            pl.col("pos_s").count().alias("count"),
+            pl.col("pos_s").max().alias("pos_s_max"),
+        ]
+    )
     for day in days_data.iter_rows(named=True):
         if day["ign_fault"] and day["pos_s_max"] > 20 and day["count"] > 30:
             reports.append(
@@ -485,11 +551,11 @@ def maintenace_sensor_check_ign_new(df: pl.DataFrame, reports = None):
                     "message": f"Задектирован неработающий датчик ign {str(day["timestamp"].date())}",
                     "tags": [CarBadData.Tag.SENSOR],
                     "category": CarBadData.Category.MAINTENANCE,
-                    "severity": CarBadData.Severity.WARNING
+                    "severity": CarBadData.Severity.WARNING,
                 }
             )
     return reports
-    
+
 
 def maintenance_sensor_check_ign(df: pl.DataFrame):
     """

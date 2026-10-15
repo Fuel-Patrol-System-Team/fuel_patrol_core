@@ -3,6 +3,8 @@ from typing import cast
 
 import polars as pl
 
+from core.models import CarBadData
+
 logger = logging.getLogger(__name__)
 
 

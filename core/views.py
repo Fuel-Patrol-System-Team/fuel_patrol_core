@@ -1835,7 +1835,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
             ComputedData.objects.filter(
                 auto__id=car_id,
                 timestamp__gte=start_date
-            ).order_by('timestamp').values()
+            ).order_by('timestamp').values().distinct()
         )
         if not computed_data_list:
             return error_response("Нет данных для этой машины", status.HTTP_400_BAD_REQUEST)
