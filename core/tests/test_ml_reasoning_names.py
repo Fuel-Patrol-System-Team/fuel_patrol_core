@@ -100,6 +100,20 @@ def test_fuel_old_stored_response_is_regenerated(monkeypatch):
     assert report.ai_response["results"][0]["car_name"] == "N"
 
 
+def test_warns_when_ml_core_answer_has_no_car_name(monkeypatch):
+    warnings = []
+    monkeypatch.setattr(ml_reasoning_service, "logger", SimpleNamespace(
+        warning=lambda msg, *a, **k: warnings.append(msg), info=lambda *a, **k: None,
+        error=lambda *a, **k: None, exception=lambda *a, **k: None))
+    report = SimpleNamespace(ai_response=None, ai_response_status=None)
+    monkeypatch.setattr(ml_reasoning_service, "prepare_fuel_data", lambda _id: ([{"auto": "x", "car_name": "N"}], report))
+    monkeypatch.setattr(ml_reasoning_service, "update_ai_response", lambda inst, res, st: None)
+    monkeypatch.setattr(MLReasoningService, "_call_microservice",
+                        lambda self, service, data: {"status": "ok", "results": [{"auto": "x"}]})
+    MLReasoningService({"service": "fuel", "car_report_id": str(uuid4())}).process()
+    assert any("без car_name" in w for w in warnings)
+
+
 def test_fuel_new_stored_response_is_reused(monkeypatch):
     stored = {"status": "ok", "results": [{"auto": "x", "car_name": "N"}]}
     service, report, calls = _fuel_service(monkeypatch, stored)

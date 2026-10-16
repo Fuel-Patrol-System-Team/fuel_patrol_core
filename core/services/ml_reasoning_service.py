@@ -245,6 +245,11 @@ class MLReasoningService:
                     }
 
             result = self._call_microservice(service, data)
+            if result.get('status') == 'ok' and not self._has_car_name(result):
+                logger.warning(
+                    "ml_core вернул ответ без car_name: поле не заведено в service_fields, "
+                    "названия машин в тексте ИИ не появятся (python seed_data/add_car_name_field.py --check)"
+                )
             self._save_results(service, data, result, model_instance)
 
 
