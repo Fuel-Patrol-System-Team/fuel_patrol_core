@@ -721,6 +721,9 @@ def calculate_leaks_cron(
     provider_name: str,
     is_save_bad_data: bool = False
 ):
+    """
+    Не использовать, содержит баги 
+    """
     provider = DataProvider.objects.get(name=provider_name)
 
     tz = pytz.UTC
