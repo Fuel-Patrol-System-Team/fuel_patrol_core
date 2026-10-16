@@ -304,10 +304,11 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             id = sensor.get("id", "")
             median_degree = sensor.get("medianDegree", None)
             metadata_postfix = {}
-            metadata_postfix["expr_active"] = False
+            metadata_postfix["expr_active"] = True
 
-            if parameter_name == "":
-                metadata_postfix["expr_active"] = True
+            if sensor_kind == "" or sensor_kind == "Simple":
+                metadata_postfix["expr_active"] = False
+                
 
             if expr is not None:
                 metadata_postfix["expr"] = expr

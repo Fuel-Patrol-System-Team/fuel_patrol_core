@@ -318,9 +318,8 @@ def mileage_test_fraud_new(
     reports = None,
     TIME_PERIOD=24,
     WORKING_AGG_PERIOD_HOURS=24,
-    MILEAGE_FRAUD_HOP=1.2,
-    MILEAGE_FRAUD_FOR_SPAN=10,
-    MILEAGE_SPAN_MIN_DTIME=3,
+    MILEAGE_FRAUD_HOP=2,
+    MILEAGE_SPAN_MIN_DTIME=20,
     return_true_sensor_data = False,
 ):
     """
@@ -861,35 +860,46 @@ def mileage_test_fraud_new(
     )
 
     
+    # jumps — построчный флаг; сравнение должно идти по агрегату спана,
+    # иначе строки с jumps>=10 расщепляют спан на несколько runs
     df = df.with_columns(
-        pl.when(( pl.col("fraud_for_span").gt(MILEAGE_FRAUD_HOP) | pl.col("fraud_for_span_2").gt(MILEAGE_FRAUD_HOP)) & pl.col("jumps").lt(10).over("span_group")).then(1).otherwise(0).alias("is_fraud_span"),
+        pl.when(( pl.col("fraud_for_span").gt(MILEAGE_FRAUD_HOP * 0) | pl.col("fraud_for_span_2").gt(MILEAGE_FRAUD_HOP * 0)) & pl.col("jumps").sum().over("span_group").lt(10)).then(1).otherwise(0).alias("is_fraud_span"),
     )
     
     df = df.with_columns(
         pl.col("is_fraud_span").diff().abs().cum_sum().alias("fraud_span_id"),
         pl.max_horizontal(pl.col("fraud_for_span"), pl.col("fraud_for_span_2")).alias("fraud_for_span")
     )
-    fraud_spans = (
+    flagged_spans = (
         df.filter(pl.col("is_fraud_span").eq(1))
-        .group_by("fraud_span_id")
+        .with_columns(
+            pl.col("timestamp").min().over("span_group").alias("span_t0"),
+            pl.col("timestamp").max().over("span_group").alias("span_t1"),
+        )
+        .unique(subset=["span_group"], keep="first")
+    )
+    fraud_spans = (
+        flagged_spans.group_by("fraud_span_id")
         .agg(
-            pl.col("timestamp").first().alias("timestamp_first"),
-            pl.col("timestamp").last().alias("timestamp_end"),
-            pl.col("fraud_for_span").max().alias("travel_fraud"),
+            pl.col("span_t0").min().alias("timestamp_first"),
+            pl.col("span_t1").max().alias("timestamp_end"),
+            pl.col("fraud_for_span").sum().alias("travel_fraud"),
         )
     )
     fraud_spans = fraud_spans.with_columns(
         pl.col("timestamp_end").sub(pl.col("timestamp_first")).dt.total_seconds().alias("dtime")
     )
     fraud_spans = (
-        fraud_spans.filter(pl.col("dtime").gt(MILEAGE_SPAN_MIN_DTIME * 60) & pl.col("travel_fraud").gt(MILEAGE_FRAUD_HOP) )
+        fraud_spans.filter( ( pl.col("dtime").gt(MILEAGE_SPAN_MIN_DTIME) & pl.col("travel_fraud").gt(MILEAGE_FRAUD_HOP) ) | pl.col("travel_fraud").gt(MILEAGE_FRAUD_HOP * 5) )
         .select(["timestamp_first", "timestamp_end", "travel_fraud"])
         .with_columns(
             pl.col("timestamp_first").dt.replace_time_zone("UTC"),
             pl.col("timestamp_end").dt.replace_time_zone("UTC")
         )
-        .to_dicts()
     )
+    fraud_spans_total = fraud_spans["travel_fraud"].sum()
+    fraud_spans = fraud_spans.to_dicts()
+    print(fraud_spans_total)
     travel_skipped = df_working["dmileage_missed_skip"].sum()
     msg_skip_big = df_working["msg_skip_big"].max()
     ign_fraud_spent = df_working["ign_fraud_spent"].sum()
