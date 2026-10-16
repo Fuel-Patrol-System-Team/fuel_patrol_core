@@ -17,7 +17,7 @@ class CarCtx:
     uuid: str
     vehicle_id: int
     name: str
-    car: Any                      # core.models.Car, воркеры используют только .id
+    car: Any
     sensors_mapping: dict = field(default_factory=dict)
 
 
@@ -26,15 +26,15 @@ class JobConfig:
     provider_name: str
     login: str
     password: str
-    start: datetime               # UTC, начало периода
-    end: datetime                 # UTC, конец периода
-    mode: str                     # raw_mapped | raw
-    fmt: str                      # parquet | csv.gz
+    start: datetime
+    end: datetime
+    mode: str
+    fmt: str
     job_dir: Path
-    workers: int = 12             # максимум одновременных запросов
-    start_workers: int = 6        # с чего начинаем; дальше +1 за каждые N успешных запросов
-    per_car: int = 1              # максимум одновременных запросов по одной машине
-    car_group: int = 24           # машины обрабатываются группами: окна внутри группы идут вперемешку
+    workers: int = 12
+    start_workers: int = 6
+    per_car: int = 1
+    car_group: int = 24
     transform_workers: int = 2
     window_days: int = 90
     interval: float = 0.55

@@ -105,7 +105,7 @@ def finalize_car(cfg: JobConfig, ctx: CarCtx, windows) -> tuple[int, str]:
     if sort_key in df.columns:
         df = df.sort(sort_key, maintain_order=True)
     if cfg.mode == MODE_MAPPED:
-        df = df.unique(maintain_order=True)  # дубли на стыках окон
+        df = df.unique(maintain_order=True)
 
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     base = cfg.out_dir / f"auto{ctx.vehicle_id}_{cfg.mode}"

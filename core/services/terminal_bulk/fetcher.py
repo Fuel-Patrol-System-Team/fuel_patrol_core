@@ -12,7 +12,7 @@ from core.services.terminal_bulk.limiter import SpacingLimiter
 logger = logging.getLogger("terminal_bulk")
 
 BASE_URL = "https://hosting.glonasssoft.ru/api/v3"
-MAX_PERIOD_DAYS = 93  # ограничение API: ApiCode 204 «Максимальная величина периода … 93»
+MAX_PERIOD_DAYS = 93
 API_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 
 
@@ -110,7 +110,7 @@ def request_window(
         if code == 200:
             try:
                 wire = r.raw.read(decode_content=False)
-            except Exception as e:  # обрыв посреди тела (IncompleteRead, ReadTimeout, ProtocolError)
+            except Exception as e:
                 raise Retryable(f"обрыв тела ответа: {type(e).__name__}: {str(e)[:150]}")
             if r.headers.get("Content-Encoding", "").lower() != "gzip":
                 wire = gzip.compress(wire, 3)

@@ -4,21 +4,21 @@ import time
 from dataclasses import dataclass
 from typing import Iterable
 
-PENDING = "pending"      # окно ещё не загружено
-FETCHED = "fetched"      # сырой ответ лежит на диске
-MAPPED = "mapped"        # частичный результат (parquet) лежит на диске
-FAILED = "failed"        # исчерпаны попытки, нужен --retry-failed
-SPLIT = "split"          # окно разбито на два дочерних (само не участвует)
+PENDING = "pending"
+FETCHED = "fetched"
+MAPPED = "mapped"
+FAILED = "failed"
+SPLIT = "split"
 
-CAR_DONE = "done"        # итоговый файл записан
-CAR_EMPTY = "empty"      # за период нет ни одного сообщения
+CAR_DONE = "done"
+CAR_EMPTY = "empty"
 
 
 @dataclass
 class Window:
-    car: str            # UUID машины в нашей БД
-    start: str          # ISO UTC, начало окна
-    end: str            # ISO UTC, конец окна
+    car: str
+    start: str
+    end: str
     status: str = PENDING
     attempts: int = 0
     rows: int = 0

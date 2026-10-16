@@ -1,10 +1,47 @@
 import logging
+import re
 from uuid import UUID
 from django.utils import timezone
 from datetime import timedelta
-from core.models import CarReport, CarConsumption, ComputedData, AIResponseStatus
+from core.models import Car, CarReport, CarConsumption, ComputedData, AIResponseStatus
 
 logger = logging.getLogger(__name__)
+
+_INVISIBLE_RE = re.compile(r"[​-‏⁠﻿]")
+_VIN_RE = re.compile(r"\(?\bVIN[\s:_-]*[A-Za-z0-9]{6,}\)?|\b[A-HJ-NPR-Z0-9]{17}\b", re.IGNORECASE)
+
+
+def car_display_name(name):
+    if not name:
+        return None
+    cleaned = _INVISIBLE_RE.sub("", name).replace("\xa0", " ")
+    cleaned = _VIN_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" -–—,;")
+    return cleaned or None
+
+
+def _fetch_car_names(car_ids) -> dict:
+    valid = set()
+    for car_id in car_ids:
+        try:
+            valid.add(str(UUID(str(car_id))))
+        except (ValueError, TypeError):
+            continue
+    if not valid:
+        return {}
+    return {str(pk): name for pk, name in Car.objects.filter(id__in=valid).values_list("id", "name")}
+
+
+def add_car_names(data: list) -> list:
+    names = _fetch_car_names({item.get("car_id") for item in data})
+    result = []
+    for item in data:
+        record = {k: v for k, v in item.items() if k != "car_name"}
+        display = car_display_name(names.get(str(item.get("car_id"))))
+        if display:
+            record["car_name"] = display
+        result.append(record)
+    return result
 
 
 def prepare_fuel_data(car_report_id: UUID):
@@ -74,6 +111,7 @@ def prepare_fuel_data(car_report_id: UUID):
 
     record = {
         "auto": str(computed.auto.id),
+        "car_name": car_display_name(report.car_id.name) or "",
         "timestamp": computed.timestamp.isoformat(),
         "pos_s": computed.pos_s,
         "spent_fuel": computed.spent_fuel,
@@ -109,7 +147,7 @@ def prepare_mileage_data(data: list):
         missing = required_fields - set(item.keys())
         if missing:
             raise ValueError(f"Record {idx}: missing required fields: {', '.join(missing)}")
-    return data
+    return add_car_names(data)
 
 
 def prepare_motohours_data(data: list):
@@ -120,7 +158,7 @@ def prepare_motohours_data(data: list):
         missing = required_fields - set(item.keys())
         if missing:
             raise ValueError(f"Record {idx}: missing required fields: {', '.join(missing)}")
-    return data
+    return add_car_names(data)
 
 
 def update_ai_response(model_instance, ai_response: dict, status: str = AIResponseStatus.OK):

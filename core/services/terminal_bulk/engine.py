@@ -41,7 +41,7 @@ from core.services.terminal_bulk.transform import (
 
 logger = logging.getLogger("terminal_bulk")
 
-MAX_THROTTLE_RETRIES = 50   # подряд идущих 429 на одно окно до признания его проваленным
+MAX_THROTTLE_RETRIES = 50
 MAX_AUTH_RETRIES = 5
 
 
@@ -102,7 +102,6 @@ class Engine:
         self._started = time.time()
         self._base_done_days = 0.0
 
-    # ---------- подготовка / рестор ----------
     def _prepare(self) -> None:
         signature = f"{self.cfg.start.isoformat()}|{self.cfg.end.isoformat()}|{self.cfg.mode}|{self.cfg.fmt}|{self.cfg.window_days}"
         stored = self.manifest.get_meta("signature")
@@ -145,7 +144,6 @@ class Engine:
                 done += d
         return total, done
 
-    # ---------- загрузка ----------
     def _fetch(self, w: Window) -> None:
         ctx = self.by_uuid[w.car]
         start = datetime.fromisoformat(w.start)
@@ -174,7 +172,7 @@ class Engine:
                 outcome, error = "retry", str(e)
             except BadRequest as e:
                 outcome, error = "bad", str(e)
-            except Exception as e:  # неожиданное тоже повторяем, но считаем попыткой
+            except Exception as e:
                 outcome, error = "retry", f"{type(e).__name__}: {str(e)[:200]}"
             finally:
                 self.gate.release()
@@ -240,7 +238,6 @@ class Engine:
         self.manifest.update(w.car, w.start, w.end, status=FAILED, error=error[:300])
         logger.error(f"ПРОВАЛ окна {w.car} {w.start}..{w.end}: {error}")
 
-    # ---------- преобразование ----------
     def _map(self, w: Window) -> None:
         ctx = self.by_uuid[w.car]
         try:
@@ -268,7 +265,6 @@ class Engine:
                 logger.exception(f"Ошибка сборки итогового файла {ctx.name}")
                 self.manifest.set_car(car, "error", error=f"{type(e).__name__}: {str(e)[:250]}")
 
-    # ---------- воркеры / отчёт ----------
     def _worker(self) -> None:
         while True:
             try:
@@ -286,7 +282,6 @@ class Engine:
                         finally:
                             self._release_car(w.car)
                     else:
-                        # по этой машине уже идёт запрос: окно в конец очереди, берём чужое
                         self.q.put(w)
                         requeued = True
             except Exception:
@@ -374,10 +369,6 @@ class Engine:
                     self.tpool.submit(self._map, w)
             self.tpool.submit(self._maybe_finalize, c.uuid)
 
-        # Очередь: машины группами по car_group, внутри группы окна идут вперемешку
-        # (1-е окно всех машин, потом 2-е и т.д.). Соседние элементы очереди относятся
-        # к разным машинам, поэтому одновременные запросы не бьют по одному автомобилю,
-        # а итоговые файлы машин появляются группами, а не в самом конце.
         group = max(1, self.cfg.car_group)
         for i in range(0, len(active), group):
             pend = {c.uuid: [w for w in self.manifest.leaf_windows(c.uuid) if w.status == PENDING] for c in active[i:i + group]}

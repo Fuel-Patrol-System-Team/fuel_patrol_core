@@ -114,6 +114,15 @@ class MLReasoningService:
         return dt
 
     @staticmethod
+    def _has_car_name(ai_response) -> bool:
+        if not isinstance(ai_response, dict):
+            return False
+        results = ai_response.get('results')
+        if isinstance(results, list):
+            return bool(results) and isinstance(results[0], dict) and 'car_name' in results[0]
+        return 'car_name' in ai_response
+
+    @staticmethod
     def _record_matches_report(service: str, record: Dict, report: Any) -> bool:
         fields = MILEAGE_COMPARE_FIELDS if service == 'mileage' else MOTOHOURS_COMPARE_FIELDS
         return all(_values_match(record.get(f), getattr(report, f)) for f in fields)
@@ -135,7 +144,7 @@ class MLReasoningService:
             except (CarMileageReport.DoesNotExist, CarMotohoursReport.DoesNotExist):
                 all_have_ok = False
                 break
-            if report.ai_response_status != AIResponseStatus.OK:
+            if report.ai_response_status != AIResponseStatus.OK or not self._has_car_name(report.ai_response):
                 all_have_ok = False
                 break
             if not self._record_matches_report(service, record, report):
@@ -212,7 +221,8 @@ class MLReasoningService:
             self._validate_input()
             service, data, model_instance = self._prepare_payload()
 
-            if service == 'fuel' and model_instance and model_instance.ai_response_status == AIResponseStatus.OK:
+            if (service == 'fuel' and model_instance and model_instance.ai_response_status == AIResponseStatus.OK
+                    and self._has_car_name(model_instance.ai_response)):
                 return {
                     "success": True,
                     "data": {

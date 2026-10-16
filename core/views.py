@@ -1902,7 +1902,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
 
 class CarSensorsRawDataAPIView(TimestampTimezoneConverterMixin, APIView):
     permission_classes = [IsNotDemoUser, IsAuthenticated]
-    float_round_digits = None  # сырая телематика провайдера: значения не округляем
+    float_round_digits = None
 
     @swagger_auto_schema(
         operation_summary="Получить сырые данные датчиков для графиков",

@@ -17,7 +17,6 @@ def test_rounds_to_hundredths():
 
 
 def test_half_case_is_python_round_not_half_up():
-    # решение: обычное питоновское округление, 0.125 -> 0.12
     assert round_floats(0.125) == 0.12
 
 
@@ -96,8 +95,6 @@ def test_renderer_handles_none_and_empty():
     assert RoundedJSONRenderer().render(None) == b""
     assert json.loads(RoundedJSONRenderer().render([])) == []
 
-
-# --- сквозная проверка через настоящий DRF view с настройками проекта (app.settings) ---
 
 class _FloatsView(APIView):
     authentication_classes = []

@@ -3,9 +3,6 @@ from typing import Any, Iterable
 
 from rest_framework.renderers import JSONRenderer
 
-# Округляем только показатели, которые считает наша система. Данные, полученные извне
-# (координаты, тарировочные таблицы, метаданные датчиков), отдаём как есть: фронт может
-# отредактировать их и отправить обратно, а округление до сотых испортило бы значения.
 DEFAULT_FLOAT_DIGITS = 2
 DEFAULT_SKIP_KEYS = frozenset({"grades", "metadata", "latitude", "longitude"})
 
@@ -16,11 +13,11 @@ def round_floats(obj: Any, digits: int = DEFAULT_FLOAT_DIGITS, skip_keys: Iterab
 
 
 def _round(obj: Any, digits: int, skip: frozenset) -> Any:
-    if isinstance(obj, float):  # в т.ч. numpy.float64; bool сюда не попадает
+    if isinstance(obj, float):
         if not math.isfinite(obj):
             return None
         rounded = float(round(float(obj), digits))
-        return 0.0 if rounded == 0 else rounded  # без «-0.0»
+        return 0.0 if rounded == 0 else rounded
     if isinstance(obj, dict):
         return {
             key: value if (isinstance(key, str) and key.lower() in skip) else _round(value, digits, skip)
