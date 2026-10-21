@@ -26,6 +26,8 @@ _CSV_SCHEMA_OVERRIDES = {
     "auto": pl.Categorical,
     "timestamp": pl.Datetime,
     "timestamp_server": pl.Datetime,
+    "pos_s": pl.Float32,
+    "ign": pl.Int16,
     "rpm": pl.Int32,
     "mileage": pl.Float32,
     "motohours": pl.Float32,

@@ -34,6 +34,7 @@ _CSV_SCHEMA_OVERRIDES = {
     "timestamp_server": pl.Datetime,
     "rpm": pl.Float32,
     "mileage": pl.Float32,
+    "speed_can": pl.Float32,
     "motohours": pl.Float32,
     "longitude": pl.Float32,
     "latitude": pl.Float32,
@@ -78,7 +79,7 @@ def _run_leaks_from_file(data_slice: pl.DataFrame, car_id: str):
     leaks, _ = filtering_service.apply_filters(result)
     report_service = ReportService()
     report_service.save_car_reports_batch(leaks)
-    return leaks
+    return result
 
 
 def main():

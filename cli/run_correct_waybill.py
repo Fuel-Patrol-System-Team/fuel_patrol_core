@@ -58,6 +58,7 @@ def main():
         print("no cars found in the input file")
         return
 
+    ids = []
     for car_name in car_names:
         group = data.filter(pl.col("car") == car_name)
         car = Car.objects.filter(name__istartswith=car_name).first()
@@ -65,7 +66,9 @@ def main():
             print(f"Car '{car_name}' is not found")
             continue
         out_file = _write_waybill_for_car(group, car, output_dir)
+        ids.append(str(car.id))
         print(f"Wrote {out_file} ({group.height} rows) for car '{car_name}' -> {car.id_in_provider_system}")
+    print(ids)
 
 
 if __name__ == "__main__":
