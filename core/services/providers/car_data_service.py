@@ -5,6 +5,7 @@ import polars as pl
 from typing import Optional
 from pathlib import Path
 from django.conf import settings
+from django.utils import timezone
 
 from app.tasks import SensorsValues
 from core.helpers.alg_utils import alg_remove_max_pieces
@@ -310,6 +311,7 @@ class CarDataService:
                 car=car,
                 defaults={
                     'primary': primary_data,
+                    'created_at': timezone.now(),
                 }
             )
 

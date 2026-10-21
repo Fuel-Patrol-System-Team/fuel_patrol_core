@@ -421,14 +421,28 @@ class FilteringService(BaseFilteringService):
         return filtered_df, result_df
 
     def filtering_sattelites(
-        self, result_df: pl.DataFrame, SAT_AMOUNT: float = 0.65
+        self,
+        result_df: pl.DataFrame,
+        SAT_AMOUNT: float = 0.65,
+        MIN_SAT_COVERAGE: float = 0.1,
+        MIN_DECREASE_RATIO: float = 0.9,
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
-        """Фильтрация по спутникам"""
+        """Фильтрация по спутникам.
+
+        Кейсы с sat_coverage > MIN_SAT_COVERAGE и decrease_ratio > MIN_DECREASE_RATIO
+        не помечаются как low_satellites: потеря GPS вместе с активной убылью
+        топлива похожа на слив, а не на плохие данные.
+        """
         result_df = result_df.with_columns(
             (1 - (pl.col("no_sat_data") / pl.col("count"))).alias("sat_coverage")
         )
+        sat_low = pl.col("sat_coverage").lt(SAT_AMOUNT)
+        tampering_like = (
+            pl.col("sat_coverage").gt(MIN_SAT_COVERAGE)
+            & pl.col("decrease_ratio").fill_null(0).gt(MIN_DECREASE_RATIO)
+        )
         filtered_df = self._tool_pick_filter(
-            result_df, pl.col("sat_coverage").lt(SAT_AMOUNT), "low_satellites"
+            result_df, sat_low & ~tampering_like, "low_satellites"
         )
         return filtered_df, result_df
 

@@ -46,3 +46,24 @@ def compute_mileage_span_days(
         return []
 
     return [span_start + timedelta(days=i) for i in range((span_end - span_start).days)]
+
+
+def compute_leaks_span(
+    now: datetime,
+    marker: datetime | None,
+    ignore_last_processed: bool = False,
+    bootstrap_days: int = 365,
+) -> tuple[datetime, datetime] | None:
+    now_midnight = midnight_utc(now)
+
+    if ignore_last_processed or marker is None:
+        span_start = now_midnight - timedelta(days=bootstrap_days)
+    elif marker.tzinfo is None:
+        span_start = marker.replace(tzinfo=pytz.UTC)
+    else:
+        span_start = marker.astimezone(pytz.UTC)
+
+    if span_start >= now_midnight:
+        return None
+
+    return span_start, now_midnight

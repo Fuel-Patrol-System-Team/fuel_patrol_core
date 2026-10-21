@@ -54,7 +54,7 @@ def alg_piece_remove_skipped_messages(
 def alg_remove_max_pieces(df: pl.DataFrame, sensor: str):
     is_max_65530 = (df[sensor].is_between(65530, 65550) & df[sensor].le(65550).all()).any()
     if is_max_65530:
-        df = df.filter(pl.col(sensor).le(65530))
+        df = df.filter(pl.col(sensor).lt(65530))
         return df
     is_max_6550 = (df[sensor].is_between(6550, 6555) & df[sensor].lt(6555).all()).any()
     if is_max_6550:
