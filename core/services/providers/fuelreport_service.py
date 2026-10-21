@@ -34,14 +34,17 @@ class FuelReportService:
         slice = slice.rename({"timestamp": "start_moment", "auto": "car_id_id", "refill": "fuel_filled"})
         slice = slice.with_columns((pl.col("start_moment") + timedelta(1)).alias("end_moment"))
         slice_dict = slice.to_dicts()
-        reports = []
+        saved = 0
         for item in slice_dict:
-            t_report = CarFuelReport(**item)
-            reports.append(t_report)
-        CarFuelReport.objects.bulk_create(
-            reports
-        )
-        return len(reports)
+            start_moment = item.pop("start_moment")
+            car_id_id = item.pop("car_id_id")
+            CarFuelReport.objects.update_or_create(
+                car_id_id=car_id_id,
+                start_moment=start_moment,
+                defaults=item,
+            )
+            saved += 1
+        return saved
 
     # TODO: написать для fuel_consumpt с dtime, убранными сообщениями и прочим
     @staticmethod
