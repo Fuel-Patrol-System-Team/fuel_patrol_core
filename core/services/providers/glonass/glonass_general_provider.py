@@ -94,23 +94,24 @@ class GlonassGeneralProvider:
 
         return self.sensors_mapping_cache
 
-    def authenticate(self) -> bool:
+    def authenticate(self) -> tuple[int, str]:
         """Аутентификация в GlonassSoft API.
 
         Использует процесс-уровневый кэш токенов (см. ``auth_token_store``),
         поэтому повторные вызовы из разных экземпляров провайдера с одним и
         тем же логином не приводят к лишним запросам ``/auth/login``.
+        Первое значение в ответе должно более-менее соответствовать кодам HTTP
         """
         if not self._login:
             logger.error("Не указан логин в metadata провайдера")
-            return False
+            return 422, "Не указан логин в metadata провайдера"
 
         # Сначала проверяем кэш — возможно токен уже валиден и его только что
         # обновил другой экземпляр в этом же воркере.
         cached = glonass_auth_token_store.get_token(self._login)
         if cached:
             self.auth_token = cached
-            return True
+            return 200, "" 
 
         self._enforce_rate_limit()
 
@@ -125,10 +126,15 @@ class GlonassGeneralProvider:
             response.raise_for_status()
             data = orjson.loads(response.content)
             token = data.get("AuthId")
+            error = data.get("Error")
+
+            if not token and error:
+                logger.error(error)
+                return 422, error
 
             if not token:
                 logger.error("AuthId не найден в ответе")
-                return False
+                return 422, "AuthId не найден в ответе GLONASS"
 
             # Сохраняем токен в общий кэш, чтобы другие экземпляры могли его
             # переиспользовать, пока он не протухнет (TTL 15 минут).
@@ -136,12 +142,14 @@ class GlonassGeneralProvider:
             self.auth_token = token
 
             logger.info("Аутентификация успешна")
-            return True
+            return 200, ""
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Ошибка аутентификации: {e}")
-            return False
-        
+            if e.response.status_code == 503:
+                return 503, "Провайдер данных ГЛОНАССсофт временно недоступен" 
+            else:
+                return 500, "Незвестная ошибка при попытки подключения к ГЛОНАССсофт"
     def parse_raw_data_all(self, return_df=False ):
         if self.cars is None:
             return {
@@ -155,7 +163,7 @@ class GlonassGeneralProvider:
                 "car_ids_count": 0
             }
         start_time = datetime.now()
-        if not self.authenticate():
+        if self.authenticate() != 200:
             return {
                 "status": "completed",
                 "message": f"Нет  для обработки",
@@ -246,7 +254,8 @@ class GlonassGeneralProvider:
                 if e.response is not None and e.response.status_code == 401 and self._login:
                     logger.warning("401 при запросе заправок — инвалидация токена и повторная попытка")
                     glonass_auth_token_store.invalidate(self._login)
-                    if not self.authenticate():
+                    auth_status, error = self.authenticate()
+                    if not auth_status == 200:
                         logger.error("Не удалось переаутентифицироваться после 401")
                         return None
                     data = _do_request(self.auth_token)
@@ -301,8 +310,9 @@ class GlonassGeneralProvider:
         """Основной метод парсинга данных"""
         car_to_use = car if car is not None else self._pick_car()
         sensors_mapping = self._get_sensors_mapping(car_to_use)
-        if not self.authenticate():
-            return (False, [{"error": "Auth Error"}], sensors_mapping)
+        auth_status, auth_error = self.authenticate()
+        if not auth_status == 200:
+            return (False, [{"error": auth_error}], sensors_mapping)
         if mode not in ["mileage", "fuel", "fuel_charts", "motohours", "raw", "raw_mapped"]:
             return (False, [{"error": f"Недопустимый режим: {mode}. Допустимые: mileage, fuel, motohours, raw, raw_mapped"}], sensors_mapping)
         
@@ -414,7 +424,8 @@ class GlonassGeneralProvider:
                 if e.response is not None and e.response.status_code == 401 and self._login:
                     logger.warning("401 при запросе сообщений — инвалидация токена и повторная попытка")
                     glonass_auth_token_store.invalidate(self._login)
-                    if not self.authenticate():
+                    auth_status, error = self.authenticate()
+                    if not auth_status == 200:
                         logger.error("Не удалось переаутентифицироваться после 401")
                         return None
                     data = _do_request(self.auth_token)

@@ -51,15 +51,11 @@ class MotohoursCalculationService:
 
             provider = GlonassGeneralProvider(None, car, provider_obj, start_date, end_date,                                         "motohours") if parser is None else parser
 
-            try:
-                if not provider.authenticate():
-                    error_msg = "Не удалось авторизоваться у провайдера"
-                    ReportService.complete_report_error(report_query, error_msg)
-                    return {"error": error_msg}, 401
-            except Exception as auth_error:
-                error_msg = f"Ошибка при аутентификации у провайдера: {str(auth_error)}"
+            auth_status, error = provider.authenticate()
+            if not auth_status == 200:
+                error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
-                return {"error": error_msg}, 401
+                return {"error": error}, auth_status
 
             try:
                 status, df, sensors = provider.parse_raw_data("motohours", True, car, start_date, end_date)

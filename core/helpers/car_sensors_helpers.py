@@ -120,6 +120,9 @@ class CarSensorsHelper:
             parser = GlonassGeneralProvider(None, car, provider, start_date, end_date, mode)
 
             status, result, sensors = parser.parse_raw_data(mode, True, car)
+            if not status:
+                error_msg = result[0].get("error") if isinstance(result, list) and result else "Ошибка получения данных"
+                return None, None, error_msg
             if len(result) > 0:
                 result = CarSensorsHelper.preprocess_car_data_charts(result, agg)
                 result = result.with_columns(pl.col("timestamp").dt.convert_time_zone("UTC"))

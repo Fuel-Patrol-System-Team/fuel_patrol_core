@@ -200,10 +200,11 @@ class FuelReportService:
 
             provider = parser if parser is not None else GlonassGeneralProvider(None, car, provider_obj, start_date,
                                                                                 end_date, "fuel")
-            if not provider.authenticate():
+            auth_status, error = provider.authenticate()
+            if not auth_status == 200:
                 error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
-                return {"error": error_msg}, 401
+                return {"error": error}, auth_status
 
             status, df, sensors = provider.parse_raw_data("fuel", True, car)
             fillings, all_fillings = provider.parse_refill_data_full(car, start_date, end_date)

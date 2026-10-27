@@ -62,15 +62,11 @@ class MileageStopsCalculationService:
                 if parser is None else parser
             )
 
-            try:
-                if not provider.authenticate():
-                    error_msg = "Не удалось авторизоваться у провайдера"
-                    ReportService.complete_report_error(report_query, error_msg)
-                    return {"error": error_msg}, 401
-            except Exception as auth_error:
-                error_msg = f"Ошибка при аутентификации у провайдера: {str(auth_error)}"
+            auth_status, error = provider.authenticate()
+            if not auth_status == 200:
+                error_msg = "Не удалось авторизоваться у провайдера"
                 ReportService.complete_report_error(report_query, error_msg)
-                return {"error": error_msg}, 401
+                return {"error": error}, auth_status
 
             vehicle_id = car.id_in_provider_system
 
@@ -192,7 +188,9 @@ class MileageStopsCalculationService:
             if e.response is not None and e.response.status_code == 401 and provider._login:
                 logger.warning("401 при запросе %s — инвалидация токена и повторная попытка", url)
                 glonass_auth_token_store.invalidate(provider._login)
-                if not provider.authenticate():
+                auth_status, error = provider.authenticate()
+                if auth_status != 200:
+                    logger.error(f"Не удалось переавторизоваться у провайдера: {error}")
                     raise
                 return _send(provider.auth_token)
 

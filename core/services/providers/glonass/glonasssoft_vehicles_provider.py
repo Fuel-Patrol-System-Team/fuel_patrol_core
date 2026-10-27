@@ -323,7 +323,7 @@ class GlonassSoftVehiclesProvider(VehicleRateLimitedProvider):
             if "Скорость" in sensor_name or parameter_name == "can_speed":
                 sensors_mapping["speed"].append(SensorType(f"parameters.{parameter_name}", None, 3, is_disabled))
                 continue
-            elif sensor_type == "FuelLvl":
+            elif sensor_type == "FuelLvl" or sensor_type == "Tank":
                 sensor_grades = None
 
 
