@@ -70,7 +70,7 @@ class FilteringService(BaseFilteringService):
                     pl.lit(False).alias("is_picked_leak"),
                     pl.lit("").alias("picked_by"),
                     pl.col("timestamp").shift(-1).alias("leak_end"),
-                    pl.lit(-1).alias("leak_display"),
+                    pl.lit(0).alias("leak_display"),
                     pl.lit(False).alias("filtered"),
                     pl.lit("").alias("filtered_reason"),
                 ]
@@ -227,12 +227,13 @@ class FilteringService(BaseFilteringService):
         result_df = result_df.with_columns(
             [
                 pl.col("fpm_model_predicted")
+                .clip(lower_bound=0)
                 .mul(pl.col("dtime_moving").truediv(60))
                 .alias("sf_m_predicted"),
                 (
                     (
                         pl.col("fpm")
-                        - pl.col("fpm_model_predicted")
+                        - pl.col("fpm_model_predicted").clip(lower_bound=0)
                         - pl.col("fpm_model_mean")
                     )
                     / pl.col("fpm_model_std")
@@ -272,20 +273,20 @@ class FilteringService(BaseFilteringService):
                 [
                     pl.col("spent_fuel")
                     .gt(
-                        pl.col("rpm_model_predicted").add(
+                        pl.col("rpm_model_predicted").clip(lower_bound=0).add(
                             pl.col("rpm_model_std").mul(SIGMAS)
                         )
                     )
                     .alias("is_leak_model_rpm"),
                     pl.col("spent_fuel")
-                    .sub(pl.col("rpm_model_predicted"))
+                    .sub(pl.col("rpm_model_predicted").clip(lower_bound=0))
                     .truediv(pl.col("rpm_model_std"))
                     .alias("z_values_rpm"),
                 ]
             )
             result_df = self._tool_pick_leak(
                 result_df,
-                pl.col("spent_fuel").sub("rpm_model_predicted").abs(),
+                pl.col("spent_fuel").sub(pl.col("rpm_model_predicted").clip(lower_bound=0)).abs(),
                 pl.col("is_leak_model_rpm") & ~pl.col("use_combo"),
                 FuelFilters.RPM_MODEL.value,
             )
@@ -334,16 +335,16 @@ class FilteringService(BaseFilteringService):
         z_dtype = combo_rows.schema["spent_fuel"]
         combo_rows = combo_rows.with_columns(
             pl.col("spent_fuel")
-            .sub(pl.col("combo_model_predicted"))
+            .sub(pl.col("combo_model_predicted").clip(lower_bound=0))
             .truediv(pl.col("combo_model_std"))
             .alias("z_values_combo"),
             pl.col("spent_fuel")
-            .gt(pl.col("combo_model_predicted").add(pl.col("combo_model_std").mul(SIGMAS)))
+            .gt(pl.col("combo_model_predicted").clip(lower_bound=0).add(pl.col("combo_model_std").mul(SIGMAS)))
             .alias("is_leak_model_combo"),
         )
         combo_rows = self._tool_pick_leak(
             combo_rows,
-            pl.col("spent_fuel").sub("combo_model_predicted").clip(lower_bound=0),
+            pl.col("spent_fuel").sub(pl.col("combo_model_predicted").clip(lower_bound=0)).clip(lower_bound=0),
             pl.col("is_leak_model_combo"),
             FuelFilters.COMBO_MODEL.value,
         )
@@ -372,20 +373,20 @@ class FilteringService(BaseFilteringService):
                 [
                     pl.col("spent_fuel")
                     .gt(
-                        pl.col("speed_model_predicted").add(
+                        pl.col("speed_model_predicted").clip(lower_bound=0).add(
                             pl.col("speed_model_std").mul(SIGMAS)
                         )
                     )
                     .alias("is_leak_model_speed"),
                     pl.col("spent_fuel")
-                    .sub(pl.col("speed_model_predicted"))
+                    .sub(pl.col("speed_model_predicted").clip(lower_bound=0))
                     .truediv(pl.col("speed_model_std"))
                     .alias("z_values_speed"),
                 ]
             )
             result_df = self._tool_pick_leak(
                 result_df,
-                pl.col("spent_fuel").sub("speed_model_predicted").clip(lower_bound=0),
+                pl.col("spent_fuel").sub(pl.col("speed_model_predicted").clip(lower_bound=0)).clip(lower_bound=0),
                 pl.col("is_leak_model_speed") & ~pl.col("use_combo"),
                 FuelFilters.SPEED_MODEL.value,
             )

@@ -582,7 +582,7 @@ def calculate_stats_for_car(self, provider_name: str, cars: list[str], is_save_b
 
 @shared_task(bind=True)
 def calculate_stats_fuel_cron(self, provider_name: str, is_save_bad_data=False):
-    datetime_now = datetime.now()
+    datetime_now = datetime.now(timezone.utc)
     provider = DataProvider.objects.get(name=provider_name)
 
     primary_cutoff = datetime_now - timedelta(days=365)
