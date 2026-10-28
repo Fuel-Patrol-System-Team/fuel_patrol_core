@@ -163,7 +163,8 @@ class GlonassGeneralProvider:
                 "car_ids_count": 0
             }
         start_time = datetime.now()
-        if self.authenticate() != 200:
+        auth_status, error = self.authenticate()
+        if  auth_status != 200:
             return {
                 "status": "completed",
                 "message": f"Нет  для обработки",
