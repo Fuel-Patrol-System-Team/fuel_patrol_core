@@ -367,7 +367,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         org_name = validated_data.pop("org_name")
         language_code = validated_data.pop("language_code", "ru")
         try:
-            organization = Organization.objects.get(name=org_name)
+            organization, is_created = Organization.objects.get_or_create(name=org_name)
         except Organization.DoesNotExist:
             raise serializers.ValidationError(
                 f"Organization with name '{org_name}' not found."

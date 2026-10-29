@@ -128,7 +128,17 @@ def tarify_car_by_sensor(
         if degrees is not None:
             degree = degrees[prefix]
             if degree is not None:
-                df = df.with_columns(pl.col(column).rolling_median(window_size=degree))
+                df = df.with_columns(
+                    (pl.col("timestamp").diff().abs() > pl.duration(minutes=10))
+                    .fill_null(True)
+                    .cum_sum()
+                    .alias("_gap_group")
+                )
+                df = df.with_columns(
+                    pl.col(column)
+                    .rolling_median(window_size=degree, center=True, min_samples=1)
+                    .over("_gap_group")
+                ).drop("_gap_group")
 
         for fp, sp in pairs:
             slope = (sp["output"] - fp["output"]) / (sp["input"] - fp["input"])
@@ -235,6 +245,12 @@ def compute_data_standing(df: pl.DataFrame):
         .then(pl.col("spent_fuel"))
         .otherwise(None)
         .alias("sf_m"),
+        # drops-only value on moving rows (post-refuel-zeroing diffs): immune to
+        # in-motion refuel rises that flatten the signed sf_m to 0
+        pl.when(pl.col("is_moving"))
+        .then(pl.col("spent_fuel").clip(upper_bound=0))
+        .otherwise(None)
+        .alias("sf_m_drops"),
         pl.when(pl.col("is_moving"))
         .then(pl.col(speed_col))
         .otherwise(None)
@@ -243,6 +259,7 @@ def compute_data_standing(df: pl.DataFrame):
 
     aggs = [
         pl.col("sf_m").sum(),
+        pl.col("sf_m_drops").sum(),
         pl.col("pos_s_m").mean(),
         pl.col("spent_fuel_standing_leaks").sum(),
         pl.col("leak_standing").sum().abs(),
@@ -265,7 +282,7 @@ def preprocess_basic_one(
     REFUELING_LIMIT=4000,
     PRE_PRIOD_TIME=3,
     DTIME_LIMIT=5,
-    SMOOTH_WINDOW="30s",
+    SMOOTH_WINDOW="5s",
     REFUEL_RISE_EPSILON_PERC=0.005,
     LEAK_FALL_EPSILON_PERC=0.005,
     REFUEL_MIN_DURATION_S=60,
@@ -291,9 +308,9 @@ def preprocess_basic_one(
     if "satellites" not in df.columns:
         df = df.with_columns(pl.lit(20).alias("satellites"))
     # df = alg_piece_remove_message_delays(df)
-    # df = df.with_columns(
-    #     pl.col("speed_can").alias("pos_s")
-    # )
+    df = df.with_columns(
+        pl.col("speed_can").alias("pos_s")
+    )
     reports = maintenance_critical_raw_fuel_values(df, sensors, reports)
 
     for sensor in calc_fuel_sensors:
@@ -347,11 +364,38 @@ def preprocess_basic_one(
             ]
         )
 
-    if is_fuel_processing:
-        df = df.filter(pl.col("satellites").gt(0))
+    is_fuel_consumpt = df["fuel_consumpt"].is_not_null().any()
+    # satellite-loss count per 30m window, computed BEFORE rows with satellites==0/null
+    # are filtered out (otherwise the flag can never be non-zero)
+    df = df.with_columns(
+        pl.col("satellites").eq(0).fill_null(True)
+        .cast(pl.Int16)
+        .sum()
+        .over(["auto", col_dtime_half])
+        .alias("no_sat_data")
+    )
+    if is_fuel_consumpt:
+        # keep satellites=0/null rows: LLS/counter values are valid without GPS.
+        # Null their speed so travel/load/spent_per_100 (left untouched for now)
+        # aggregate over sat>0 rows only — same as when these rows were dropped.
         df = df.with_columns(
-            pl.col("fuel_consumpt").diff().alias("fuel_consumpt_spent"),
+            pl.when(pl.col("satellites").fill_null(0).gt(0))
+            .then(pl.col("pos_s"))
+            .otherwise(None)
+            .alias("pos_s")
         )
+        # data-continuity grouping: the counter diff must not cross data gaps
+        # (garage sat=0 cuts, outages) — first row of each segment is null (excluded from sums)
+        df = df.with_columns(
+            (pl.col("timestamp").diff().abs() > pl.duration(minutes=10))
+            .fill_null(True)
+            .cum_sum()
+            .alias("_fc_gap_group")
+        )
+        df = df.with_columns(
+            pl.col("fuel_consumpt").diff().over("_fc_gap_group").alias("fuel_consumpt_spent"),
+        )
+        df = df.drop("_fc_gap_group")
         if df["fuel_consumpt_spent"].filter(df["fuel_consumpt_spent"].lt(1)).max() == 0.5:
             df = df.with_columns(pl.when(pl.col("fuel_consumpt_spent").abs().gt(20)).then(None).otherwise(pl.col("fuel_consumpt_spent")).alias("fuel_consumpt_spent"))
     else:
@@ -515,11 +559,6 @@ def preprocess_basic_one(
             .otherwise(0)
             .cast(pl.Int16)
             .alias("fd"),
-            pl.when((pl.col("satellites") == 0))
-            .then(1)
-            .otherwise(0)
-            .cast(pl.Int16)
-            .alias("no_sat_data"),
             pl.when(
                 pl.col("spent_fuel").abs().gt(max_fuel_tmp * FUEL_JUMP_BARRIER_PERC)
             )
@@ -545,6 +584,21 @@ def preprocess_basic_one(
             .alias("load"),
         ]
     )
+
+    # Zero refuel recoveries BEFORE compute_data_standing so sf_m / standing /
+    # refuel aggregates are built from drops-only spent_fuel (otherwise sf_m's
+    # signed sum is swamped by refuel rises and fpm collapses to 0).
+    df = df.with_columns(
+        pl.col("spent_fuel").ge(0).cast(pl.Int32).alias("refuel_raw")
+    ).with_columns(
+        pl.col("refuel_raw").diff().abs().cum_sum().alias("refuel_span")
+    ).with_columns(
+        pl.col("spent_fuel").sum().over("refuel_span").alias("refuel_amount_per_span"),
+        pl.col("dtime").sum().over("refuel_span").alias("refuel_dtime_per_span"),
+    ).with_columns(
+        pl.when(pl.col("refuel_raw").eq(1) & pl.col("refuel_amount_per_span").gt(12) & pl.col("refuel_dtime_per_span").gt(10)).then(0).otherwise(pl.col("spent_fuel")).alias("spent_fuel")
+    )
+
     df, aggs = compute_data_standing(df)
 
     df = df.with_columns(pl.col("dtime").mul(pl.col("ign")).alias("es"))
@@ -588,7 +642,7 @@ def preprocess_basic_one(
             pl.col("load").sum(),
             pl.col("fd").sum(),
             pl.col("fuel_level_nan").sum(),
-            pl.col("no_sat_data").sum(),
+            pl.max("no_sat_data"),
             pl.col("count").sum(),
             pl.col("ign").max().alias("ign_max"),
             pl.col("ign").sum(),
@@ -724,7 +778,6 @@ def preprocess_basic_one(
         ]
     )
 
-    # 6. Collapse to 30-minute buckets.
     df = df.with_columns(
         [
             pl.col("refuel").sum().over(["auto", "refuel_group"]).alias("refuel_span"),
@@ -780,11 +833,11 @@ def preprocess_basic_one(
     df = df.with_columns(
         pl.col("pos_s")
         .fill_null(0)
-        .rolling_mean_by(window_size="2m", by="timestamp")
+        .rolling_mean_by(window_size="30s", by="timestamp")
         .alias("pos_s_mean")
     )
     df = (
-        df.with_columns(pl.col("pos_s_mean").gt(0.3).cast(pl.Int8).alias("is_moving"))
+        df.with_columns(pl.col("pos_s_mean").gt(0).cast(pl.Int8).alias("is_moving"))
         .with_columns(pl.col("is_moving").diff().abs().cum_sum().alias("moving_group"))
         .with_columns(
             pl.col("is_moving").eq(1)

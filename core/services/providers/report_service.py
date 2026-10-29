@@ -289,6 +289,11 @@ class ReportService:
                 return None
         logger.warning(f"Неизвестный тип {field_name}: {type(value)}")
         return None
+    
+    @staticmethod
+    def remove_car_reports_for_car(car_id: str) -> int:
+        num, records = CarReport.objects.filter(car_id=car_id).delete()
+        return num
 
 
 

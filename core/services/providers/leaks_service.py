@@ -164,7 +164,7 @@ class LeaksService(BaseLeaksCalculator):
             total_result = self._merge_with_additional_data(
                 total_result, auto_df, primary_df, norma_df
             )
-            total_result = total_result.sort(["timestamp"])
+            total_result = total_result.sort(["timestamp"], maintain_order=True)
             logger.info(
                 f"✅ Объединение завершено, финальный результат: {len(total_result)} записей"
             )
@@ -227,6 +227,7 @@ class LeaksService(BaseLeaksCalculator):
         if reports is None:
             reports = []
 
+        aggs = []
         anti_bug = None
         if initial_df is None:
             logger.debug("Используется базовая предобработка")
@@ -250,46 +251,36 @@ class LeaksService(BaseLeaksCalculator):
             logger.warning("⚠️ Нет данных после базовой предобработки")
             return pl.DataFrame(), pl.DataFrame(), None, reports
 
-        logger.debug(f"Группировка по {PRE_PERIOD_TIME}-минутным интервалам")
+        logger.debug("Группировка по спанам")
         initial_count = len(anti_bug)
-        anti_bug = anti_bug.group_by(
-            ["auto", "span_group"]
-        ).agg(
-            [
-                pl.col("timestamp").first(),
-                pl.col("timestamp").last().alias("timestamp_last"),
-                pl.median("pos_s").alias("pos_s"),
-                pl.max("pos_s_max").alias("pos_s_max"),
-                pl.sum("spent_fuel").alias("spent_fuel"),
-                pl.mean("spent_fuel_rolling").alias("spent_fuel_rolling"),
-                pl.sum("spent_fuel_2").alias("spent_fuel_2"),
-                pl.first("f1").alias("f1"),
-                pl.last("f2").alias("f2"),
-                pl.sum("dtime").alias("dtime"),
-                pl.sum("count").alias("count"),
-                pl.sum("jumps").alias("jumps"),
-                pl.sum("amtr").alias("amtr"),
-                pl.mean("rpm").alias("rpm"),
-                pl.sum("fd").alias("fd"),
-                pl.max("fuel_level_nan").alias("fuel_level_nan"),
-                pl.sum("no_sat_data").alias("no_sat_data"),
-                pl.sum("load").alias("load"),
-                pl.max("ign").alias("ign_max"),
-                pl.col("rpm_total").sum(),
-                pl.col("energy").sum(),
-                pl.first("calc_sensors_fuel_level").alias("fuel_first"),
-                pl.last("calc_sensors_fuel_level").alias("fuel_last"),
-                pl.sum("ign"),
-                pl.sum("ptime"),
-                pl.sum("es"),
-                pl.sum("spent_fuel_boundary"),
-                pl.sum("refuel_eligble"),
-                *aggs
-            ]
+        is_span_system = True
+        anti_bug = (
+            anti_bug.with_columns((pl.col("pos_s").gt(0) | pl.col("rpm").is_between(1, 12800) | pl.col("ign").gt(0) ).cast(pl.Int8).alias("is_moving"))
+            .with_columns((pl.col("is_moving").diff().abs().fill_null(0).cum_sum().alias("moving_group")))
+            .with_columns(
+                (
+                    pl.col("is_moving").eq(1)
+                    & (pl.col("is_moving").shift(1).fill_null(0) == 0)
+                ).alias("is_moving_start")
+            )
+        )
+        anti_bug = anti_bug.with_columns(
+            pl.col("timestamp")
+            .sub(pl.col("timestamp").first().over("moving_group"))
+            .dt.total_seconds()
+            .truediv(3600)
+            .cast(pl.Int32)
+            .alias("hour_idx")
+        ).with_columns(
+            (pl.col("hour_idx").diff().ne(0) | pl.col("moving_group").diff().ne(0))
+            .fill_null(True)
+            .cast(pl.Int8)
+            .cum_sum()
+            .alias("span_group")
         )
         grouped_count = len(anti_bug)
         logger.debug(
-            f"Группировка {PRE_PERIOD_TIME}м: {initial_count} -> {grouped_count} записей"
+            f"Группировка по спанам: {initial_count} -> {grouped_count} записей"
         )
 
         anti_bug = anti_bug.with_columns(
@@ -311,16 +302,27 @@ class LeaksService(BaseLeaksCalculator):
 
         logger.debug(f"Финальная группировка по {PERIOD_2_MIN}-минутным интервалам")
         initial_count = len(anti_bug)
-        result = anti_bug.group_by(
-            ["auto", "span_group"]
-        ).agg(
+        if not is_span_system:
+            true_condition = anti_bug.group_by_dynamic(
+                "timestamp", every="1h", group_by="auto"
+            )
+        else:
+            true_condition = anti_bug.group_by(
+                ["auto", "span_group"], maintain_order=True
+            )
+
+        true_agg = [pl.col("timestamp").first()]
+        result = true_condition.agg(
             [
-                pl.col("timestamp").first(),
-                pl.col("timestamp_last").last(),
+                *true_agg,
+                pl.col("timestamp").last().alias("timestamp_last"),
                 pl.mean("pos_s").alias("pos_s"),
                 pl.sum("spent_fuel").alias("spent_fuel"),
                 pl.max("pos_s_max").alias("pos_s_max"),
                 pl.sum("spent_fuel_2").alias("spent_fuel_2"),
+                pl.sum("fuel_consumpt_spent"),
+                pl.first("fuel_consumpt_first"),
+                pl.last("fuel_consumpt_last"),
                 pl.sum("spent_fuel_standing"),
                 pl.first("f1").alias("f1"),
                 pl.last("f2").alias("f2"),
@@ -333,13 +335,13 @@ class LeaksService(BaseLeaksCalculator):
                 pl.mean("rpm").alias("rpm_mean"),
                 pl.sum("fd").alias("fd"),
                 pl.max("fuel_level_nan").alias("fuel_level_nan"),
-                pl.sum("no_sat_data").alias("no_sat_data"),
+                pl.max("no_sat_data").alias("no_sat_data"),
                 pl.sum("load").alias("load"),
                 pl.max("ign").alias("ign_max"),
                 pl.sum("ign"),
                 pl.sum("ptime"),
-                pl.first("fuel_first"),
-                pl.last("fuel_last"),
+                pl.col("calc_sensors_fuel_level").first().alias("fuel_first"),
+                pl.col("calc_sensors_fuel_level").last().alias("fuel_last"),
                 pl.sum("es"),
                 pl.col("energy").sum(),
                 pl.col("rpm_total").sum(),
@@ -347,7 +349,7 @@ class LeaksService(BaseLeaksCalculator):
                 pl.sum("refuel_eligble"),
                 *aggs,
             ]
-        ).sort("timestamp")
+        )
         result = result.filter(pl.col("fuel_level_nan").ne(pl.col("count")))
         result = result.with_columns(
             pl.col("timestamp").shift(-1).alias("prev_period")
@@ -401,6 +403,7 @@ class LeaksService(BaseLeaksCalculator):
 
         df_values = df_values.with_columns([pl.lit(0).alias("bad_flags")])
         logger.debug("Инициализированы bad_flags")
+        df_values = df_values.with_columns(pl.col("pos_s").fill_null(0))
 
         df_values = df_values.with_columns(
             [
@@ -409,7 +412,8 @@ class LeaksService(BaseLeaksCalculator):
                     | pl.when(pl.col("jumps") > FUEL_JUMPS_AMOUNT)
                     .then(pl.lit(1 << 1))
                     .otherwise(0)
-                    | pl.when(pl.col("spent_fuel") > UNREASONABLE_FUEL_LEVEL)
+                    # abs() so catastrophic fuel DROPS (not just refuels) are flagged too
+                    | pl.when(pl.col("spent_fuel").abs() > UNREASONABLE_FUEL_LEVEL)
                     .then(pl.lit(1 << 2))
                     .otherwise(0)
                 ).alias("bad_flags")
@@ -486,6 +490,17 @@ class LeaksService(BaseLeaksCalculator):
         # Now clip sf_m to positive magnitude for downstream use
         df_values = df_values.with_columns(
             pl.col("sf_m").clip(upper_bound=0).abs()
+        )
+        # P1 experiment: drops-based over-spend rate | sf_m_drops (Σ moving-row
+        # negative diffs, refuel-mask-immune) | 0 when the span had no moving time
+        df_values = df_values.with_columns(
+            pl.col("sf_m_drops").abs().alias("sf_m_drops"),
+            pl.when(pl.col("dtime_moving") > 0)
+            .then(pl.col("sf_m_drops").abs().truediv(pl.col("dtime_moving")).mul(60))
+            .otherwise(0.0)
+            .fill_nan(0.0)
+            .cast(pl.Float32)
+            .alias("fpm_drops")
         )
         df_values = df_values.with_columns(
             pl.col("pos_s_m").mul(pl.col("dtime_moving")).alias("fpm_metric_x")

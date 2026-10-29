@@ -19,3 +19,7 @@ class ComputedDataService:
         
         result = ComputedData.objects.bulk_create(tmp)
         return len(result), result
+
+    def remove_preprocessed_for_car(self, car_id: str):
+        num, records = ComputedData.objects.filter(auto_id=car_id).delete()
+        return num
