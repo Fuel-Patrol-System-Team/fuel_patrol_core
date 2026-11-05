@@ -104,7 +104,9 @@ class MotohoursCalculationService:
                     car_data = CarDataService.prepare_auto_data(car, return_dict=True)
                     if stats is None:
                         raise ValueError("No parsing stats for this car")
-                    result, reports = compute_motohours(df, car_data, agg, {"rpm_idle": stats.rpm_idle, })
+                    # prepare_auto_data(return_dict=True) returns [auto_data];
+                    # compute_motohours expects the record itself
+                    result, reports = compute_motohours(df, car_data[0], agg, {"rpm_idle": stats.rpm_idle, })
                     if reports:
                         ReportService.create_bad_data_record_from_list(car, reports, report_query, is_save_bad_data)
 

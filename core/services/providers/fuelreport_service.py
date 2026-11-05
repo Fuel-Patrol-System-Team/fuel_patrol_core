@@ -207,7 +207,11 @@ class FuelReportService:
                 return {"error": error}, auth_status
 
             status, df, sensors = provider.parse_raw_data("fuel", True, car)
-            fillings, all_fillings = provider.parse_refill_data_full(car, start_date, end_date)
+            # parse_refill_data_full returns None when the provider has no
+            # refill data (or on API errors) — treat as absent instead of
+            # crashing the unpack (500 «Внутренняя ошибка…» for no-refills cars)
+            refills = provider.parse_refill_data_full(car, start_date, end_date)
+            fillings, all_fillings = refills if refills is not None else (None, None)
             if df is None or df.is_empty() or not status:
                 result = make_fuel_spent(0, 0, 0, [], [])
 

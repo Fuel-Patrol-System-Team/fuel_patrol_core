@@ -203,12 +203,10 @@ class FilteringService(BaseFilteringService):
         self,
         result_df: pl.DataFrame,
         SIGMAS: float = 3,
-        SF_M_BARRIER=8,
+        SF_M_BARRIER=12,
         DTIME_BARRIER_MINUTES=5,
     ) -> Tuple[pl.DataFrame, pl.DataFrame]:
         """Фильтрация по стандартному отклонению расхода (fpm -> spent_fuel)"""
-        # Guard: if fpm_model_std is 0 (e.g. no training data), skip this filter
-        # to avoid division-by-zero marking every row as a leak.
         if result_df["fpm_model_std"].max() == 0:
             logger.warning(
                 "pick_by_fpm_std: fpm_model_std is 0 for all rows — skipping filter "
@@ -252,7 +250,7 @@ class FilteringService(BaseFilteringService):
         result_df = self._tool_pick_leak(
             result_df,
             pl.col("sf_m_diff"),
-            pl.col("is_leak_model_fpm") & pl.col("sf_m_diff").gt(SF_M_BARRIER / 1.2),
+            pl.col("is_leak_model_fpm") & pl.col("sf_m_diff").gt(SF_M_BARRIER / 1.1),
             FuelFilters.SIGMA_FPM.value,
         )
         return result_df, result_df

@@ -1842,6 +1842,11 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
 
         leaks = CarReport.objects.filter(car_id__id=car_id,datetime__gte=start_date, picked_by__in=["fpm_model"])
         leaks_df = polars.DataFrame(list(leaks.values()))
+        consumpt = CarConsumption.objects.filter(car_id=car_id).first()
+        acc = None
+        if consumpt:
+            acc = consumpt.json_data.get("sfm_accuracy")
+
 
         df = polars.DataFrame(computed_data_list)
         tmp = df.select(["fpm", "pos_s", "timestamp", "z_values_fpm", "dtime", "ign_spread", "dtime_moving", "rpm_mean", "filtered", "sf_m", "spent_fuel", "leak_display", "z_values_combo", "use_combo", "id"])
@@ -1893,6 +1898,7 @@ class CarLeaksChartsAPIView(TimestampTimezoneConverterMixin, APIView):
             "data_slow": data_slow.with_columns(
                 polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
             "slow_type": "rpm" if is_rpm else "ign",
+            "accuracy": acc,
             "data_fast": data_fast.with_columns(
                 polars.col("timestamp").dt.to_string("iso:strict").alias("timestamp")).to_dicts(),
             "data_bar": data_bar,

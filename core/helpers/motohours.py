@@ -291,8 +291,13 @@ def _compute_motohours_by_motohours(
     )
     reports = maintenance_rpm_slow_change_on_speed(df, reports)
     t = df.filter(pl.col("motohours_diff_raw").abs().gt(0))
+    # guard: with no counter changes both means are None (and dtime-mean may be 0)
+    t_diff_mean = t["motohours_diff_raw"].mean()
+    t_dtime_mean = t["dtime"].mean()
     multiplier = (
-        3600 if (t["motohours_diff_raw"].mean() / t["dtime"].mean()) > 0.08 else 1
+        3600
+        if t_diff_mean is not None and t_dtime_mean and t_dtime_mean > 0 and (t_diff_mean / t_dtime_mean) > 0.08
+        else 1
     )
 
     df = df.with_columns(

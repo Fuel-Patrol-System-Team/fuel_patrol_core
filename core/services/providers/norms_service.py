@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from django.conf import settings
 from sklearn.linear_model import Lasso
+from sklearn.metrics import r2_score
 
 from core.helpers.alg_utils import (
     alg_piece_remove_message_delays,
@@ -61,6 +62,18 @@ class NormsService:
 
         cars_mapping = pl.DataFrame(mapping)
         return cars_mapping
+    
+    @staticmethod
+    def _ease(x: float, t: float = 0.15, a: float = 1.1, b: float = 2) -> float:
+        if x <= 0.5:
+            return t * (1 - (1 - 2 * x) ** a)
+        return t + (1 - t) * (2 * x - 1) ** b
+
+    @staticmethod
+    def _score_by_r2_for_chart(x: float, t: float = 0.7, a: float = 3.1, b: float = 0.8, offset: float = 0.1) -> float:
+        return min(NormsService._ease(x + offset, t=t, a=a, b=b), 1.0)
+
+
 
     @staticmethod
     def _get_engine_power_group(engine_power: Optional[int]) -> int:
@@ -508,6 +521,10 @@ class NormsService:
         result = result.with_columns(
             (pl.col("spent_fuel") / pl.col("travel") * 100).alias("spent_per_100")
         )
+        result = result.filter(
+            pl.col("pos_s").lt(224)
+        )
+        logger.info(f"После фильтра высокой скорости {result.shape}")
         # NOTE: sf_m is NOT clipped here — _calculate_by_car needs the signed
         # values to filter consumption (sf_m < 0) for Lasso training. Clipping
         # here would zero out the training set and produce fpm_model_std=0,
@@ -898,7 +915,7 @@ class NormsService:
         features = [feature, *(extra_features or [])]
         if dtime_feature is not None:
             features.append(dtime_feature)
-        check_coefs, check_intercept, check_mean, check_std = (
+        check_coefs, check_intercept, check_mean, check_std, check_r2 = (
             NormsService._fit_lasso_per_car(
                 group,
                 feature,
@@ -911,7 +928,7 @@ class NormsService:
             )
         )
         if check_coefs == [0.0] * len(check_coefs) and check_intercept == 0.0:
-            return check_coefs, check_intercept, check_mean, check_std
+            return check_coefs, check_intercept, check_mean, check_std, check_r2
         check_prediction = pl.lit(check_intercept)
         for coef, name in zip(check_coefs, features):
             check_prediction = check_prediction.add(pl.col(name).mul(coef))
@@ -923,7 +940,7 @@ class NormsService:
             .sub(pl.col("check_prediction"))
             .lt(check_mean + check_std * GUARD_COEF_SIGMA)
         )
-        real_coefs, real_intercept, real_mean, real_std = (
+        real_coefs, real_intercept, real_mean, real_std, real_r2 = (
             NormsService._fit_lasso_per_car(
                 group,
                 feature,
@@ -935,7 +952,7 @@ class NormsService:
                 extra_features=extra_features,
             )
         )
-        return real_coefs, real_intercept, real_mean, real_std
+        return real_coefs, real_intercept, real_mean, real_std, real_r2
 
     @staticmethod
     def _fit_lasso_per_car(
@@ -947,7 +964,7 @@ class NormsService:
         alpha: float = 0.1,
         dtime_feature: Optional[str] = None,
         extra_features: Optional[List[str]] = None,
-    ) -> Tuple[List[float], float, float, float]:
+    ) -> Tuple[List[float], float, float, float, float]:
         """Подгонка Lasso по данным одной машины.
 
         Признаки: [feature] + extra_features + [dtime_feature]. Возвращает
@@ -967,14 +984,14 @@ class NormsService:
                 logger.warning(
                     f"Машина {auto}: нет колонки {missing or target} для Lasso"
                 )
-                return [0.0] * n_coefs, 0.0, 0.0, 0.0
+                return [0.0] * n_coefs, 0.0, 0.0, 0.0, 0.0
 
             if group.height < MIN_SAMPLES:
                 logger.info(
                     f"Машина {auto}: мало данных ({group.height}) для Lasso {target}"
                 )
                 y_mean = NormsService._safe_mean(group, target)
-                return [0.0] * n_coefs, y_mean, 0.0, 0.0
+                return [0.0] * n_coefs, y_mean, 0.0, 0.0, 0.0
 
             x = group.select(features).to_numpy().astype("float64")
             y = group.select(target).to_numpy().astype("float64").ravel()
@@ -995,11 +1012,13 @@ class NormsService:
             model = Lasso(alpha=alpha)
             model.fit(X=x, y=y)
             residuals = y - model.predict(x)
+            r2 = r2_score(y, model.predict(x))
             return (
                 [float(c) for c in model.coef_],
                 float(model.intercept_),
                 float(residuals.mean()),
                 float(residuals.std()),
+                float(r2)
             )
         except Exception as e:
             logger.warning(f"Машина {auto}: ошибка Lasso для {target}: {e}")
@@ -1007,7 +1026,7 @@ class NormsService:
                 y_mean = NormsService._safe_mean(group, target)
             except Exception:
                 y_mean = 0.0
-            return [0.0] * n_coefs, y_mean, 0.0, 0.0
+            return [0.0] * n_coefs, y_mean, 0.0, 0.0, 0.0
 
     @staticmethod
     def _safe_mean(group: pl.DataFrame, col: str) -> float:
@@ -1083,6 +1102,10 @@ class NormsService:
             (pl.col("spent_fuel") > 0) & (pl.col("sat_coverage") > SATELLITES_COVERAGE)
         )
 
+        df = df.filter(
+            pl.col("pos_s").lt(224)
+        )
+
         if df.is_empty():
             return df, "filtered due to sat_coverage and spent_fuel"
 
@@ -1138,7 +1161,7 @@ class NormsService:
             # Lasso подгоняется по каждой машине отдельно (если у машины
             # своя модель поведения). Стандартное отклонение — это std остатков
             # (y - ŷ), а не std предсказаний.
-            rpm_model_coefs, rpm_model_intercept, rpm_model_mean, rpm_model_std = (
+            rpm_model_coefs, rpm_model_intercept, rpm_model_mean, rpm_model_std, rpm_model_r2 = (
                 NormsService._fit_lasso_per_car(
                     group,
                     feature="rpm_total",
@@ -1152,6 +1175,7 @@ class NormsService:
                 speed_model_intercept,
                 speed_model_mean,
                 speed_model_std,
+                speed_model_r2
             ) = NormsService._fit_lasso_per_car(
                 group,
                 feature="pos_s",
@@ -1164,8 +1188,21 @@ class NormsService:
                 .abs()
                 .mul(pl.col("dtime_moving"))
                 .alias("fpm_x_metric"),
+                pl.col("pos_s").mul(pl.col("dtime")).alias("pos_s_dtime")
             )
-            fpm_model_coefs, fpm_model_intercept, fpm_model_mean, fpm_model_std = (
+
+            sfm_model_coefs, sfm_model_intercept, sfm_model_mean, sfm_model_std, sfm_model_r2 = (
+                NormsService.fit_lasso_per_car_with_guard(
+                    group_sfm,
+                    feature="pos_s",
+                    target="sf_m",
+                    auto=auto,
+                    dtime_feature="dtime",
+                    extra_features=["pos_s_dtime"],
+                    
+                )
+            )
+            fpm_model_coefs, fpm_model_intercept, fpm_model_mean, fpm_model_std, fpm_model_r2 = (
                 NormsService.fit_lasso_per_car_with_guard(
                     group_sfm,
                     feature="fpm_x_metric",
@@ -1184,7 +1221,7 @@ class NormsService:
                 and group["rpm_mean"].fill_null(0).max() > 1000
             )
             if combo_has_rpm:
-                combo_coefs, combo_intercept, combo_mean, combo_std = (
+                combo_coefs, combo_intercept, combo_mean, combo_std, combo_r2 = (
                     NormsService._fit_lasso_per_car(
                         group,
                         feature="pos_s",
@@ -1200,11 +1237,12 @@ class NormsService:
                 )
             else:
                 combo_mean_fallback = NormsService._safe_mean(group, "spent_fuel")
-                combo_coefs, combo_intercept, combo_mean, combo_std = (
+                combo_coefs, combo_intercept, combo_mean, combo_std, combo_r2 = (
                     [0.0, 0.0, 0.0],
                     combo_mean_fallback,
                     0.0,
                     0.0,
+                    0.0
                 )
 
             std = group["spent_fuel"].std()
@@ -1235,6 +1273,8 @@ class NormsService:
             rpm_mean = group["rpm_mean"].mean()
             rpm_std = group["rpm_mean"].std()
 
+            sfm_acc = NormsService._score_by_r2_for_chart(sfm_model_r2)
+
             logger.info(
                 f"Машина {auto}: max_speed={max_speed}, max_fuel={max_fuel}, "
                 f"rpm_mean={rpm_mean}, rpm_std={rpm_std}, rpm_max={rpm_max}, "
@@ -1260,6 +1300,7 @@ class NormsService:
                         "speed_model_dt_coef": speed_model_coefs[1],
                         "speed_model_intercept": speed_model_intercept,
                         "speed_model_std": speed_model_std,
+                        "speed_model_r2": speed_model_r2,
                         "norma_rpm_std": rpm_std,
                         "norma_rpm_max": rpm_max,
                         "fpm_model_coef": fpm_model_coefs[0],
@@ -1267,12 +1308,16 @@ class NormsService:
                         "fpm_model_intercept": fpm_model_intercept,
                         "fpm_model_mean": fpm_model_mean,
                         "fpm_model_std": fpm_model_std,
+                        "fpm_model_r2": fpm_model_r2,
+                        "sfm_model_r2": sfm_model_r2,
+                        "sfm_accuracy": sfm_acc,
                         "combo_model_coef": combo_coefs[0],
                         "combo_model_rpm_coef": combo_coefs[1],
                         "combo_model_dt_coef": combo_coefs[2],
                         "combo_model_intercept": combo_intercept,
                         "combo_model_mean": combo_mean,
                         "combo_model_std": combo_std,
+                        "combo_model_r2": combo_r2,
                         "is_combo_model": combo_has_rpm,
                         "period": datetime.now() + timedelta(days=365),
                         "is_special_car": max_speed > 30,
@@ -1309,6 +1354,8 @@ class NormsService:
             "speed_model_coef": pl.Float32,
             "speed_model_dt_coef": pl.Float32,
             "speed_model_intercept": pl.Float32,
+            "speed_model_r2": pl.Float32,
+            "fpm_model_r2": pl.Float32,
             "speed_model_std": pl.Float32,
             "fpm_model_coef": pl.Float32,
             "fpm_model_dt_coef": pl.Float32,
@@ -1318,8 +1365,11 @@ class NormsService:
             "combo_model_coef": pl.Float32,
             "combo_model_rpm_coef": pl.Float32,
             "combo_model_dt_coef": pl.Float32,
+            "combo_model_r2":  pl.Float32,
             "combo_model_intercept": pl.Float32,
             "combo_model_mean": pl.Float32,
+            "sfm_model_r2": pl.Float32,
+            "sfm_accuracy": pl.Float32,
             "is_combo_model": pl.Boolean,
             "combo_model_std": pl.Float32,
             "period": pl.Datetime,
